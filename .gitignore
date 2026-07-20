@@ -1,0 +1,30 @@
+# flix_ge_studio — 生成物・依存物は git に入れない (すべて make で再生成できる)。
+
+# --- server (Flix バックエンド) ---
+# build = Flix の中間物, artifact = fatjar。どちらも make jar で作れるので追跡しない。
+server/build/
+server/artifact/
+
+# lib = fpkg 依存の置き場。engine リポ (core/world/tools 0.7.1) は現在 fetch できない
+# (GitHub 404) ので、その fpkg 群だけは git 追跡して同梱する (clone→make jar がオフラインで
+# 即通る)。一方 lib 内の maven cache 等は再取得できるので除外する。
+server/lib/*
+!server/lib/github/
+server/lib/cache/
+server/lib/external/
+
+# --- web (Elm/Vite フロント) ---
+web/node_modules/
+web/dist/
+web/elm-stuff/
+web/.devbox/
+
+# --- app (Tauri ランチャー) ---
+# target = cargo 成果物(1GB超), runtime = jlink JRE, resources = .app 直前のステージ, gen = tauri 生成物。
+app/src-tauri/target/
+app/runtime/
+app/src-tauri/resources/
+app/src-tauri/gen/
+
+# OS ゴミ
+.DS_Store

@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+/* Elm のクラスは文字列リテラル。検出漏れを防ぐため .elm を明示する */
+@source "./**/*.elm";
+
+/* デザイントークン: 色・字・角丸はここだけで決める(個々の要素に生 hex を書かない)。
+   Figma 風の高密度ダーク UI:
+     背景 3 段(app 地 < panel < raised) + 入力の床(well)
+     境界は 1px の控えめ 1 色 / 文字 3 段 / アクセントは青 1 色 */
+@theme {
+  --font-sans: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 背景 */
+  --color-app: #1e1e1e;
+  --color-panel: #2c2c2c;
+  --color-raised: #383838;
+  --color-well: #222222;
+
+  /* 境界 1 種 */
+  --color-edge: #444444;
+
+  /* 文字 3 段: 主 / 副 / 淡。淡もパネル背景に対して 4.5:1 を割らない
+     (WCAG/デジタル庁のコントラスト原則。薄さは字サイズと字間で出す) */
+  --color-ink: #e6e6e6;
+  --color-ink-soft: #b0b0b0;
+  --color-ink-faint: #949494;
+
+  /* アクセント(青) + 警告(黄) + エラー(赤) + 正常(緑) */
+  --color-accent: #0d99ff;
+  --color-warn: #ffcd29;
+  --color-danger: #f87171;
+  --color-ok: #4ade80;
+}
+
+@layer base {
+  body {
+    @apply bg-app font-sans text-xs text-ink antialiased;
+  }
+
+  /* フォーカスリングはアクセント 1 色に統一。全対話要素に見える形で出す
+     (アクセシビリティ — キーボード操作の現在地を隠さない) */
+  :is(button, input, select, textarea, a, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -1px;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--color-accent);
+  }
+
+  /* 細身のスクロールバー(高密度 UI の一部) */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-raised) transparent;
+  }
+
+  /* Shoelace(sl-range / sl-dialog / sl-alert)をこちらのトークンへ寄せる(ここ 1 箇所) */
+  .sl-theme-dark {
+    --sl-font-sans: var(--font-sans);
+    --sl-panel-background-color: var(--color-panel);
+    --sl-panel-border-color: var(--color-edge);
+    --sl-input-background-color: var(--color-well);
+    --sl-input-border-color: var(--color-edge);
+    --sl-input-color: var(--color-ink);
+    --sl-color-primary-600: var(--color-accent);
+    --sl-color-danger-600: var(--color-danger);
+    --sl-color-success-600: var(--color-ok);
+    --sl-color-warning-600: var(--color-warn);
+    --sl-focus-ring-color: var(--color-accent);
+    --sl-overlay-background-color: rgb(0 0 0 / 0.55);
+  }
+}
+
+/* 繰り返し部品だけ component 化(1 回きりの見た目は Elm 側の utility で書く) */
+@layer components {
+  .btn {
+    @apply inline-flex h-6 shrink-0 cursor-pointer items-center justify-center gap-1 rounded border border-edge bg-white/5 px-2.5 text-[11px] leading-none text-ink select-none hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-white/5;
+  }
+
+  .btn-primary {
+    @apply border-transparent bg-accent text-white hover:bg-accent/85 disabled:hover:bg-accent;
+  }
+
+  /* 危険操作(削除の確定・編集の破棄)。primary と並んだ時に取り違えない色 */
+  .btn-danger {
+    @apply border-transparent bg-danger text-app hover:bg-danger/85 disabled:hover:bg-danger;
+  }
+
+  /* tertiary: 枠も地も持たないテキスト系(複製・削除・小さな行操作) */
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-ink-soft hover:bg-white/5 hover:text-ink disabled:hover:bg-transparent;
+  }
+
+  .btn-mini {
+    @apply h-5 px-1.5 text-[10px];
+  }
+
+  .field {
+    @apply h-6 min-w-0 rounded border border-edge bg-well px-2 text-xs text-ink placeholder:text-ink-faint;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full bg-white/10 px-1.5 text-[10px] leading-4 whitespace-nowrap text-ink-soft;
+  }
+
+  /* 肖像(エンジン焼き PNG の切り出し)。空・読み込み中・失敗も同じ枠で示す */
+  .portrait-box {
+    @apply shrink-0 overflow-hidden rounded border border-edge bg-well;
+    image-rendering: pixelated;
+  }
+
+  .portrait-loading {
+    @apply animate-pulse bg-raised;
+  }
+
+  .portrait-failed {
+    @apply flex items-center justify-center text-danger;
+  }
+
+  /* 攻略本ページの額装(大きな肖像の外枠) */
+  .portrait-frame {
+    @apply rounded-lg border border-edge bg-panel p-1.5 shadow-[0_2px_8px_rgb(0_0_0/0.35)];
+  }
+
+  /* メーターバー(体力・速さ・% の読み取り表示) */
+  .meter {
+    @apply h-2 overflow-hidden rounded-full bg-well;
+  }
+
+  .meter-fill {
+    @apply h-full rounded-full bg-accent;
+  }
+}
+
+/* ---- ここから下は意図して残す素 CSS ---------------------------------------- */
+
+/* スライダー(sl-range)の密度と配色。数式は Shoelace のカスタムプロパティ */
+sl-range.slider {
+  flex: 1;
+  min-width: 0;
+  --track-height: 4px;
+  --thumb-size: 12px;
+  --track-color-active: var(--color-accent);
+  --track-color-inactive: var(--color-edge);
+}
+
+/* 色ピッカーの入口(swatch)は入力欄の高さ(24px)に揃える */
+sl-color-picker.color-picker::part(trigger) {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+
+/* 確認・入力ダイアログ共通。閉じる×は隠す(フッターのボタンだけが出口。
+   sl-request-close は JS 側で止めているので、×を出すと押せるのに効かない) */
+sl-dialog.conflict,
+sl-dialog.discard,
+sl-dialog.add-entry,
+sl-dialog.delete-entry,
+sl-dialog.cross-rename {
+  --width: 26rem;
+  --header-spacing: 16px;
+  --body-spacing: 16px;
+  --footer-spacing: 16px;
+}
+sl-dialog.conflict::part(close-button),
+sl-dialog.discard::part(close-button),
+sl-dialog.add-entry::part(close-button),
+sl-dialog.delete-entry::part(close-button),
+sl-dialog.cross-rename::part(close-button) {
+  display: none;
+}
+sl-dialog::part(title) {
+  font-size: 13px;
+  font-weight: 600;
+}
+sl-dialog.conflict::part(title),
+sl-dialog.delete-entry::part(title) {
+  color: var(--color-danger);
+}
+
+/* 通知(sl-alert)は 1 行の小さな帯に詰める */
+sl-alert.notice::part(message) {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* ---- 盤面プレビューの対話レイヤ(選択枠・掴み所・ドラッグ追従) ----
+   位置は Elm が % を inline style で書く。utility では表せない
+   「状態クラス × カーソル」の組があるためここに残す */
+
+.preview-stage {
+  position: relative;
+}
+
+.preview-hotspot {
+  position: absolute;
+  cursor: grab;
+}
+
+.preview-stage.dragging,
+.preview-stage.dragging .preview-hotspot {
+  cursor: grabbing;
+}
+
+.preview-select {
+  position: absolute;
+  border: 1px solid var(--color-accent);
+  border-radius: 2px;
+  /* 印は見せるだけ。クリック・ドラッグは img と掴み所に届かせる */
+  pointer-events: none;
+}
+
+.preview-ghost {
+  position: absolute;
+  border: 1px solid var(--color-accent);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  pointer-events: none;
+}
