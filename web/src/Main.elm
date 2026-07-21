@@ -5084,7 +5084,7 @@ viewVisualBody model schema doc =
         usageDict =
             usageDicts model schema doc
     in
-    [ div [ HA.class "visual-tabs flex h-9 shrink-0 items-center gap-1 border-b border-edge bg-panel px-3" ]
+    [ div [ HA.class "visual-tabs flex h-9 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b border-edge bg-panel px-3" ]
         (supportedSections schema |> List.map (viewTab activeKey))
     , div [ HA.class "visual-body flex min-h-0 flex-1 flex-col p-3" ]
         (viewPreviewCard model
@@ -5509,7 +5509,7 @@ viewForm model schema =
                 usageDict =
                     usageDicts model schema doc
             in
-            div [ HA.class "form-tabs mb-2.5 flex flex-wrap gap-1" ]
+            div [ HA.class "form-tabs mb-2.5 flex flex-nowrap gap-1 overflow-x-auto" ]
                 (supportedSections schema |> List.map (viewTab activeKey))
                 :: (supportedSections schema
                         |> List.filter (\( key, _ ) -> key == activeKey)
@@ -5524,7 +5524,7 @@ viewTab : String -> ( String, Schema.Section ) -> Html Msg
 viewTab activeKey ( key, section ) =
     button
         [ HA.classList
-            [ ( "form-tab h-6 cursor-pointer rounded px-2 text-[11px]", True )
+            [ ( "form-tab h-6 shrink-0 cursor-pointer whitespace-nowrap rounded px-2 text-[11px]", True )
             , ( "on bg-raised text-ink", key == activeKey )
             , ( "text-ink-soft hover:bg-white/5 hover:text-ink", key /= activeKey )
             ]
