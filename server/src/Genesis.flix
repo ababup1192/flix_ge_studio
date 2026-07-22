@@ -8,6 +8,9 @@
 // 土台は常に templates/ のテンプレートの変形 (ゼロから生成しない)。良いテンプレートが
 // 生まれたら templates/ へ昇格し、そのジャンルは starter 持ち(複製=ゼロ抽選)になる。
 mod Genesis {
+    import java.io.{File => JFile}
+    import java.nio.file.Files
+
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JBool}
 
@@ -114,6 +117,21 @@ mod Genesis {
                         else
                             (200, promptOk(familyPrompt(f, params)))
                 }
+        }
+
+    /// GET /genesis/title?family=… — ジャンルカードの絵。公式テンプレートの
+    /// golden/title.png のバイト列。テンプレート無し・絵無し・engine 不在は None
+    /// (呼び手が 404 = 絵なしカードに倒す)。
+    pub def titleBytes(params: Map[String, String]): Option[Array[Int8, Static]] \ IO =
+        let starter = Map.get("family", params)
+            |> Option.flatMap(id -> List.filter(f -> f#id == id, families()) |> List.head)
+            |> Option.map(f -> f#starter)
+            |> Option.filter(path -> path != "");
+        match starter {
+            case None => None
+            case Some(path) =>
+                let file = new JFile("${Scaffold.engineDir()}/${path}/golden/title.png");
+                if (file.isFile()) Some(Files.readAllBytes(file.toPath())) else None
         }
 
     def promptOk(text: String): Json =

@@ -25,6 +25,16 @@ mod TestGenesis {
              status(Map#{"family" => "free"}),
              status(Map#{"family" => "free", "direction" => "猫が魚を集める"})))
 
+    /// 公式テンプレートの登録: action / novel / rpg は starter 持ち、free は持たない。
+    @Test
+    def testStarters(): Unit \ Assert =
+        let starterOf = id -> Genesis.families()
+            |> List.filter(f -> f#id == id) |> List.head
+            |> Option.map(f -> f#starter != "");
+        Assert.assertEq(
+            expected = (Some(true), Some(true), Some(true), Some(false)),
+            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("free")))
+
     /// 公式プロンプトは骨格と土台(テンプレート変形)を必ず運ぶ。
     /// あなたの言葉(world 等)はパラメータで埋まり、空なら欄が残る。
     @Test

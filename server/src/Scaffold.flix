@@ -106,7 +106,8 @@ mod Scaffold {
     // ── 新しいゲーム (POST /projects/new) ─────────────────
 
     /// engine リポの場所: EDITOR_ENGINE か既定の $HOME/Desktop/flix_game_engine。
-    def engineDir(): String \ IO =
+    /// (Genesis のジャンルカードの絵も同じ解決を使う)
+    pub def engineDir(): String \ IO =
         let value = System.getenv("EDITOR_ENGINE");
         if (Object.isNull(value) or value == "")
             "${System.getProperty("user.home")}/Desktop/flix_game_engine"

@@ -118,6 +118,10 @@ mod Editor {
                 let (status, json) = Genesis.promptJson(params);
                 sendJson(status, json, exchange)
             }
+            case ("GET", "/genesis/title") => match Genesis.titleBytes(params) {
+                case Some(bytes) => sendBytes("image/png", bytes, exchange)
+                case None        => sendJson(404, errorJson("title not found"), exchange)
+            }
             // 新しいゲームづくりはプロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("POST", "/projects/new") => {
                 let (status, json) = Scaffold.startNew(scaffold, readBody(exchange));

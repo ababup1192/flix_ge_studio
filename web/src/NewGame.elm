@@ -616,7 +616,19 @@ viewFamilyCard chosen family =
             ]
         , HE.onClick (FamilyChosen family.id)
         ]
-        [ div [ HA.class "text-xs font-semibold text-ink" ] [ text family.name ]
+        [ -- 公式テンプレートつきのジャンルは、その golden/title.png が札の顔になる
+          -- (サーバが配る。テンプレート無しのジャンルは絵なしのまま)
+          if family.starter /= "" then
+            Html.img
+                [ HA.src ("/genesis/title?family=" ++ family.id)
+                , HA.alt ""
+                , HA.class "scene-shot mb-1.5 w-full rounded border border-edge/60"
+                ]
+                []
+
+          else
+            text ""
+        , div [ HA.class "text-xs font-semibold text-ink" ] [ text family.name ]
         , div [ HA.class "mt-0.5 text-[11px] text-ink-soft" ] [ text family.verb ]
         , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text ("含む: " ++ family.includes) ]
         , div [ HA.class "mt-0.5 font-mono text-[10px] text-ink-faint" ] [ text ("操作: " ++ family.controls) ]
