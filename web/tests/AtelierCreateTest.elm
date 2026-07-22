@@ -188,7 +188,7 @@ suite =
                         |> step Atelier.MakeGamePromptClicked
                         |> Tuple.second
                         |> Expect.equal Atelier.OutNone
-            , test "旅路の design から降り立つと、候補があってもつくるが開く" <|
+            , test "提案の design から降り立つと、候補があってもつくるが開く" <|
                 \_ ->
                     Atelier.openCreateForGame withCandidates
                         |> Atelier.createOpen

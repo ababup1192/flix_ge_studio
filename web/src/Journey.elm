@@ -16,7 +16,7 @@ module Journey exposing
     , view
     )
 
-{-| ホーム(旅路)画面。GET /journey/state の「次のやること」1 枚と道しるべを出す。
+{-| ホーム画面。GET /journey/state の「次のやること」1 枚と道しるべを出す。
 
 サーバ往復は持たない(封筒の発行・受領は Main の request / handleOk が一元管理)。
 ここは応答の読み取り(stateDecoder / changesDecoder)と、読み取った状態の見せ方だけ。
@@ -215,8 +215,17 @@ view model =
                 [ quietCard "読み込み中…" "次のやることを考えています。" ]
 
             Failed _ ->
-                -- サーバがまだ /journey/state を持たない段階でも画面は生かす
-                [ quietCard "準備中" "旅路の案内はまだ使えません。アトリエは開けます。" ]
+                -- 提案が読めない時も行き止まりにしない — 素直にアトリエへ誘う
+                [ div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5" ]
+                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "アトリエへどうぞ" ]
+                    , div [ HA.class "mt-1.5 text-xs text-ink-soft" ]
+                        [ text "素材と数値は、ぜんぶアトリエにあります。" ]
+                    , div [ HA.class "mt-4" ]
+                        [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked ToAtelier) ]
+                            [ text "アトリエへ" ]
+                        ]
+                    ]
+                ]
 
             Loaded info ->
                 if info.skipped then

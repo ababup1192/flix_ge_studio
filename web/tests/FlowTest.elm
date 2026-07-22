@@ -301,7 +301,7 @@ booted =
 
 
 {-| resources 応答だけ差し替えて起動を済ませる(kind 別のフローの入口)。
-既定画面はホーム(旅路)なので、編集フローの検査はアトリエへ移ってから。
+既定画面はホームなので、編集フローの検査はアトリエへ移ってから。
 journeyState は採番外(id 0)の読み取り封筒で、以降の id はこれまで通り 4 から。
 -}
 bootedWith : E.Value -> App
@@ -558,13 +558,13 @@ discardDialogText =
 suite : Test
 suite =
     describe "配線フロー"
-        [ test "起動: health が通ると files と resources(とホームの旅路)を要求する" <|
+        [ test "起動: health が通ると files と resources(とホームの提案)を要求する" <|
             \() ->
                 start
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
                     |> expectKinds [ "files", "resources", "journeyState" ]
-        , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで旅路を取り直す" <|
+        , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで提案を取り直す" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
@@ -671,13 +671,13 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "なにをつくる?" ]
                     |> ProgramTest.ensureViewHas [ text "あそびを作らせる" ]
                     |> ProgramTest.expectViewHas [ text "まずはこれ" ]
-        , test "ホーム: /journey/state が無いサーバでも落ちず『準備中』に倒れる" <|
+        , test "ホーム: /journey/state が無いサーバでも落ちず、アトリエへの案内に倒れる" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondErr 0 "journeyState" "HTTP 404"
-                    |> ProgramTest.expectViewHas [ text "準備中" ]
+                    |> ProgramTest.expectViewHas [ text "アトリエへどうぞ" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted

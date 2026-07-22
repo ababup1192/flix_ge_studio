@@ -312,7 +312,7 @@ initScaffold =
 
 
 {-| 「つくる」(創作の第一幕)。open = Nothing は既定に従う —
-候補が 1 つも無い時は開いて出迎え(旅路の「つくる」の降り立ち先)、
+候補が 1 つも無い時は開いて出迎え(提案の「つくる」の降り立ち先)、
 候補があれば畳んで「えらぶ」を主役のままにする。
 -}
 type alias Create =
@@ -343,7 +343,7 @@ type alias Create =
     , gamePrompt : PromptState
     , gameCopied : Bool
 
-    -- 旅路の「あそびを考える」(design)から降り立った印。
+    -- 提案の「あそびを考える」(design)から降り立った印。
     -- 「なにをつくる?」の並びで あそび が先頭・推しになる
     , gameHighlight : Bool
 
@@ -610,7 +610,7 @@ type Msg
 
 
 {-| サーバへ送りたい事(封筒の発行は Main)。OutClosed はオーバーレイを
-閉じた合図 — Main が候補と旅路を取り直し、焼きへの誘いを出す。
+閉じた合図 — Main が候補と提案を取り直し、焼きへの誘いを出す。
 -}
 type Out
     = OutNone
@@ -1360,7 +1360,7 @@ gamePromptErrorShown model =
             Nothing
 
 
-{-| 旅路の「あそびを考える」(design)から降り立った。「つくる」を開き、
+{-| 提案の「あそびを考える」(design)から降り立った。「つくる」を開き、
 「なにをつくる?」の並びで あそび を先頭・推しにする(候補があっても畳まない)。
 -}
 openCreateForGame : Model -> Model
@@ -2872,7 +2872,7 @@ viewPromptBox create =
 
 
 {-| 「あそびを作らせる」— ゲームのルールそのものを AI に作らせる道。
-プロンプトを組んでコピーするだけ(作るのは AI で、続きはホームの旅路が拾う)。
+プロンプトを組んでコピーするだけ(作るのは AI で、続きはホームの提案が拾う)。
 -}
 viewGameCard : Bool -> Create -> Html Msg
 viewGameCard starterFresh create =

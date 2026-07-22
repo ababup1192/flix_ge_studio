@@ -438,7 +438,7 @@ emptyWizard =
 type alias Model =
     { screen : Screen
 
-    -- 上部ナビ。ホーム(旅路)の中身は Journey が持つ(Main は配線だけ)
+    -- 上部ナビ。ホームの中身は Journey が持つ(Main は配線だけ)
     , tab : Tab
     , journey : Journey.Model
 
@@ -982,7 +982,7 @@ update msg model =
                         m1
 
                 Atelier.OutClosed ->
-                    -- 装着の祝いを閉じた。世界が変わったので候補と旅路を取り直す。
+                    -- 装着の祝いを閉じた。世界が変わったので候補と提案を取り直す。
                     -- 見た目の検査は裏で自動に進み、変わればホームに知らせが立つ
                     let
                         ( m2, toastFx ) =
@@ -3614,7 +3614,7 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
                     in
-                    -- 既定の画面はホーム(旅路)なので、その中身も最初に取っておく
+                    -- 既定の画面はホームなので、その中身も最初に取っておく
                     ( m2, Effect.batch [ c1, c2, requestInfo "journeyState" ] )
 
                 Ok (Api.HealthErr _) ->
@@ -3711,7 +3711,7 @@ handleOkByKind env model =
                             else
                                 ( m1, Effect.none )
                     in
-                    -- 描き出しが終わった瞬間に旅路を取り直す(知らせが立つ)
+                    -- 描き出しが終わった瞬間に提案を取り直す(知らせが立つ)
                     if model.changesBaking && not changes.baking then
                         ( m2, Effect.batch [ toastFx, requestInfo "journeyState" ] )
 
@@ -3867,7 +3867,7 @@ handleOkByKind env model =
                     D.decodeValue (D.field "retired" D.string) env.body
                         |> Result.toMaybe
             in
-            -- オーバーレイの祝いへ(閉じた時に候補・旅路を取り直す)
+            -- オーバーレイの祝いへ(閉じた時に候補・提案を取り直す)
             ( { model | atelier = Atelier.promoted retired model.atelier }, Effect.none )
 
         "genesisFamilies" ->
@@ -4690,7 +4690,7 @@ handleErrByKind env message model =
                 ( model, Effect.none )
 
         "journeyChangesSeen" ->
-            -- 既読が付けられなくても見る分には困らない。旅路だけ最新へ
+            -- 既読が付けられなくても見る分には困らない。提案だけ最新へ
             ( model, requestInfo "journeyState" )
 
         "galleryList" ->
@@ -4810,7 +4810,7 @@ request kind payload model =
     )
 
 
-{-| 読み取り専用(ホームの旅路・知らせ等)の封筒。応答は kind で受けるので、
+{-| 読み取り専用(ホームの提案・知らせ等)の封筒。応答は kind で受けるので、
 古い応答を id で捨てる採番(reqCounter)を進めない — 既存フロー(ファイルを
 開く・保存等)の封筒 id 並びを乱さないため。id 0 はどの往復とも衝突しない。
 -}
@@ -4947,7 +4947,7 @@ viewNavTabs tab =
         ]
 
 
-{-| ホーム。旅路のカードに、描き出しの実況と「全場面を見る」の入口を添える。
+{-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
 見比べ・全場面のモーダルもここにぶら下がる。
 -}
 viewHome : Model -> Html Msg
@@ -4975,7 +4975,7 @@ viewHome model =
 
 
 {-| 描き出しの実況。エンジンが全場面を出力し直している間だけ、
-旅路のカードの下に小さく出す。
+提案のカードの下に小さく出す。
 -}
 viewDrawingLine : Model -> Html Msg
 viewDrawingLine model =
@@ -5251,7 +5251,7 @@ viewEditing model =
                 [ viewTopbar model
 
                 -- 「つくる」(創作の第一幕)— 調整モードでも最上段に置く。
-                -- 候補ゼロならパネルが開いて出迎える(旅路の「つくる」の降り立ち先)
+                -- 候補ゼロならパネルが開いて出迎える(提案の「つくる」の降り立ち先)
                 , div [ HA.class "shrink-0 px-3 pt-3" ]
                     [ Html.map AtelierMsg (Atelier.viewCreate model.atelier) ]
 
