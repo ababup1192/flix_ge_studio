@@ -18,8 +18,19 @@ mod ResourceDecl {
         title = Option[String],         // エディタ画面に出す表示名。無ければ画面側が id で代用する
         schemaPath = Option[String],    // 入力フォームの形を決めるスキーマファイル
         plugin = Option[String],        // 専用の編集画面プラグイン名。無ければ汎用フォームで編集する
-        builtin = Bool                  // true = サーバ組み込み (ui / hitbox)。project.json 由来は false
+        builtin = Bool,                 // true = サーバ組み込み (ui / hitbox)。project.json 由来は false
+        role = Option[String]           // "material" (素材 = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
     }
+
+    /// アトリエ (つくる) の対象か。role の明示的な "material" だけを通す —
+    /// role 欠落は "tuning" 扱い (fail-open: 古い project.json は素材ゼロになるだけ)。
+    pub def isMaterial(decl: Decl): Bool =
+        decl#role == Some("material")
+
+    /// path が素材 (role=material) のどの宣言に当たるかを選ぶ (純粋)。最初の一致を返す。
+    pub def materialDeclFor(decls: List[Decl], path: String): Option[Decl] =
+        decls |> List.find(decl -> isMaterial(decl)
+            and not List.isEmpty(matchFiles(decl#pattern, path :: Nil)))
 
     /// 一覧・集計ボード 1 枚ぶんの宣言。
     pub type alias DashboardDecl = {
@@ -61,9 +72,9 @@ mod ResourceDecl {
     // 組み込みは専用のプレビュー画面が受け持ち、スキーマ駆動フォームを使わないため。
     pub def builtinDecls(): List[Decl] =
            { id = "ui",     pattern = "*.ui.json",  title = Some("UI"),
-             schemaPath = None, plugin = None, builtin = true }
+             schemaPath = None, plugin = None, builtin = true, role = None }
         :: { id = "hitbox", pattern = "hitbox.json", title = Some("ヒットボックス"),
-             schemaPath = None, plugin = None, builtin = true }
+             schemaPath = None, plugin = None, builtin = true, role = None }
         :: Nil
 
     // ── "editor" セクションの分解 ─────────────────────────
@@ -108,7 +119,8 @@ mod ResourceDecl {
             title      = optionalString("title", declObj),
             schemaPath = schemaPathOf(pattern, optionalString("schema", declObj)),
             plugin     = optionalString("plugin", declObj),
-            builtin    = false
+            builtin    = false,
+            role       = optionalString("role", declObj)
         }
 
     /// dashboards の要素 1 件を DashboardDecl に読む。id と plugin は必須。

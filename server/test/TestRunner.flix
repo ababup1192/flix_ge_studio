@@ -16,6 +16,17 @@ mod TestRunner {
              Runner.isAllowedTarget("bake; rm -rf /"),
              Runner.isAllowedTarget("")))
 
+    /// Makefile に実在する焼き対象だけ配る: 行頭の「対象:」だけが実在の印
+    /// (字下げ・コメント・似た名前は数えない)。空の本文 (読めない) は bake だけに倒す。
+    @Test
+    def testTargetsFromMakefileText(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (Runner.bakeTargets(), "bake" :: "gallery-sounds" :: Nil, "bake" :: Nil, "bake" :: Nil),
+            (Runner.targetsFromMakefileText("bake: all\ngallery-prologue:\ngallery-sounds: bake\n"),
+             Runner.targetsFromMakefileText("bake:\n\t@echo hi\n# gallery-prologue:\n\tgallery-prologue: x\ngallery-sounds:\n"),
+             Runner.targetsFromMakefileText("bake:\nrebake: bake\nbakery:\n"),
+             Runner.targetsFromMakefileText("")))
+
     /// 祝福の名前は「安全な 1 語」かつ .png のみ。経路またぎ・別拡張子は弾く。
     @Test
     def testIsBlessName(): Unit \ Assert =

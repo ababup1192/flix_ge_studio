@@ -10,18 +10,22 @@ module Gallery exposing
     , bakeAccepted
     , bakeFailed
     , blessDone
+    , blessEntryLabel
     , diffCount
     , diffDecoder
     , failed
     , gotDiff
     , gotList
     , gotRunnerLog
+    , gotTargets
     , init
     , isPolling
     , listingDecoder
     , runnerLogDecoder
     , runnerStopped
+    , showsTargetChooser
     , targetString
+    , targetsDecoder
     , update
     , view
     )
@@ -123,6 +127,10 @@ type alias Model =
     -- 差分の見比べ(golden と gallery を並べる)を開いている絵の名前
     , compare : Maybe String
     , bakeTarget : BakeTarget
+
+    -- このプロジェクトが持つ焼きの的(GET /gallery/targets)。
+    -- Nothing = 未着・未実装(fail-open で 3 択全部を見せる)
+    , targets : Maybe (List BakeTarget)
     , runner : Runner
     , bless : Maybe Bless
 
@@ -142,6 +150,7 @@ init =
     , error = Nothing
     , compare = Nothing
     , bakeTarget = TargetBake
+    , targets = Nothing
     , runner = RunnerIdle
     , bless = Nothing
     , goldenBust = 0
@@ -157,6 +166,26 @@ gotList listing model =
 gotDiff : Dict String Status -> Model -> Model
 gotDiff diff model =
     { model | diff = Just diff }
+
+
+{-| GET /gallery/targets の流し込み。選択中の的が消えたら先頭に倒す
+(空リストは「情報なし」と同じ扱い — 3 択のまま)。
+-}
+gotTargets : List BakeTarget -> Model -> Model
+gotTargets targets model =
+    if List.isEmpty targets then
+        { model | targets = Nothing }
+
+    else
+        { model
+            | targets = Just targets
+            , bakeTarget =
+                if List.member model.bakeTarget targets then
+                    model.bakeTarget
+
+                else
+                    List.head targets |> Maybe.withDefault TargetBake
+        }
 
 
 failed : String -> Model -> Model
@@ -221,7 +250,7 @@ update msg model =
         BlessOpened ->
             let
                 names =
-                    diffNames model
+                    blessNames model
             in
             if List.isEmpty names then
                 ( model, OutNone )
@@ -304,18 +333,53 @@ isPolling model =
             False
 
 
-{-| DIFF 判定の名前(祝福の歩き順)。Dict.keys なので名前順で安定。 -}
-diffNames : Model -> List String
-diffNames model =
+{-| 祝福の歩きに乗る名前(名前順で安定)。DIFF に加えて「正解がまだ無い」
+(missingGolden)も含む — 産まれたてのゲームは全部が missingGolden で、
+最初のお手本(golden)を作る入り口がここになる。
+-}
+blessNames : Model -> List String
+blessNames model =
     model.diff
         |> Maybe.withDefault Dict.empty
-        |> Dict.filter (\_ status -> status == StatusDiff)
+        |> Dict.filter (\_ status -> status == StatusDiff || status == MissingGolden)
         |> Dict.keys
 
 
 diffCount : Model -> Int
 diffCount model =
-    List.length (diffNames model)
+    List.length (blessNames model)
+
+
+{-| 歩きの全部が「正解がまだ無い」か(産まれたて)。入り口の文言が変わる。 -}
+allMissingGolden : Model -> Bool
+allMissingGolden model =
+    let
+        statuses =
+            model.diff
+                |> Maybe.withDefault Dict.empty
+                |> Dict.values
+                |> List.filter (\s -> s == StatusDiff || s == MissingGolden)
+    in
+    not (List.isEmpty statuses) && List.all ((==) MissingGolden) statuses
+
+
+{-| 祝福の歩きの入り口ボタンの文言(歩く物が無ければ Nothing)。
+産まれたて(全部 missingGolden)は「最初のお手本にする」に変わる。
+-}
+blessEntryLabel : Model -> Maybe String
+blessEntryLabel model =
+    let
+        count =
+            diffCount model
+    in
+    if count == 0 then
+        Nothing
+
+    else if allMissingGolden model then
+        Just ("最初のお手本にする(" ++ String.fromInt count ++ "件)")
+
+    else
+        Just ("差分を確認して祝福する(" ++ String.fromInt count ++ "件)")
 
 
 
@@ -429,6 +493,31 @@ diffDecoder =
         |> D.map Dict.fromList
 
 
+{-| GET /gallery/targets — {"targets":[...]}。知らない文字列は捨てる
+(欠け・壊れは Main が握りつぶし、3 択のままに倒す)。
+-}
+targetsDecoder : D.Decoder (List BakeTarget)
+targetsDecoder =
+    D.field "targets" (D.list D.string)
+        |> D.map (List.filterMap targetFrom)
+
+
+targetFrom : String -> Maybe BakeTarget
+targetFrom raw =
+    case raw of
+        "bake" ->
+            Just TargetBake
+
+        "gallery-prologue" ->
+            Just TargetPrologue
+
+        "gallery-sounds" ->
+            Just TargetSounds
+
+        _ ->
+            Nothing
+
+
 runnerLogDecoder : D.Decoder RunnerLog
 runnerLogDecoder =
     D.map3 RunnerLog
@@ -516,14 +605,41 @@ view base model =
         )
 
 
-{-| 焼きの操作列。的の選び(3 択)と火の点けボタン。走行中は押せない。 -}
+{-| このプロジェクトが持つ焼きの的。未着・未実装(Nothing)は 3 択全部(fail-open)。 -}
+availableTargets : Model -> List BakeTarget
+availableTargets model =
+    Maybe.withDefault [ TargetBake, TargetPrologue, TargetSounds ] model.targets
+
+
+{-| 的の選び(セグメント)を出すか。的が 1 つしか無ければ選ぶ意味がない
+(焼くボタンだけ)。
+-}
+showsTargetChooser : Model -> Bool
+showsTargetChooser model =
+    List.length (availableTargets model) > 1
+
+
+{-| 焼きの操作列。的の選び(プロジェクトが持つ的だけ)と火の点けボタン。
+走行中は押せない。
+-}
 viewToolbar : Model -> List (Html Msg)
 viewToolbar model =
     let
         busy =
             isBusy model.runner
 
-        targetButton ( target, label ) =
+        targetLabel target =
+            case target of
+                TargetBake ->
+                    "ぜんぶ"
+
+                TargetPrologue ->
+                    "序章の絵"
+
+                TargetSounds ->
+                    "音"
+
+        targetButton target =
             button
                 [ HA.classList
                     [ ( "gallery-seg", True )
@@ -532,16 +648,15 @@ viewToolbar model =
                 , HA.disabled busy
                 , HE.onClick (TargetChosen target)
                 ]
-                [ text label ]
+                [ text (targetLabel target) ]
     in
     [ div [ HA.class "gallery-toolbar mb-4 flex flex-wrap items-center gap-3" ]
-        [ div [ HA.class "gallery-segs flex items-center overflow-hidden rounded border border-edge" ]
-            ([ ( TargetBake, "ぜんぶ" )
-             , ( TargetPrologue, "序章の絵" )
-             , ( TargetSounds, "音" )
-             ]
-                |> List.map targetButton
-            )
+        [ if showsTargetChooser model then
+            div [ HA.class "gallery-segs flex items-center overflow-hidden rounded border border-edge" ]
+                (List.map targetButton (availableTargets model))
+
+          else
+            text ""
         , button
             [ HA.class "btn btn-primary"
             , HA.disabled busy
@@ -603,25 +718,32 @@ viewRunner model =
             ]
 
 
-{-| 差分がある時の誘い。祝福の歩きへの入り口。 -}
+{-| 差分・お手本待ちがある時の誘い。祝福の歩きへの入り口。 -}
 viewBlessNudge : Model -> List (Html Msg)
 viewBlessNudge model =
-    let
-        count =
-            diffCount model
-    in
-    if count == 0 then
-        []
+    case blessEntryLabel model of
+        Nothing ->
+            []
 
-    else
-        [ div [ HA.class "gallery-nudge mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3" ]
-            [ span [ HA.class "text-xs text-ink" ]
-                [ text ("差分が " ++ String.fromInt count ++ " 件あります。見比べて祝福しましょう") ]
-            , span [ HA.class "flex-1" ] []
-            , button [ HA.class "btn btn-primary", HE.onClick BlessOpened ]
-                [ text ("差分を確認して祝福する(" ++ String.fromInt count ++ "件)") ]
+        Just label ->
+            let
+                count =
+                    diffCount model
+
+                message =
+                    if allMissingGolden model then
+                        "お手本がまだない絵が " ++ String.fromInt count ++ " 件あります。見て、お手本を作りましょう"
+
+                    else
+                        "差分が " ++ String.fromInt count ++ " 件あります。見比べて祝福しましょう"
+            in
+            [ div [ HA.class "gallery-nudge mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3" ]
+                [ span [ HA.class "text-xs text-ink" ] [ text message ]
+                , span [ HA.class "flex-1" ] []
+                , button [ HA.class "btn btn-primary", HE.onClick BlessOpened ]
+                    [ text label ]
+                ]
             ]
-        ]
 
 
 {-| 祝福の歩き。1 枚ずつ、正解と今回を並べて選ばせる。 -}
@@ -635,6 +757,11 @@ viewBless base model bless =
             let
                 position =
                     bless.total - List.length bless.remaining + 1
+
+                -- 正解がまだ無い絵は見比べる相手がいない — 今回の絵だけを見せて
+                -- 「この絵をお手本にしますか」と聞く(POST は同じ祝福)
+                missingGolden =
+                    (model.diff |> Maybe.andThen (Dict.get current)) == Just MissingGolden
             in
             [ div [ HA.class "gallery-bless rounded-lg border border-accent/50 bg-panel p-4" ]
                 [ div [ HA.class "mb-3 flex items-center gap-2" ]
@@ -643,12 +770,29 @@ viewBless base model bless =
                     , span [ HA.class "min-w-0 flex-1 truncate font-mono text-xs text-ink", HA.title current ]
                         [ text current ]
                     ]
-                , div [ HA.class "flex flex-wrap gap-4" ]
-                    [ comparePane "正解 (golden)" (goldenUrl base model current)
-                    , comparePane "今回 (gallery)" (imageUrl base "gallery" current)
-                    ]
+                , if missingGolden then
+                    div []
+                        [ div [ HA.class "mb-2 text-xs text-ink-soft" ]
+                            [ text "まだお手本がありません — この絵をお手本にしますか" ]
+                        , div [ HA.class "flex flex-wrap gap-4" ]
+                            [ comparePane "今回 (gallery)" (imageUrl base "gallery" current) ]
+                        ]
+
+                  else
+                    div [ HA.class "flex flex-wrap gap-4" ]
+                        [ comparePane "正解 (golden)" (goldenUrl base model current)
+                        , comparePane "今回 (gallery)" (imageUrl base "gallery" current)
+                        ]
                 , div [ HA.class "mt-4 flex items-center gap-3" ]
-                    [ button [ HA.class "btn btn-primary", HE.onClick BlessAccepted ] [ text "✓ 祝福する" ]
+                    [ button [ HA.class "btn btn-primary", HE.onClick BlessAccepted ]
+                        [ text
+                            (if missingGolden then
+                                "✓ お手本にする"
+
+                             else
+                                "✓ 祝福する"
+                            )
+                        ]
                     , button [ HA.class "btn", HE.onClick BlessHeld ] [ text "保留" ]
                     , span [ HA.class "flex-1" ] []
                     , button [ HA.class "btn btn-ghost", HE.onClick BlessQuit ] [ text "やめる" ]

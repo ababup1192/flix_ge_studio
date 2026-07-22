@@ -62,13 +62,15 @@ mod Editor {
         let caches = Caches.make();
         let runner = Runner.make();
         let game = Game.make();
+        // 新しいゲームづくり (make new-game) 用の走行権。焼き・ゲーム起動と同時でも走れる。
+        let scaffold = Runner.make();
         let webRoot = webRootFromEnv();
         let server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         discard server.createContext("/", new HttpHandler {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, webRoot, exchange)
                 } catch {
                     case e: Exception => {
                         let message = e.toString();
@@ -96,7 +98,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, scaffold: Runner.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -107,6 +109,16 @@ mod Editor {
             case ("GET", "/projects")  => handleProjects(selection, exchange)
             case ("POST", "/project")  => handleSelectProject(selection, readBody(exchange), exchange)
             case ("GET", "/running-games") => handleRunningGames(exchange)
+            // 新しいゲームづくりはプロジェクト未選択でも呼べる (まっさらからの入口なので)。
+            case ("POST", "/projects/new") => {
+                let (status, json) = Scaffold.startNew(scaffold, readBody(exchange));
+                sendJson(status, json, exchange)
+            }
+            case ("GET", "/projects/new/log") => sendJson(200, Runner.logJson(scaffold), exchange)
+            case ("POST", "/scaffold/doc") => withProject(selection, exchange, dir -> {
+                let (status, json) = Scaffold.doc(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("GET", "/health")    => withProject(selection, exchange, dir -> handleHealth(dir, exchange))
             case ("GET", "/files")     => withProject(selection, exchange, dir -> handleFiles(dir, exchange))
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
@@ -137,6 +149,8 @@ mod Editor {
                 handleGallerySound(dir, params, exchange))
             case ("GET", "/gallery/diff") => withProject(selection, exchange, dir ->
                 sendJson(200, Gallery.diffJson(dir), exchange))
+            case ("GET", "/gallery/targets") => withProject(selection, exchange, dir ->
+                sendJson(200, Runner.targetsJson(dir), exchange))
             case ("GET", "/journey/state") => withProject(selection, exchange, dir ->
                 sendJson(200, Journey.stateJson(dir), exchange))
             case ("POST", "/gallery/bake") => withProject(selection, exchange, dir -> {
@@ -154,6 +168,24 @@ mod Editor {
                 handleAtelierPreview(dir, params, exchange))
             case ("POST", "/atelier/promote") => withProject(selection, exchange, dir -> {
                 let (status, json) = Atelier.promote(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/atelier/slots") => withProject(selection, exchange, dir ->
+                sendJson(200, Atelier.slotsJson(dir), exchange))
+            case ("GET", "/prompt/atelier") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.promptAtelierJson(dir, params);
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/prompt/wire") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.promptWireJson(dir, params);
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/prompt/game") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.promptGameJson(dir, params);
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/atelier/copy") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.copy(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("GET", "/game/status") => withProject(selection, exchange, dir ->
@@ -417,7 +449,7 @@ mod Editor {
     /// エラーにならず「schema 未指定」として黙って sibling 規約へ倒れ、フォームが出ない理由が
     /// 誰にも分からなくなる — ここで名指しすることでだけ気づける。
     def declKeyWarnings(projectJson: Json): List[String] =
-        let known = Set#{"id", "pattern", "title", "schema", "plugin"};
+        let known = Set#{"id", "pattern", "title", "schema", "plugin", "role"};
         let decls = JsonCodec.expectObject(projectJson)
             |> Option.flatMap(obj -> Map.get("editor", obj))
             |> Option.flatMap(JsonCodec.expectObject)
@@ -433,7 +465,7 @@ mod Editor {
                 let declId = Map.get("id", obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("?");
                 Map.keysOf(obj) |> Set.toList
                     |> List.filter(k -> not Set.memberOf(k, known))
-                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin)")
+                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin / role)")
         })
 
     /// 宣言と実ファイルの健康診断。応答は 200 のまま warnings で「見える化」だけする —
@@ -621,6 +653,16 @@ mod Editor {
         });
         match served {
             case Some((relPath, fullPath)) =>
+                // HTML はキャッシュさせない — 古い index.html がハッシュ違いの旧 JS を
+                // 指し続け、「リロードしても更新されない」罠になるため。ハッシュ付き
+                // assets/ は中身が変われば名前も変わるので長期キャッシュしてよい。
+                let headers = exchange.getResponseHeaders();
+                if (String.endsWith(suffix = ".html", relPath))
+                    headers.set("Cache-Control", "no-cache")
+                else if (String.startsWith(prefix = "assets/", relPath))
+                    headers.set("Cache-Control", "public, max-age=31536000, immutable")
+                else
+                    ();
                 sendBytes(contentTypeOf(relPath), Files.readAllBytes(new JFile(fullPath).toPath()), exchange)
             case None =>
                 sendJson(404, errorJson("not found: ${path}"), exchange)

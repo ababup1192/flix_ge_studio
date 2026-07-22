@@ -221,7 +221,7 @@ booted =
         |> respondOk 3 "resources" resourcesBody
         |> ProgramTest.clickButton "アトリエ"
         -- アトリエは開くたび候補えらび(swap)の材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus" ]
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots" ]
 
 
 {-| ボードを開いて uses 全ファイル(4〜7)が届いた状態。 -}
@@ -310,7 +310,7 @@ suite =
                     -- 既定のビジュアルは textarea を出さないので、コードへ切り替えてから汚す
                     |> ProgramTest.clickButton "コード"
                     |> ProgramTest.simulateDomEvent
-                        (Query.find [ tag "textarea" ])
+                        (Query.find [ tag "textarea", class "resize-none" ])
                         ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ }" ) ] ) ] )
                     |> ProgramTest.clickButton "モンスター図鑑"
                     |> ensureKinds [ "getFile", "getFile", "getFile", "getFile" ]

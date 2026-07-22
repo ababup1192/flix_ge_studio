@@ -34,6 +34,24 @@ const PANE_KEY = "flix_ge_resource_editor.paneWidths";
 
 // 文書編集はサーバへ行かずここで解決する(封筒の流儀はサーバ往復と揃える)
 function handleLocal(kind: string, payload: any): unknown | undefined {
+  if (kind === "copyClipboard") {
+    // プロンプトのコピー。navigator.clipboard が無い環境(非 https 等)は
+    // 隠しテキストエリア + execCommand に倒す
+    const text = String((payload as { text: string }).text ?? "");
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text).then(() => ({}));
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    if (!ok) throw new Error("クリップボードに書き込めませんでした");
+    return {};
+  }
   if (kind === "saveUiPrefs") {
     localStorage.setItem(PANE_KEY, JSON.stringify(payload));
     return {};
@@ -81,8 +99,8 @@ app.ports.apiResponse.send({ id: 0, kind: "serverBase", ok: true, body: { base: 
 // Elm → API(kind で振り分け、応答は id 付きの封筒 {id, kind, ok, body} で返す)
 app.ports.apiRequest.subscribe(async (req: { id: number; kind: string; payload: unknown }) => {
   try {
-    const body =
-      handleLocal(req.kind, req.payload) ?? (await api.handle(req.kind, req.payload));
+    // handleLocal は Promise を返す事もある(clipboard)ので、どちらも await で均す
+    const body = await (handleLocal(req.kind, req.payload) ?? api.handle(req.kind, req.payload));
     app.ports.apiResponse.send({ id: req.id, kind: req.kind, ok: true, body });
   } catch (e) {
     app.ports.apiResponse.send({

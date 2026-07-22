@@ -314,7 +314,7 @@ bootedWith resources =
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
         -- アトリエは開くたび候補えらび(swap)の材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus" ]
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots" ]
 
 
 {-| kind = ui の宣言(プラグイン・スキーマ無し)。エンジン焼き(/preview/ui)の対象。 -}
@@ -504,7 +504,7 @@ dirtyHitbox : App
 dirtyHitbox =
     openedHitbox
         |> ProgramTest.simulateDomEvent
-            (Query.find [ tag "textarea" ])
+            (Query.find [ tag "textarea", class "resize-none" ])
             ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ \"a\": 1 }" ) ] ) ] )
 
 
@@ -568,7 +568,7 @@ suite =
             \() ->
                 booted
                     |> ProgramTest.clickButton "ギャラリー"
-                    |> expectKinds [ "galleryList", "galleryDiff" ]
+                    |> expectKinds [ "galleryList", "galleryDiff", "galleryTargets" ]
         , test "ホーム: 提案の主ボタンで行き先のタブへ移り、その中身を要求する" <|
             \() ->
                 bootedWith resourcesBody
@@ -595,7 +595,7 @@ suite =
                             ]
                         )
                     |> ProgramTest.clickButton "ギャラリーへ"
-                    |> expectKinds [ "galleryList", "galleryDiff" ]
+                    |> expectKinds [ "galleryList", "galleryDiff", "galleryTargets" ]
         , test "ホーム: create(新しい一巡)は済み(✓)も現在地も点けず、始まりの一言を出す" <|
             \() ->
                 bootedWith resourcesBody
@@ -624,6 +624,36 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "新しい一巡を始めましょう" ]
                     |> ProgramTest.ensureViewHasNot [ text "✓ 候補を選ぶ" ]
                     |> ProgramTest.expectViewHasNot [ class "journey-step-current" ]
+        , test "ホーム: design(あそびを考える)で降り立つと、つくるが開きゲームカードが見える" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState" ]
+                    |> respondOk 0
+                        "journeyState"
+                        (E.object
+                            [ ( "suggestion"
+                              , E.object
+                                    [ ( "id", E.string "design" )
+                                    , ( "title", E.string "あそびを考えよう" )
+                                    , ( "detail", E.string "どんなゲームにするか、AI と作ります。" )
+                                    , ( "nav", E.string "atelier" )
+                                    ]
+                              )
+                            , ( "checks"
+                              , E.object
+                                    [ ( "atelierCandidates", E.int 0 )
+                                    , ( "staleGallery", E.bool False )
+                                    , ( "diffCount", E.int 0 )
+                                    ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.clickButton "アトリエへ"
+                    -- 「なにをつくる?」が開き、あそびが推し(まずはこれ)で並ぶ
+                    |> ProgramTest.ensureViewHas [ text "なにをつくる?" ]
+                    |> ProgramTest.ensureViewHas [ text "あそびを作らせる" ]
+                    |> ProgramTest.expectViewHas [ text "まずはこれ" ]
         , test "ホーム: /journey/state が無いサーバでも落ちず『準備中』に倒れる" <|
             \() ->
                 bootedWith resourcesBody
@@ -866,9 +896,9 @@ suite =
         , test "モード: ビジュアル既定では textarea が無く、コードに切り替えると出る" <|
             \() ->
                 openedLevel
-                    |> ProgramTest.ensureViewHasNot [ tag "textarea" ]
+                    |> ProgramTest.ensureViewHasNot [ tag "textarea", class "resize-none" ]
                     |> ProgramTest.clickButton "コード"
-                    |> ProgramTest.expectViewHas [ tag "textarea" ]
+                    |> ProgramTest.expectViewHas [ tag "textarea", class "resize-none" ]
         , test "モード: ビジュアル(テキスト非表示)での編集も保存(ifMtime 付き putFile)に乗る" <|
             \() ->
                 openedLevel
@@ -987,7 +1017,7 @@ suite =
                     |> ProgramTest.ensureViewHasNot [ text "開けません" ]
                     |> ProgramTest.ensureViewHas [ text "走るゲームが本番プレビュー" ]
                     |> ProgramTest.ensureViewHas [ text "保存すると即反映されます" ]
-                    |> ProgramTest.expectViewHas [ tag "textarea" ]
+                    |> ProgramTest.expectViewHas [ tag "textarea", class "resize-none" ]
         , test "kind 共有スキーマ: 宣言の schema パスを取りに行く(隣接 b1.dungeon.schema.json は推測しない)" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
@@ -1034,7 +1064,7 @@ suite =
                     |> ProgramTest.ensureViewHasNot [ text "points" ]
                     |> ProgramTest.ensureViewHas
                         [ text "フォーム未対応の項目が 1 件あります(テキスト編集で編集できます)" ]
-                    |> ProgramTest.expectViewHas [ tag "textarea" ]
+                    |> ProgramTest.expectViewHas [ tag "textarea", class "resize-none" ]
         , test "resources の warnings(宣言と実ファイルのずれ)が左レールに出る" <|
             \() ->
                 bootedWith warnedResourcesBody
@@ -1118,7 +1148,7 @@ suite =
                     |> ProgramTest.clickButton "ライブ反映"
                     |> ensureKinds [ "saveUiPrefs" ]
                     |> ProgramTest.simulateDomEvent
-                        (Query.find [ tag "textarea" ])
+                        (Query.find [ tag "textarea", class "resize-none" ])
                         ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ \"a\": 1 }" ) ] ) ] )
                     -- debounce 中はまだ飛ばない
                     |> ensureKinds []
@@ -1134,11 +1164,11 @@ suite =
                     |> ProgramTest.clickButton "ライブ反映"
                     |> ensureKinds [ "saveUiPrefs" ]
                     |> ProgramTest.simulateDomEvent
-                        (Query.find [ tag "textarea" ])
+                        (Query.find [ tag "textarea", class "resize-none" ])
                         ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ \"a\": 1 }" ) ] ) ] )
                     |> ProgramTest.advanceTime 150
                     |> ProgramTest.simulateDomEvent
-                        (Query.find [ tag "textarea" ])
+                        (Query.find [ tag "textarea", class "resize-none" ])
                         ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ \"a\": 2 }" ) ] ) ] )
                     -- 1 本目の期限が来ても(予約番号がずれているので)保存しない
                     |> ProgramTest.advanceTime 150

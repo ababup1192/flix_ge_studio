@@ -43,15 +43,21 @@ mod Atelier {
                 |> Option.flatMap(kind -> if (kind == stem or kind == "") None else Some(".${kind}.json"))
         }
 
-    /// 候補がスロットと互換か。スロットに entityId があれば一致が条件、
-    /// 無ければ Doc の種類 (".<kind>.json" の尻尾) の一致に落とす。
+    /// 候補がスロットと互換か。スロットに entityId があれば一致が条件。
+    /// 無ければ「種類が同じ+名前がスロットの続き」に落とす — 種類だけだと
+    /// summer の候補が autumn 等ぜんぶのテーマに現れてしまう。
+    /// 例: スロット "summer.theme.json" ↔ 候補 "summer.a.theme.json"。
     pub def isCompatible(slotEntityId: Option[String], slotName: String,
                          candEntityId: Option[String], candName: String): Bool =
         match slotEntityId {
             case Some(entityId) => candEntityId == Some(entityId)
             case None           => match (kindSuffix(slotName), kindSuffix(candName)) {
-                case (Some(a), Some(b)) => a == b
-                case _                  => false
+                case (Some(a), Some(b)) =>
+                    a == b and {
+                        let slotBase = String.dropRight(String.length(a), slotName);
+                        String.startsWith(prefix = "${slotBase}.", candName)
+                    }
+                case _ => false
             }
         }
 
@@ -91,6 +97,192 @@ mod Atelier {
     /// 焼き直しが要るか: PNG が無い (mtime が 0 以下) か、元 JSON より古い (= 未焼成)。
     pub def needsBake(jsonMtime: Int64, pngMtime: Int64): Bool =
         pngMtime <= 0i64 or pngMtime < jsonMtime
+
+    // ── つくる (M4): スロット一覧・プロンプト・自作コピー ──
+
+    /// 案数は 1〜9 に収める (0 や負数・二桁は端に丸める)。
+    pub def clampCount(n: Int32): Int32 =
+        Int32.max(1, Int32.min(9, n))
+
+    /// 自作コピーの元の名前 (拡張子なしの 1 語)。英数と `_` `-` と途中の `.` だけを許す。
+    /// 先頭・末尾の `.` や `..`・区切り文字は経路いじりの芽なので弾く。
+    pub def isCopyBaseName(name: String): Bool =
+        Gallery.isSafeName(name)
+            and not String.startsWith(prefix = ".", name)
+            and not String.endsWith(suffix = ".", name)
+            and String.forAll(c ->
+                (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or Char.isDigit(c) or c == '_' or c == '-' or c == '.', name)
+
+    /// 自作コピーの置き先の名前: スロットの種類の尻尾を受け継ぐ。
+    /// "prologue.sprite.json" と "villager.d" → "villager.d.sprite.json"。
+    pub def copyTargetName(slotName: String, name: String): String =
+        match kindSuffix(slotName) {
+            case Some(suffix) => "${name}${suffix}"
+            case None         => "${name}.json"
+        }
+
+    /// /atelier-draft スキル呼び出しの形の日本語プロンプト (純粋)。長い手順は
+    /// ゲーム側 .claude/skills の /atelier-draft に置いてあり、ここは参照するだけ。
+    pub def atelierPrompt(projectDir: String, slot: String, entityId: Option[String],
+                          schemaPath: String, count: Int32, direction: Option[String]): String =
+        let entityText = entityId |> Option.getWithDefault("なし");
+        let directionText = direction |> Option.getWithDefault("おまかせ");
+        String.unlines(
+            "/atelier-draft を実行してください。"
+            :: "対象プロジェクト: ${projectDir}"
+            :: "スロット: ${slot} (entityId: ${entityText}, スキーマ: ${schemaPath})"
+            :: "案数: ${clampCount(count)} / 方向性: ${directionText}"
+            :: "候補は atelier/ に置き、make atelier-preview まで済ませてください。assets/ には書かないこと。"
+            :: Nil)
+
+    /// /wire-doc スキル呼び出しの形の日本語プロンプト (純粋)。
+    pub def wirePrompt(projectDir: String, doc: String): String =
+        String.unlines(
+            "/wire-doc を実行してください。"
+            :: "対象プロジェクト: ${projectDir}"
+            :: "対象Doc: ${doc}"
+            :: "橋渡しテストは3本まで。make check / make test で確認してください。"
+            :: Nil)
+
+    /// 「あそびを作らせる」の日本語プロンプト (純粋)。長い規約はゲーム側の
+    /// AGENTS.md と .claude/skills に置いてあり、ここは参照するだけ。
+    pub def gamePrompt(projectDir: String, direction: String): String =
+        String.unlines(
+            "このゲームに遊びを実装してください。"
+            :: "対象プロジェクト: ${projectDir}"
+            :: "どんな遊びか: ${direction}"
+            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、調整する数値や配置は Doc(スキーマは sections 方言、/scaffold で増やせる)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
+            :: "仕上げ: make check / make test を緑にし、Bake.all の場面を遊びが伝わる絵に育て、make bake まで済ませる。素材の候補が要るなら atelier/ に置き atelier-preview まで(assets/ 直書き禁止)。"
+            :: Nil)
+
+    /// スキーマの description から一行の手引きを作る (純粋): 最初の「。」までで切り、
+    /// 80 文字に収める。「。」無しはそのまま (切りようがない)。
+    pub def hintOf(description: String): String =
+        let sentence = match String.splitOn(substr = "。", description) {
+            case head :: _ :: _ => head + "。"
+            case _              => description
+        };
+        String.takeLeft(80, sentence)
+
+    /// スロットの手引き: スキーマ JSON のトップの description の最初の文。
+    /// スキーマ無し・読めない・description 欠けは "" (fail-open)。
+    def slotHint(dir: String, slotPath: String, decl: ResourceDecl.Decl): String \ IO =
+        let schemaPath = decl#schemaPath
+            |> Option.getWithDefault(ResourceDecl.siblingSchemaPath(slotPath));
+        fieldString("description", topFields(readText("${dir}/${schemaPath}")))
+            |> Option.map(hintOf)
+            |> Option.getWithDefault("")
+
+    /// project.json の editor.resources 宣言を読む (壊れ・欠けは空 = fail-open)。
+    def resourceDecls(dir: String): List[ResourceDecl.Decl] \ IO =
+        JsonCompat.parse(readText("${dir}/project.json"))
+            |> Option.flatMap(json -> ResourceDecl.fromProjectJson(json) |> Result.toOption)
+            |> Option.map(decls -> decls#resources)
+            |> Option.getWithDefault(Nil)
+
+    /// GET /atelier/slots の本文。assets/ 直下の JSON のうち、素材 (role=material) の
+    /// 宣言に当たるものだけを並べる。*.schema.json は仕様書なので除く。
+    pub def slotsJson(dir: String): Json \ IO =
+        let decls = resourceDecls(dir);
+        let slots = listEntries(dir, "assets")
+            |> List.filter(entry -> not String.endsWith(suffix = ".schema.json", entry#name))
+            |> List.filterMap(entry -> {
+                let path = "assets/${entry#name}";
+                ResourceDecl.materialDeclFor(decls, path)
+                    |> Option.map(decl -> JObject(Map#{
+                        "file"     => JString(path),
+                        "entityId" => optString(entry#entityId),
+                        "kind"     => JString(kindOf(entry#name, decl)),
+                        "title"    => JString(decl#title |> Option.getWithDefault(decl#id)),
+                        "hint"     => JString(slotHint(dir, path, decl))
+                    }))
+            });
+        JObject(Map#{"slots" => JArray(List.toVector(slots))})
+
+    /// スロットの種類名: 名前の尻尾 (".sprite.json" → "sprite")。尻尾が無ければ宣言 id で代用。
+    def kindOf(name: String, decl: ResourceDecl.Decl): String =
+        match kindSuffix(name) {
+            case Some(suffix) => String.dropRight(5, String.dropLeft(1, suffix))
+            case None         => decl#id
+        }
+
+    /// GET /prompt/atelier?slot=…&count=…&direction=… の応答 (status, body)。
+    /// スロットは経路の門番と素材宣言の両方に当たって初めて通す。
+    pub def promptAtelierJson(dir: String, params: Map[String, String]): (Int32, Json) \ IO =
+        match Map.get("slot", params) {
+            case None => (400, failJson("slot を指定してください"))
+            case Some(slot) =>
+                if (not isSlotPath(slot))
+                    (400, failJson("不正なスロットの経路です (assets/ 直下のみ): ${slot}"))
+                else match ResourceDecl.materialDeclFor(resourceDecls(dir), slot) {
+                    case None => (400, failJson("素材 (role=material) のスロットではありません: ${slot}"))
+                    case Some(decl) =>
+                        let entityId = fieldString("entityId", topFields(readText("${dir}/${slot}")));
+                        let schemaPath = decl#schemaPath
+                            |> Option.getWithDefault(ResourceDecl.siblingSchemaPath(slot));
+                        let count = Map.get("count", params)
+                            |> Option.flatMap(Int32.fromString)
+                            |> Option.getWithDefault(3);
+                        let direction = Map.get("direction", params)
+                            |> Option.filter(text -> text != "");
+                        (200, JObject(Map#{
+                            "prompt" => JString(atelierPrompt(dir, slot, entityId, schemaPath, count, direction))
+                        }))
+                }
+        }
+
+    /// GET /prompt/wire?doc=… の応答 (status, body)。doc は assets/ 直下の JSON のみ。
+    pub def promptWireJson(dir: String, params: Map[String, String]): (Int32, Json) =
+        match Map.get("doc", params) {
+            case Some(doc) if isSlotPath(doc) =>
+                (200, JObject(Map#{"prompt" => JString(wirePrompt(dir, doc))}))
+            case Some(doc) => (400, failJson("不正な Doc の経路です (assets/ 直下のみ): ${doc}"))
+            case None      => (400, failJson("doc を指定してください"))
+        }
+
+    /// GET /prompt/game?direction=… の応答 (status, body)。どんな遊びかは必須
+    /// (空のままではプロンプトにならないので 400 で聞き返す)。
+    pub def promptGameJson(dir: String, params: Map[String, String]): (Int32, Json) =
+        match Map.get("direction", params) |> Option.filter(text -> text != "") {
+            case Some(direction) =>
+                (200, JObject(Map#{"prompt" => JString(gamePrompt(dir, direction))}))
+            case None => (400, failJson("direction を指定してください (どんな遊びかを言葉で)"))
+        }
+
+    /// POST /atelier/copy (body: {slot, name}) — スロットの写しを atelier/ に置く自作の出発点。
+    /// note を「自作 (元: スロット)」に差し替え、entityId ほか中身はそのまま受け継ぐ。
+    pub def copy(dir: String, bodyText: String): (Int32, Json) \ IO =
+        let fields = JsonCompat.parse(bodyText)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.getWithDefault(Map#{});
+        match (fieldString("slot", fields), fieldString("name", fields)) {
+            case (Some(slot), Some(name)) => copyChecked(dir, slot, name)
+            case _ => (400, failJson("body は {slot, name} の JSON で指定してください"))
+        }
+
+    def copyChecked(dir: String, slot: String, name: String): (Int32, Json) \ IO =
+        if (not isSlotPath(slot))
+            (400, failJson("不正なスロットの経路です (assets/ 直下のみ): ${slot}"))
+        else if (not isCopyBaseName(name))
+            (400, failJson("不正な名前です (英数・_ - と途中の . のみ): ${name}"))
+        else if (not new JFile("${dir}/${slot}").isFile())
+            (400, failJson("スロットがありません: ${slot}"))
+        else {
+            let slotName = String.dropLeft(String.length("assets/"), slot);
+            let target = "atelier/${copyTargetName(slotName, name)}";
+            if (new JFile("${dir}/${target}").isFile())
+                (409, failJson("すでにあります: ${target}"))
+            else match JsonCompat.parse(readText("${dir}/${slot}")) |> Option.flatMap(JsonCodec.expectObject) {
+                case None => (400, failJson("スロットの JSON が読めません: ${slot}"))
+                case Some(obj) => {
+                    let stamped = Map.insert("note", JString("自作 (元: ${slot})"), obj);
+                    discard new JFile("${dir}/atelier").mkdirs();
+                    writeBytes("${dir}/${target}",
+                        (Util.Json.toPrettyString(2, JObject(stamped)) + "\n").getBytes("UTF-8"));
+                    (200, JObject(Map#{"ok" => JBool(true), "file" => JString(target)}))
+                }
+            }
+        }
 
     // ── 候補一覧 (GET /atelier/candidates) ────────────────
 

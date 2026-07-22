@@ -4,7 +4,8 @@
 mod TestJourney {
 
     def checks(candidates: Int32, stale: Bool, diffs: Int32): Journey.Checks =
-        { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs }
+        { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
+          goldenEmpty = false, hasStarterDoc = false }
 
     def idNav(suggestion: Journey.Suggestion): (String, String) =
         (suggestion#id, suggestion#nav)
@@ -32,4 +33,32 @@ mod TestJourney {
              Journey.isStale(Nil, 20i64 :: Nil),
              Journey.isStale(Nil, Nil),
              Journey.isStale(20i64 :: Nil, 20i64 :: Nil)))
+
+
+    /// 産まれたて (お手本が空) は、通常の祝福ではなく説明つきの firstBless になる。
+    /// 候補が居るときはそちらが勝つ (優先順位は据え置き)。
+    @Test
+    def testFirstBless(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("firstBless", "bless", "pick"),
+            (Journey.suggest({ atelierCandidates = 0, staleGallery = false, diffCount = 1, goldenEmpty = true, hasStarterDoc = false })#id,
+             Journey.suggest({ atelierCandidates = 0, staleGallery = false, diffCount = 1, goldenEmpty = false, hasStarterDoc = false })#id,
+             Journey.suggest({ atelierCandidates = 2, staleGallery = false, diffCount = 1, goldenEmpty = true, hasStarterDoc = false })#id))
+
+    /// 産まれたてスターター (見本 Doc が居て、他にやる事が無い) は create でなく design。
+    /// pick・bake・bless・firstBless はどれも design より優先。見本 Doc が無ければ create のまま。
+    @Test
+    def testDesign(): Unit \ Assert =
+        def withStarter(candidates: Int32, stale: Bool, diffs: Int32, golden: Bool): String =
+            Journey.suggest({ atelierCandidates = candidates, staleGallery = stale,
+                              diffCount = diffs, goldenEmpty = golden, hasStarterDoc = true })#id;
+        Assert.assertEq(
+            expected = (("design", "atelier"), "create", "pick", "bake", "bless", "firstBless"),
+            ((idNav(Journey.suggest({ atelierCandidates = 0, staleGallery = false,
+                                      diffCount = 0, goldenEmpty = false, hasStarterDoc = true }))),
+             Journey.suggest(checks(0, false, 0))#id,
+             withStarter(1, false, 0, false),
+             withStarter(0, true, 0, false),
+             withStarter(0, false, 1, false),
+             withStarter(0, false, 1, true)))
 }

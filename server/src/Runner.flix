@@ -12,6 +12,7 @@ mod Runner {
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.io.{File => JFile}
     import java.io.FileOutputStream
+    import java.lang.{String => JavaString}
     import java.io.InputStreamReader
     import java.io.BufferedReader
     import java.nio.file.Files
@@ -32,6 +33,32 @@ mod Runner {
     /// 走らせてよい make 対象の白名前簿。ここに無い対象は 400 で断る。
     pub def isAllowedTarget(target: String): Bool =
         Set.memberOf(target, Set#{"bake", "gallery-prologue", "gallery-sounds", "atelier-preview"})
+
+    /// 「焼く」の白名前簿 (この順で配る)。atelier-preview は試作の窓口なのでここには入れない。
+    pub def bakeTargets(): List[String] =
+        "bake" :: "gallery-prologue" :: "gallery-sounds" :: Nil
+
+    /// Makefile の本文に実在する焼き対象だけを選ぶ (純粋)。行頭が「<対象>:」の行が
+    /// あれば実在とみなす (白名前簿の中しか見ないので安い走査で足りる)。
+    /// 本文が空 (Makefile が無い・読めない) は "bake" だけに倒す (fail-open)。
+    pub def targetsFromMakefileText(text: String): List[String] =
+        if (text == "")
+            "bake" :: Nil
+        else {
+            let lines = String.lines(text);
+            bakeTargets() |> List.filter(target ->
+                List.exists(line -> String.startsWith(prefix = "${target}:", line), lines))
+        }
+
+    /// GET /gallery/targets の本文。選択中プロジェクトの Makefile に実在する焼き対象を配る。
+    pub def targetsJson(dir: String): Json \ IO =
+        let file = new JFile("${dir}/Makefile");
+        let text = if (file.isFile()) new JavaString(Files.readAllBytes(file.toPath()), "UTF-8") else "";
+        JObject(Map#{
+            "targets" => JArray(targetsFromMakefileText(text)
+                |> List.map(target -> JString(target))
+                |> List.toVector)
+        })
 
     /// 祝福してよい名前か: 経路をまたがない 1 語 (Gallery と同じ門番) で .png のみ。
     pub def isBlessName(name: String): Bool =
@@ -64,6 +91,10 @@ mod Runner {
     /// 走行権を取れたら起動する。putIfAbsent が入れ物ごと排他になるので、
     /// 同時に来た 2 本のうち 1 本だけが通る。Game (make debug) も別の器でこれを使う。
     pub def launchTarget(state: State, dir: String, target: String, busy: {busy = String}): (Int32, Json) \ IO =
+        launchMake(state, dir, target, Nil, busy)
+
+    /// launchTarget の一般形: `make target ARG=…` のように追加引数を渡せる (Scaffold が使う)。
+    pub def launchMake(state: State, dir: String, target: String, extraArgs: List[String], busy: {busy = String}): (Int32, Json) \ IO =
         let prev: String = state.putIfAbsent("running", "1");
         if (not Object.isNull(prev))
             (409, failJson(busy#busy))
@@ -72,7 +103,7 @@ mod Runner {
             discard state.put("target", target);
             discard state.remove("exitCode");
             discard state.put("log", "");
-            launch(state, dir, target);
+            launch(state, dir, target, extraArgs);
             (202, JObject(Map#{
                 "ok"    => JBool(true),
                 "runId" => JNumber(JsonCodec.intToBd(runId))
@@ -98,12 +129,12 @@ mod Runner {
     // WhyNot: Flix の region + spawn を使わない — region は出口で合流を待つので、
     // 202 を先に返して裏で焼き続けるという形にならない。また Runnable でなく Callable なのは
     // `run` が Flix の予約語で匿名クラスの手続き名に書けないため。
-    def launch(state: State, dir: String, target: String): Unit \ IO =
+    def launch(state: State, dir: String, target: String, extraArgs: List[String]): Unit \ IO =
         let executor = Executors.newSingleThreadExecutor();
         discard executor.submit(new Callable[String] {
             def call(_this: Callable[String]): String \ IO = {
                 try {
-                    runMake(state, dir, target)
+                    runMake(state, dir, target, extraArgs)
                 } catch {
                     case e: Exception => {
                         appendLine(state, "[runner] ${e.toString()}");
@@ -118,10 +149,11 @@ mod Runner {
     /// プロジェクトの dir で `make target` を走らせ、標準出力+標準エラーを 1 行ずつログへ積む。
     /// この Mac の DEVELOPER_DIR/SDKROOT は nix パスが刺さっていて子プロセスを壊すので外す
     /// (Editor.runCommand と同じ理由)。
-    def runMake(state: State, dir: String, target: String): Unit \ IO =
+    def runMake(state: State, dir: String, target: String, extraArgs: List[String]): Unit \ IO =
         let args = new ArrayList();
         discard args.add("make");
         discard args.add(target);
+        foreach (extra <- extraArgs) discard args.add(extra);
         let pb = new ProcessBuilder(args);
         discard pb.directory(new JFile(dir));
         discard pb.redirectErrorStream(true);

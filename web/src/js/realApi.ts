@@ -89,6 +89,9 @@ export function realApi(base: string): Api {
           return getJson(`${base}/gallery/list`);
         case "galleryDiff":
           return getJson(`${base}/gallery/diff`);
+        case "galleryTargets":
+          // プロジェクトが持つ焼きの的。404(旧サーバ)は Elm 側が 3 択に倒す
+          return getJson(`${base}/gallery/targets`);
         case "bakeStart": {
           // 409(既に走っている)は失敗ではなく「走っている」の便り。
           // {busy:true} の ok 応答に均して Elm へ渡す(ログ取得が本当の姿を教える)
@@ -130,6 +133,55 @@ export function realApi(base: string): Api {
           }
           return res.json();
         }
+        case "atelierSlots":
+          return getJson(`${base}/atelier/slots`);
+        case "promptAtelier": {
+          const q = new URLSearchParams({
+            slot: String(payload.slot),
+            count: String(payload.count),
+            direction: String(payload.direction ?? ""),
+          });
+          return getJson(`${base}/prompt/atelier?${q}`);
+        }
+        case "promptGame": {
+          // 400 は {ok:false, error:日本語} — raiseHttpError が " — 理由" で投げ、
+          // Elm 側が理由だけ表示する。404(旧サーバ)は「準備中」に倒れる
+          const q = new URLSearchParams({ direction: String(payload.direction ?? "") });
+          return getJson(`${base}/prompt/game?${q}`);
+        }
+        case "promptWire":
+          return getJson(`${base}/prompt/wire?doc=${encodeURIComponent(payload.doc)}`);
+        case "atelierCopy": {
+          // 400/409 は日本語の理由が契約。promoteCandidate と同じく
+          // " — " の後ろに理由だけ載せて投げる(Elm 側が理由だけ表示する)
+          const url = `${base}/atelier/copy`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            let detail = "";
+            try {
+              const body = await res.json();
+              const msg = body?.error?.message ?? body?.error;
+              if (typeof msg === "string") detail = " — " + msg;
+            } catch {
+              // JSON でない失敗応答はステータスだけで伝える
+            }
+            throw new Error(`HTTP ${res.status}: ${url}${detail}`);
+          }
+          return res.json();
+        }
+        case "projectNew":
+          // 202 が契約。400/409 は {ok:false, error:日本語} — raiseHttpError が
+          // " — 理由" の形で投げ、Elm 側が理由だけ表示する
+          return sendJson("POST", `${base}/projects/new`, payload);
+        case "projectNewLog":
+          return getJson(`${base}/projects/new/log`);
+        case "scaffoldDoc":
+          // 400/409 は {ok:false, error:日本語} — projectNew と同じ流儀
+          return sendJson("POST", `${base}/scaffold/doc`, payload);
         case "gameStatus":
           return getJson(`${base}/game/status`);
         case "gameStart": {

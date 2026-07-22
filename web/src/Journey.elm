@@ -7,6 +7,7 @@ module Journey exposing
     , init
     , loaded
     , stateDecoder
+    , suggestionId
     , update
     , view
     )
@@ -77,6 +78,17 @@ loaded state =
 failed : String -> Model
 failed message =
     Failed message
+
+
+{-| いま出ている提案の id(Main が「design ならつくるを開く」を判定する窓)。 -}
+suggestionId : Model -> Maybe String
+suggestionId model =
+    case model of
+        Loaded info ->
+            Just info.state.suggestion.id
+
+        _ ->
+            Nothing
 
 
 type Msg
@@ -247,6 +259,9 @@ iconFor id =
         "create" ->
             "🌱"
 
+        "design" ->
+            "🕹"
+
         _ ->
             "🧭"
 
@@ -270,10 +285,10 @@ goLabel nav =
 「もう全部終わっている?」と誤解する(完了状態は UI 上に存在しない)。
 -}
 viewTrail : String -> Html msg
-viewTrail suggestionId =
+viewTrail sid =
     let
         current =
-            case suggestionId of
+            case sid of
                 "pick" ->
                     Just 0
 

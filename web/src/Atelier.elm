@@ -1,5 +1,7 @@
 module Atelier exposing
     ( Candidates
+    , CreatePath(..)
+    , CreateSlot
     , Launch(..)
     , Mode(..)
     , Model
@@ -9,27 +11,56 @@ module Atelier exposing
     , PreviewState(..)
     , candidatesDecoder
     , candidatesFailed
+    , cardAction
+    , autoCopyName
+    , copyDone
+    , chosenPath
+    , copyFailed
+    , copyRetry
+    , createOpen
+    , createPaths
+    , createSlotsDecoder
+    , directionPlaceholder
     , gameLogDecoder
     , gameStartFailed
     , gameStarted
     , gotCandidates
     , gotGameLog
+    , gamePromptErrorShown
+    , gotGamePrompt
+    , gamePromptFailed
     , gotGameStatus
+    , gotPrompt
     , gotRunnerLines
+    , gotSlots
     , hasCandidates
     , init
     , isBaking
     , isLaunchPolling
     , lightboxOpen
     , lightboxShownFile
+    , needsCopyReset
     , needsTick
+    , openCreateForGame
     , previewState
     , promoteFailed
     , promoted
+    , promptFailed
+    , scaffoldDone
+    , scaffoldErrorShown
+    , scaffoldFailed
+    , scaffoldResultDecoder
+    , scaffoldUnavailable
+    , selectedSlotHint
+    , shownGamePrompt
+    , shownWirePrompt
+    , shownPrompt
     , showPicks
+    , slotsFailed
     , statusDecoder
     , update
     , view
+    , viewCreate
     )
 
 {-| アトリエの「候補えらび」— 生成された見た目候補をゲームへ装着(swap)する。
@@ -130,6 +161,9 @@ type alias Lightbox =
     , note : Maybe String
     , compareWith : Maybe String
 
+    -- 退避(prev)版か — 決めた瞬間のボタンが「装着」でなく「戻す」になる
+    , isPrev : Bool
+
     -- 「いまの見た目」側を映しているか(A/B トグル)
     , showingCurrent : Bool
     }
@@ -164,8 +198,126 @@ type alias GameLog =
     }
 
 
+{-| 「つくる」の素材スロット(GET /atelier/slots — material 役だけ来る契約)。 -}
+type alias CreateSlot =
+    { file : String
+    , entityId : Maybe String
+    , kind : String
+    , title : String
+
+    -- このスロットに何を書けばいいかの一言(サーバの案内。欠けは空)
+    , hint : String
+    }
+
+
+{-| AI プロンプトの進み。失敗はサーバの日本語の理由を箱の場所に出す。 -}
+type PromptState
+    = PromptIdle
+    | PromptLoading
+    | PromptReady String
+    | PromptFailed String
+
+
+{-| 「新しい種類の素材/設定を足す」(POST /scaffold/doc)の状態。
+成功はできたファイル一覧と配線プロンプト(wirePrompt)を同じ場所に出す。
+-}
+type alias Scaffold =
+    { kind : String
+    , title : String
+
+    -- "material"(えらんで装着する物)| "tuning"(数値やデータ)
+    , role : String
+    , pending : Bool
+    , error : Maybe String
+    , result : Maybe ScaffoldResult
+    , copied : Bool
+    }
+
+
+type alias ScaffoldResult =
+    { files : List String
+    , wirePrompt : String
+    }
+
+
+initScaffold : Scaffold
+initScaffold =
+    { kind = ""
+    , title = ""
+    , role = "material"
+    , pending = False
+    , error = Nothing
+    , result = Nothing
+    , copied = False
+    }
+
+
+{-| 「つくる」(創作の第一幕)。open = Nothing は既定に従う —
+候補が 1 つも無い時は開いて出迎え(旅路の「つくる」の降り立ち先)、
+候補があれば畳んで「えらぶ」を主役のままにする。
+-}
+type alias Create =
+    { open : Maybe Bool
+    , slots : List CreateSlot
+    , slot : Maybe String
+    , count : Int
+    , direction : String
+    , prompt : PromptState
+    , copied : Bool
+
+    -- 「写しを作って直す」(POST /atelier/copy)の飛行中の印と、直前に試した名前
+    -- (409 の時に次の空き番へ進めるための控え)
+    , copyPending : Bool
+    , lastCopy : Maybe { slot : String, name : String }
+    , scaffold : Scaffold
+
+    -- 🕹 あそびを作らせる(GET /prompt/game)
+    , gameDirection : String
+    , gamePrompt : PromptState
+    , gameCopied : Bool
+
+    -- 旅路の「あそびを考える」(design)から降り立った印。
+    -- 「なにをつくる?」の並びで あそび が先頭・推しになる
+    , gameHighlight : Bool
+
+    -- 「なにをつくる?」で選んだ道。Nothing = まだ選んでいない(選択リストを出す)。
+    -- とじる→ひらくでも保持する(入力も同様に消えない)
+    , path : Maybe CreatePath
+    }
+
+
+{-| 「なにをつくる?」の 3 つの道。選ぶと その 1 つのフォームだけが出る。
+(手直し・複製は「つくる」ではなく、えらぶ側の候補カードから入る)
+-}
+type CreatePath
+    = PathGame
+    | PathAi
+    | PathScaffold
+
+
+initCreate : Create
+initCreate =
+    { open = Nothing
+    , slots = []
+    , slot = Nothing
+    , count = 3
+    , direction = ""
+    , prompt = PromptIdle
+    , copied = False
+    , copyPending = False
+    , lastCopy = Nothing
+    , scaffold = initScaffold
+    , gameDirection = ""
+    , gamePrompt = PromptIdle
+    , gameCopied = False
+    , gameHighlight = False
+    , path = Nothing
+    }
+
+
 type alias Model =
     { data : Data
+    , create : Create
     , selected : Maybe Selection
 
     -- Nothing = /game/status 未着(不明)。不明のうちは装着前に起動の案内を挟む
@@ -208,6 +360,7 @@ type alias Model =
 init : Model
 init =
     { data = Loading
+    , create = initCreate
     , selected = Nothing
     , gameRunning = Nothing
     , gate = False
@@ -236,9 +389,30 @@ type Msg
     | OpenPicks
     | LaunchLogToggled
     | BakeLogToggled
-    | PreviewClicked { file : String, note : Maybe String, compareWith : Maybe String }
+    | PreviewClicked { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool }
     | LightboxClosed
     | CompareToggled
+    | LightboxSwapClicked
+    | LightboxRollbackClicked
+    | CreateToggled
+    | CreateSlotChosen String
+    | CreateCountChosen Int
+    | CreateDirectionEdited String
+    | MakePromptClicked
+    | CopyPromptClicked
+    | PathChosen CreatePath
+    | PathCleared
+    | GameDirectionEdited String
+    | MakeGamePromptClicked
+    | CopyGamePromptClicked
+    | CopyResetTick
+    | EditCandidateClicked String
+    | CopyCurrentClicked String
+    | ScaffoldKindEdited String
+    | ScaffoldTitleEdited String
+    | ScaffoldRoleChosen String
+    | ScaffoldClicked
+    | ScaffoldCopyClicked
     | NoOp
 
 
@@ -250,6 +424,12 @@ type Out
     | OutPromote { candidate : String, slot : String }
     | OutStartGame
     | OutClosed
+    | OutFetchPrompt { slot : String, count : Int, direction : String }
+    | OutFetchGamePrompt String
+    | OutCopyPrompt String
+    | OutCopyFile { slot : String, name : String }
+    | OutEditFile String
+    | OutScaffold { kind : String, title : String, role : String }
 
 
 update : Msg -> Model -> ( Model, Out )
@@ -342,6 +522,7 @@ update msg model =
                         { file = info.file
                         , note = info.note
                         , compareWith = info.compareWith
+                        , isPrev = info.isPrev
                         , showingCurrent = False
                         }
               }
@@ -359,8 +540,219 @@ update msg model =
             , OutNone
             )
 
+        LightboxSwapClicked ->
+            -- 拡大で「これだ」と決めた瞬間に装着へ(閉じる→選ぶ→装着の 3 手を 1 手に)。
+            -- ライトボックスを畳み、その候補を選択にした上で既存の SwapClicked に
+            -- 委譲する — 未起動の案内(gate)も二度押し防止もそのまま効く
+            case Maybe.andThen (\lb -> Maybe.map (Tuple.pair lb) lb.compareWith) model.lightbox of
+                Just ( lightbox, slot ) ->
+                    update SwapClicked
+                        { model
+                            | lightbox = Nothing
+                            , selected = Just { slot = slot, file = lightbox.file }
+                            , promoteError = Nothing
+                        }
+
+                Nothing ->
+                    -- 「いまの見た目」には装着する物がない(ボタンも出ない防御)
+                    ( model, OutNone )
+
+        LightboxRollbackClicked ->
+            -- 退避版の拡大からの「この版に戻す」— 既存のロールバック経路に委譲
+            case Maybe.andThen (\lb -> Maybe.map (Tuple.pair lb) lb.compareWith) model.lightbox of
+                Just ( lightbox, slot ) ->
+                    update (RollbackClicked slot lightbox.file)
+                        { model | lightbox = Nothing }
+
+                Nothing ->
+                    ( model, OutNone )
+
+        CreateToggled ->
+            ( mapCreate (\c -> { c | open = Just (not (createOpen model)) }) model
+            , OutNone
+            )
+
+        CreateSlotChosen slot ->
+            ( mapCreate (\c -> { c | slot = Just slot }) model
+            , OutNone
+            )
+
+        CreateCountChosen n ->
+            ( mapCreate (\c -> { c | count = clamp 1 5 n }) model, OutNone )
+
+        CreateDirectionEdited text_ ->
+            ( mapCreate (\c -> { c | direction = text_ }) model, OutNone )
+
+        MakePromptClicked ->
+            case ( model.create.slot, model.create.prompt ) of
+                ( _, PromptLoading ) ->
+                    -- 飛行中の二度押しは送らない
+                    ( model, OutNone )
+
+                ( Just slot, _ ) ->
+                    ( mapCreate (\c -> { c | prompt = PromptLoading, copied = False }) model
+                    , OutFetchPrompt
+                        { slot = slot
+                        , count = model.create.count
+                        , direction = String.trim model.create.direction
+                        }
+                    )
+
+                _ ->
+                    ( model, OutNone )
+
+        CopyPromptClicked ->
+            case model.create.prompt of
+                PromptReady prompt ->
+                    ( mapCreate (\c -> { c | copied = True }) model
+                    , OutCopyPrompt prompt
+                    )
+
+                _ ->
+                    ( model, OutNone )
+
+        PathChosen path ->
+            ( mapCreate (\c -> { c | path = Just path }) model, OutNone )
+
+        PathCleared ->
+            -- 「← ほかのつくり方」。フォームの入力・結果は消さない(戻っても残る)
+            ( mapCreate (\c -> { c | path = Nothing }) model, OutNone )
+
+        GameDirectionEdited text_ ->
+            ( mapCreate (\c -> { c | gameDirection = text_ }) model, OutNone )
+
+        MakeGamePromptClicked ->
+            if model.create.gamePrompt == PromptLoading then
+                -- 飛行中の二度押しは送らない
+                ( model, OutNone )
+
+            else
+                case String.trim model.create.gameDirection of
+                    "" ->
+                        -- 空はサーバへ行かない(その場で理由を出す)
+                        ( mapCreate (\c -> { c | gamePrompt = PromptFailed "どんなゲームか一言書いてください(例: 落ちてくる星をバケツで受け止める)" }) model
+                        , OutNone
+                        )
+
+                    direction ->
+                        ( mapCreate (\c -> { c | gamePrompt = PromptLoading, gameCopied = False }) model
+                        , OutFetchGamePrompt direction
+                        )
+
+        CopyGamePromptClicked ->
+            case model.create.gamePrompt of
+                PromptReady prompt ->
+                    ( mapCreate (\c -> { c | gameCopied = True }) model
+                    , OutCopyPrompt prompt
+                    )
+
+                _ ->
+                    ( model, OutNone )
+
+        CopyResetTick ->
+            ( mapCreate (\c -> { c | copied = False, gameCopied = False }) model
+                |> mapScaffold (\s -> { s | copied = False })
+            , OutNone
+            )
+
+        EditCandidateClicked file ->
+            -- 候補カードの「✏️ 手直し」— そうこ(エディタ)でその atelier/ の
+            -- ファイルを開く(開くのは Main の仕事なので値で返す)
+            ( { model | storehouse = True }, OutEditFile file )
+
+        CopyCurrentClicked slotFile ->
+            -- 「いまの見た目」の「✏️ 写しを作って直す」— 名前は自動採番
+            -- (スロット base + 空き番の一文字)。成功で写しがそうこに開く
+            if model.create.copyPending then
+                ( model, OutNone )
+
+            else
+                let
+                    name =
+                        autoCopyName slotFile (slotCandidateFiles model slotFile)
+                in
+                ( mapCreate (\c -> { c | copyPending = True, lastCopy = Just { slot = slotFile, name = name } }) model
+                , OutCopyFile { slot = slotFile, name = name }
+                )
+
+        ScaffoldKindEdited text_ ->
+            ( mapScaffold (\s -> { s | kind = text_, error = Nothing }) model, OutNone )
+
+        ScaffoldTitleEdited text_ ->
+            ( mapScaffold (\s -> { s | title = text_ }) model, OutNone )
+
+        ScaffoldRoleChosen role ->
+            ( mapScaffold (\s -> { s | role = role }) model, OutNone )
+
+        ScaffoldClicked ->
+            if model.create.scaffold.pending then
+                -- 飛行中の二度押しは送らない
+                ( model, OutNone )
+
+            else
+                let
+                    kind =
+                        String.trim model.create.scaffold.kind
+                in
+                if kind == "" then
+                    ( mapScaffold (\s -> { s | error = Just "種類の名前を入れてください(半角の小文字。例: enemy)" }) model
+                    , OutNone
+                    )
+
+                else if not (isValidKindName kind) then
+                    ( mapScaffold (\s -> { s | error = Just "半角の小文字で始め、a-z 0-9 _ だけが使えます(例: enemy_wave)" }) model
+                    , OutNone
+                    )
+
+                else
+                    ( mapScaffold (\s -> { s | pending = True, error = Nothing, result = Nothing }) model
+                    , OutScaffold
+                        { kind = kind
+                        , title =
+                            case String.trim model.create.scaffold.title of
+                                "" ->
+                                    -- 表示名が空なら kind で代用(空の題は寂しい)
+                                    kind
+
+                                title ->
+                                    title
+                        , role = model.create.scaffold.role
+                        }
+                    )
+
+        ScaffoldCopyClicked ->
+            case model.create.scaffold.result of
+                Just result ->
+                    ( mapScaffold (\s -> { s | copied = True }) model
+                    , OutCopyPrompt result.wirePrompt
+                    )
+
+                Nothing ->
+                    ( model, OutNone )
+
         NoOp ->
             ( model, OutNone )
+
+
+mapCreate : (Create -> Create) -> Model -> Model
+mapCreate f model =
+    { model | create = f model.create }
+
+
+mapScaffold : (Scaffold -> Scaffold) -> Model -> Model
+mapScaffold f =
+    mapCreate (\c -> { c | scaffold = f c.scaffold })
+
+
+{-| 種類の名前の規則(^[a-z][a-z0-9_]*$)。 -}
+isValidKindName : String -> Bool
+isValidKindName name =
+    case String.uncons name of
+        Just ( c, rest ) ->
+            Char.isLower c && String.all (\x -> Char.isLower x || Char.isDigit x || x == '_') rest
+
+        Nothing ->
+            False
 
 
 promote : Mode -> Selection -> Model -> ( Model, Out )
@@ -599,6 +991,324 @@ cleanReason message =
             message
 
 
+{-| GET /atelier/slots。選択中のスロットがまだ居るなら保ち、
+居なければ先頭を既定にする(ドロップダウンを空のまま迷わせない)。
+-}
+gotSlots : List CreateSlot -> Model -> Model
+gotSlots slots model =
+    mapCreate
+        (\c ->
+            { c
+                | slots = slots
+                , slot =
+                    case Maybe.andThen (\s -> ifTrue (List.any (\x -> x.file == s) slots) s) c.slot of
+                        Just kept ->
+                            Just kept
+
+                        Nothing ->
+                            List.head slots |> Maybe.map .file
+            }
+        )
+        model
+
+
+{-| /atelier/slots の失敗(旧サーバの 404 等)。スロット無し = AI カードが
+「準備中」の一言になるだけ(fail-open — そうこも候補えらびも生きる)。
+-}
+slotsFailed : Model -> Model
+slotsFailed model =
+    mapCreate (\c -> { c | slots = [], slot = Nothing }) model
+
+
+{-| GET /prompt/atelier 成功。 -}
+gotPrompt : String -> Model -> Model
+gotPrompt prompt model =
+    mapCreate (\c -> { c | prompt = PromptReady prompt, copied = False }) model
+
+
+{-| GET /prompt/atelier の失敗。理由だけを箱の場所に出す。 -}
+promptFailed : String -> Model -> Model
+promptFailed message model =
+    mapCreate (\c -> { c | prompt = PromptFailed (cleanReason message) }) model
+
+
+{-| GET /prompt/game 成功。 -}
+gotGamePrompt : String -> Model -> Model
+gotGamePrompt prompt model =
+    mapCreate (\c -> { c | gamePrompt = PromptReady prompt, gameCopied = False }) model
+
+
+{-| GET /prompt/game の失敗。理由だけを箱の場所に出す(404 は Main が
+「準備中」の文言に均してから呼ぶ)。
+-}
+gamePromptFailed : String -> Model -> Model
+gamePromptFailed message model =
+    mapCreate (\c -> { c | gamePrompt = PromptFailed (cleanReason message) }) model
+
+
+{-| 画面に映っているゲームプロンプト(テストの覗き窓)。 -}
+shownGamePrompt : Model -> Maybe String
+shownGamePrompt model =
+    case model.create.gamePrompt of
+        PromptReady prompt ->
+            Just prompt
+
+        _ ->
+            Nothing
+
+
+{-| 「あそびを作らせる」の失敗文言(検証・サーバとも同じ場所。テストの覗き窓)。 -}
+gamePromptErrorShown : Model -> Maybe String
+gamePromptErrorShown model =
+    case model.create.gamePrompt of
+        PromptFailed reason ->
+            Just reason
+
+        _ ->
+            Nothing
+
+
+{-| 旅路の「あそびを考える」(design)から降り立った。「つくる」を開き、
+「なにをつくる?」の並びで あそび を先頭・推しにする(候補があっても畳まない)。
+-}
+openCreateForGame : Model -> Model
+openCreateForGame model =
+    mapCreate (\c -> { c | open = Just True, gameHighlight = True, path = Nothing }) model
+
+
+{-| 「なにをつくる?」の並び(優先度順)。誕生期(design で降り立った)は
+あそびが先頭、素材サイクル中は素材の道が先。
+-}
+createPaths : Model -> List CreatePath
+createPaths model =
+    if model.create.gameHighlight then
+        [ PathGame, PathAi, PathScaffold ]
+
+    else
+        [ PathAi, PathGame, PathScaffold ]
+
+
+{-| いま選んでいる道(Nothing = 選択リストを出している)。テストの覗き窓。 -}
+chosenPath : Model -> Maybe CreatePath
+chosenPath model =
+    model.create.path
+
+
+{-| POST /atelier/copy 成功。そうこ(エディタ)へ切り替える —
+写しを開くのは Main(トーストと openFile)。
+-}
+copyDone : Model -> Model
+copyDone model =
+    { model | storehouse = True }
+        |> mapCreate (\c -> { c | copyPending = False, lastCopy = Nothing })
+
+
+{-| POST /atelier/copy の失敗(打ち切り)。ボタンを戻すだけ —
+理由の告げ方(トースト)は Main の仕事。
+-}
+copyFailed : Model -> Model
+copyFailed model =
+    mapCreate (\c -> { c | copyPending = False, lastCopy = Nothing }) model
+
+
+{-| 409(名前衝突)。次の空き番の名前でもう一度送る(z まで来たら諦める)。
+戻りの Maybe が Just なら Main が同じ封筒(atelierCopy)を再発行する。
+-}
+copyRetry : Model -> ( Model, Maybe { slot : String, name : String } )
+copyRetry model =
+    case model.create.lastCopy of
+        Just info ->
+            case nextCopyName info.name of
+                Just next ->
+                    let
+                        retry =
+                            { slot = info.slot, name = next }
+                    in
+                    ( mapCreate (\c -> { c | lastCopy = Just retry }) model, Just retry )
+
+                Nothing ->
+                    ( copyFailed model, Nothing )
+
+        Nothing ->
+            ( copyFailed model, Nothing )
+
+
+{-| 「写しを作って直す」の自動採番。スロットの base に、その列の候補で
+まだ使われていない一文字(a, b, c, …)を足す(例: 既存 a・b → 「base.c」)。
+-}
+autoCopyName : String -> List String -> String
+autoCopyName slotFile candidateFiles =
+    let
+        base =
+            firstToken (baseName slotFile)
+
+        used =
+            List.filterMap (copySuffixOf base) candidateFiles
+
+        free =
+            String.toList "abcdefghijklmnopqrstuvwxyz"
+                |> List.map String.fromChar
+                |> List.filter (\letter -> not (List.member letter used))
+                |> List.head
+    in
+    base ++ "." ++ Maybe.withDefault "z" free
+
+
+firstToken : String -> String
+firstToken name =
+    String.split "." name |> List.head |> Maybe.withDefault name
+
+
+{-| 候補ファイル名から base の直後の一文字(採番)を拾う。
+base が違う・一文字でない物は数えない。
+-}
+copySuffixOf : String -> String -> Maybe String
+copySuffixOf base file =
+    case String.split "." (baseName file) of
+        b :: suffix :: _ ->
+            if b == base && String.length suffix == 1 then
+                Just suffix
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| 「base.x」の x を次の文字へ(z なら Nothing = 打ち切り)。 -}
+nextCopyName : String -> Maybe String
+nextCopyName name =
+    case List.reverse (String.split "." name) of
+        last :: rest ->
+            case String.uncons last of
+                Just ( c, "" ) ->
+                    if c < 'z' then
+                        Just (String.join "." (List.reverse (String.fromChar (Char.fromCode (Char.toCode c + 1)) :: rest)))
+
+                    else
+                        Nothing
+
+                _ ->
+                    Nothing
+
+        [] ->
+            Nothing
+
+
+{-| スロットの候補ファイル名(自動採番の材料)。 -}
+slotCandidateFiles : Model -> String -> List String
+slotCandidateFiles model slotFile =
+    case model.data of
+        Ready candidates ->
+            candidates.slots
+                |> List.filter (\s -> s.slot == slotFile)
+                |> List.concatMap (\s -> List.map .file s.candidates)
+
+        _ ->
+            []
+
+
+{-| POST /scaffold/doc 成功。できたファイルと配線プロンプトを同じ場所に出す。 -}
+scaffoldDone : ScaffoldResult -> Model -> Model
+scaffoldDone result model =
+    mapScaffold (\s -> { s | pending = False, result = Just result, error = Nothing, copied = False }) model
+
+
+{-| POST /scaffold/doc の失敗(400/409)。日本語の理由をその場に出す。 -}
+scaffoldFailed : String -> Model -> Model
+scaffoldFailed message model =
+    mapScaffold (\s -> { s | pending = False, error = Just (cleanReason message) }) model
+
+
+{-| エンドポイント未実装のサーバ(404 等)。「準備中」に倒すだけ(fail-open)。 -}
+scaffoldUnavailable : Model -> Model
+scaffoldUnavailable model =
+    mapScaffold (\s -> { s | pending = False, error = Just "この機能はまだ準備中です(サーバが古い可能性があります)" }) model
+
+
+{-| 画面に映っている配線プロンプト(テストの覗き窓)。 -}
+shownWirePrompt : Model -> Maybe String
+shownWirePrompt model =
+    Maybe.map .wirePrompt model.create.scaffold.result
+
+
+{-| 「新しい種類」の失敗文言(検証・サーバ 400/409 とも同じ場所)。 -}
+scaffoldErrorShown : Model -> Maybe String
+scaffoldErrorShown model =
+    model.create.scaffold.error
+
+
+{-| POST /scaffold/doc の応答。欠けは既定値に倒す(fail-open)。 -}
+scaffoldResultDecoder : D.Decoder ScaffoldResult
+scaffoldResultDecoder =
+    D.map2 ScaffoldResult
+        (D.oneOf [ D.field "files" (D.list D.string), D.succeed [] ])
+        (D.oneOf [ D.field "wirePrompt" D.string, D.succeed "" ])
+
+
+{-| 「✓ コピーしました」の戻し待ちか。Main の subscriptions がこれを見て
+2 秒後の CopyResetTick を流す(オーバーレイの段送りと同じ流儀)。
+-}
+needsCopyReset : Model -> Bool
+needsCopyReset model =
+    model.create.copied || model.create.gameCopied || model.create.scaffold.copied
+
+
+{-| 「つくる」パネルが開いているか。手で触っていなければ既定に従う —
+候補ゼロなら開いて出迎え、候補があれば畳んで「えらぶ」を主役に。
+-}
+createOpen : Model -> Bool
+createOpen model =
+    Maybe.withDefault (not (hasCandidates model)) model.create.open
+
+
+{-| 画面に映っているプロンプト(テストの覗き窓)。 -}
+shownPrompt : Model -> Maybe String
+shownPrompt model =
+    case model.create.prompt of
+        PromptReady prompt ->
+            Just prompt
+
+        _ ->
+            Nothing
+
+
+{-| いま選んでいるスロット(一覧から引く)。 -}
+selectedCreateSlot : Create -> Maybe CreateSlot
+selectedCreateSlot create =
+    create.slot
+        |> Maybe.andThen (\file -> List.head (List.filter (\s -> s.file == file) create.slots))
+
+
+{-| 選択中スロットの案内(サーバの hint)。空なら出さない(Nothing)。 -}
+selectedSlotHint : Model -> Maybe String
+selectedSlotHint model =
+    selectedCreateSlot model.create
+        |> Maybe.map .hint
+        |> Maybe.andThen (\h -> ifTrue (h /= "") h)
+
+
+{-| 方向性の書き出し例。スロットの kind で切り替える(不明は汎用の一言)。 -}
+directionPlaceholder : String -> String
+directionPlaceholder kind =
+    case kind of
+        "theme" ->
+            "例: 晩夏の乾いた草の色。赤とんぼの夕暮れの空気"
+
+        "sprite" ->
+            "例: 冬支度の村人。網で虫を追いかける子供"
+
+        "sound" ->
+            "例: 短く鋭い斧の音。夕暮れのひぐらし"
+
+        "shader" ->
+            "例: 夕凪の静かな水面。おだやかな揺れ"
+
+        _ ->
+            "例: イナゴやトンボが飛び、網で虫を追いかける子供がいる晩夏の情景"
+
+
 {-| プレビュー拡大が開いているか。Main が Esc の購読を生かす条件。 -}
 lightboxOpen : Model -> Bool
 lightboxOpen model =
@@ -673,6 +1383,24 @@ looseDecoder =
         (D.oneOf [ D.field "reason" D.string, D.succeed "" ])
 
 
+{-| GET /atelier/slots。file だけは必須(無ければそのスロットは捨てる)、
+題も種別も欠けは空に倒す(fail-open)。
+-}
+createSlotsDecoder : D.Decoder (List CreateSlot)
+createSlotsDecoder =
+    D.oneOf [ D.field "slots" (D.list createSlotDecoder), D.succeed [] ]
+
+
+createSlotDecoder : D.Decoder CreateSlot
+createSlotDecoder =
+    D.map5 CreateSlot
+        (D.field "file" D.string)
+        (D.oneOf [ D.field "entityId" (D.map Just D.string), D.succeed Nothing ])
+        (D.oneOf [ D.field "kind" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "title" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "hint" D.string, D.succeed "" ])
+
+
 {-| GET /game/status → running。壊れた応答は「走っていない」に倒す
 (起動の案内が出るだけで、装着自体は妨げない)。
 -}
@@ -709,6 +1437,25 @@ showPicks model =
     hasCandidates model && not model.storehouse
 
 
+{-| カードの中に出す決めボタン(導線の規則)。選んだカードにだけ出る —
+候補なら装着(Swap)、退避(prev)版なら戻す(Rollback)。未選択は何も出ない
+(クリック → その場にボタン出現、が導線)。
+-}
+cardAction : Model -> { slot : String, file : String, isPrev : Bool } -> Maybe Mode
+cardAction model info =
+    if model.selected == Just { slot = info.slot, file = info.file } then
+        Just
+            (if info.isPrev then
+                Rollback
+
+             else
+                Swap
+            )
+
+    else
+        Nothing
+
+
 
 -- 画面
 
@@ -724,7 +1471,8 @@ view base model =
             div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
                 [ div [ HA.class "mx-auto w-full max-w-3xl" ]
                     (List.concat
-                        [ [ div [ HA.class "mb-5" ]
+                        [ [ viewCreate model ]
+                        , [ div [ HA.class "mb-5" ]
                                 [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "🎨 候補えらび" ]
                                 , div [ HA.class "mt-1 text-[11px] text-ink-soft" ]
                                     [ text "新しい見た目の候補です。カードを選んで、ゲームに装着しましょう" ]
@@ -732,7 +1480,6 @@ view base model =
                           ]
                         , viewBakePanel model candidates
                         , List.map (viewSlot base model candidates.baking) candidates.slots
-                        , viewActions model
                         , viewLoose candidates.loose
                         , [ div [ HA.class "mt-8 border-t border-edge pt-3" ]
                                 [ button [ HA.class "btn btn-ghost", HE.onClick OpenStorehouse ]
@@ -806,7 +1553,7 @@ anyPreviewMissing candidates =
 viewSlot : String -> Model -> Bool -> Slot -> Html Msg
 viewSlot base model baking slot =
     div [ HA.class "atelier-slot mb-4" ]
-        [ div [ HA.class "mb-1.5 flex items-center gap-2" ]
+        (div [ HA.class "mb-1.5 flex items-center gap-2" ]
             [ span [ HA.class "font-mono text-[11px] text-ink-soft" ] [ text slot.slot ]
             , case slot.entityId of
                 Just entity ->
@@ -815,11 +1562,18 @@ viewSlot base model baking slot =
                 Nothing ->
                     text ""
             ]
-        , div [ HA.class "flex flex-wrap gap-2" ]
-            (viewCurrentCard base model baking slot
-                :: List.map (viewCard base model baking slot.slot) slot.candidates
-            )
-        ]
+            :: div [ HA.class "flex flex-wrap gap-2" ]
+                (viewCurrentCard base model baking slot
+                    :: List.map (viewCard base model baking slot.slot) slot.candidates
+                )
+            :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
+               (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
+                    viewGate model
+
+                else
+                    []
+               )
+        )
 
 
 {-| 「いまの見た目」の参照カード — 装着中の姿を並べて見比べる基準。
@@ -830,12 +1584,29 @@ viewCurrentCard base model baking slot =
     div [ HA.class "atelier-card atelier-card-current w-56 rounded-lg border border-edge/60 bg-panel p-3 opacity-80" ]
         [ viewPreview base
             model.bust
-            { file = slot.slot, note = Nothing, compareWith = Nothing }
+            { file = slot.slot, note = Nothing, compareWith = Nothing, isPrev = False }
             (previewState { ready = slot.currentPreviewReady, baking = baking })
         , div [ HA.class "mt-2 flex items-center gap-1.5" ]
             [ span [ HA.class "badge shrink-0" ] [ text "いまの見た目" ]
             , span [ HA.class "min-w-0 flex-1 truncate font-mono text-[10px] text-ink-faint", HA.title slot.slot ]
                 [ text (baseName slot.slot) ]
+            ]
+
+        -- 写し(atelier/)が候補の列に増えて、そこを直す — 元には触らない
+        , div [ HA.class "mt-2.5" ]
+            [ button
+                [ HA.class "btn btn-mini w-full"
+                , HA.disabled model.create.copyPending
+                , HE.onClick (CopyCurrentClicked slot.slot)
+                ]
+                [ text
+                    (if model.create.copyPending then
+                        "写しを作っています…"
+
+                     else
+                        "✏️ 写しを作って直す"
+                    )
+                ]
             ]
         ]
 
@@ -845,7 +1616,7 @@ viewCurrentCard base model baking slot =
 伝播は止める。note はカードの説明文、compareWith は「いまの見た目」の
 プレビューキー(候補カードだけ Just — 拡大の中で A/B に切り替える)。
 -}
-viewPreview : String -> Int -> { file : String, note : Maybe String, compareWith : Maybe String } -> PreviewState -> Html Msg
+viewPreview : String -> Int -> { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool } -> PreviewState -> Html Msg
 viewPreview base bust info state =
     div
         (HA.class "atelier-preview relative flex h-[180px] w-full items-center justify-center overflow-hidden rounded bg-black/50"
@@ -915,7 +1686,7 @@ viewCard base model baking slotName candidate =
         ]
         [ viewPreview base
             model.bust
-            { file = candidate.file, note = candidate.note, compareWith = Just slotName }
+            { file = candidate.file, note = candidate.note, compareWith = Just slotName, isPrev = candidate.isPrev }
             (previewState { ready = candidate.previewReady, baking = baking })
         , div [ HA.class "mt-2 flex items-center gap-1.5" ]
             [ span [ HA.class "min-w-0 flex-1 truncate font-mono text-[11px] text-ink", HA.title candidate.file ]
@@ -933,18 +1704,63 @@ viewCard base model baking slotName candidate =
             Nothing ->
                 text ""
         , div [ HA.class "mt-1.5 flex items-center gap-2" ]
-            [ span [ HA.class "text-[10px] text-ink-faint" ] [ text (mtimeLabel candidate.mtime) ]
-            , span [ HA.class "flex-1" ] []
-            , if candidate.isPrev then
-                button
-                    [ HA.class "btn btn-mini"
-                    , stopClick (RollbackClicked slotName candidate.file)
-                    ]
-                    [ text "↩ この版に戻す" ]
+            [ span [ HA.class "min-w-0 flex-1 truncate text-[10px] text-ink-faint" ] [ text (mtimeLabel candidate.mtime) ]
 
-              else
-                text ""
+            -- そうこ(エディタ)でこの候補ファイルを開く。カードの選択とは
+            -- 別の動詞なので伝播は止める
+            , button
+                [ HA.class "btn btn-ghost btn-mini shrink-0"
+                , stopClick (EditCandidateClicked candidate.file)
+                ]
+                [ text "✏️ 手直し" ]
             ]
+        , case cardAction model { slot = slotName, file = candidate.file, isPrev = candidate.isPrev } of
+            Just action ->
+                -- 選んだカードの中に決めボタン(「次何をするの?」をその場で答える)。
+                -- 押下は既存の SwapClicked / RollbackClicked に委譲 —
+                -- 未起動の案内も二度押し防止もそのまま効く
+                div [ HA.class "mt-2.5" ]
+                    [ case action of
+                        Swap ->
+                            button
+                                [ HA.class "btn btn-primary w-full"
+                                , HA.disabled (model.pending /= Nothing)
+                                , stopClick SwapClicked
+                                ]
+                                [ text
+                                    (if model.pending /= Nothing then
+                                        "装着しています…"
+
+                                     else
+                                        "🔄 ゲームに装着"
+                                    )
+                                ]
+
+                        Rollback ->
+                            button
+                                [ HA.class "btn w-full"
+                                , HA.disabled (model.pending /= Nothing)
+                                , stopClick (RollbackClicked slotName candidate.file)
+                                ]
+                                [ text
+                                    (if model.pending /= Nothing then
+                                        "戻しています…"
+
+                                     else
+                                        "↩ この版に戻す"
+                                    )
+                                ]
+                    , case model.promoteError of
+                        Just reason ->
+                            div [ HA.class "mt-1.5 text-[11px] text-danger" ]
+                                [ text ("装着できませんでした — " ++ reason) ]
+
+                        Nothing ->
+                            text ""
+                    ]
+
+            Nothing ->
+                text ""
         ]
 
 
@@ -954,56 +1770,34 @@ stopClick msg =
     HE.stopPropagationOn "click" (D.succeed ( msg, True ))
 
 
-viewActions : Model -> List (Html Msg)
-viewActions model =
-    [ div [ HA.class "atelier-actions mt-1 flex flex-wrap items-center gap-3" ]
-        [ button
-            [ HA.class "btn btn-primary"
-            , HA.disabled (model.selected == Nothing || model.pending /= Nothing)
-            , HE.onClick SwapClicked
-            ]
-            [ text
-                (if model.pending /= Nothing then
-                    "装着しています…"
-
-                 else
-                    "🔄 ゲームに装着(swap)"
-                )
-            ]
-        , case model.promoteError of
-            Just reason ->
-                span [ HA.class "text-[11px] text-danger" ] [ text ("装着できませんでした — " ++ reason) ]
-
-            Nothing ->
-                text ""
-        ]
-    , if model.gate then
-        div [ HA.class "atelier-gate mt-3 max-w-lg rounded-lg border border-edge bg-panel p-4" ]
-            (div [ HA.class "text-xs text-ink" ]
-                [ text "ゲームが起きていません。装着は今すぐできますが、変化をその場で見るには起動しましょう" ]
-                :: div [ HA.class "mt-3 flex items-center gap-3" ]
-                    [ button
-                        [ HA.class "btn btn-primary"
-                        , HA.disabled (launchBusy model.launch)
-                        , HE.onClick StartGameClicked
-                        ]
-                        [ text
-                            (case model.launch of
-                                LaunchStarting _ ->
-                                    "⏳ 起動しています…"
-
-                                _ ->
-                                    "▶ ゲームを起動する"
-                            )
-                        ]
-                    , button [ HA.class "btn", HE.onClick PromoteAnywayClicked ]
-                        [ text "そのまま装着" ]
+{-| ゲーム未起動の案内カード(選んだカードのあるスロットの直下)。
+起動と「そのまま装着」の両方を差し出す。
+-}
+viewGate : Model -> List (Html Msg)
+viewGate model =
+    [ div [ HA.class "atelier-gate mt-3 max-w-lg rounded-lg border border-edge bg-panel p-4" ]
+        (div [ HA.class "text-xs text-ink" ]
+            [ text "ゲームが起きていません。装着は今すぐできますが、変化をその場で見るには起動しましょう" ]
+            :: div [ HA.class "mt-3 flex items-center gap-3" ]
+                [ button
+                    [ HA.class "btn btn-primary"
+                    , HA.disabled (launchBusy model.launch)
+                    , HE.onClick StartGameClicked
                     ]
-                :: viewLaunch model
-            )
+                    [ text
+                        (case model.launch of
+                            LaunchStarting _ ->
+                                "⏳ 起動しています…"
 
-      else
-        text ""
+                            _ ->
+                                "▶ ゲームを起動する"
+                        )
+                    ]
+                , button [ HA.class "btn", HE.onClick PromoteAnywayClicked ]
+                    [ text "そのまま装着" ]
+                ]
+            :: viewLaunch model
+        )
     ]
 
 
@@ -1172,6 +1966,20 @@ viewLightbox base bust lightbox =
             , div [ HA.class "mt-1 flex items-center gap-3" ]
                 [ case lightbox.compareWith of
                     Just _ ->
+                        -- 見比べて「これだ」の瞬間にその場で決められる —
+                        -- 候補は装着、退避(prev)版は戻す(既存経路に委譲)
+                        if lightbox.isPrev then
+                            button [ HA.class "btn btn-mini", stopClick LightboxRollbackClicked ]
+                                [ text "↩ この版に戻す" ]
+
+                        else
+                            button [ HA.class "btn btn-primary btn-mini", stopClick LightboxSwapClicked ]
+                                [ text "🔄 この案をゲームに装着" ]
+
+                    Nothing ->
+                        text ""
+                , case lightbox.compareWith of
+                    Just _ ->
                         button [ HA.class "btn btn-mini", stopClick CompareToggled ]
                             [ text
                                 (if lightbox.showingCurrent then
@@ -1189,6 +1997,476 @@ viewLightbox base bust lightbox =
                 ]
             ]
         ]
+
+
+
+-- つくる(創作の第一幕)
+
+
+{-| 「つくる」の畳めるセクション。畳んでいる時は 1 行の帯だけ
+(候補がある時の既定 — えらぶが主役のまま)。開くと「なにをつくる?」の
+選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
+そうこモードでも Main がこれを最上段に描く(創作の入口はどちらのモードにもある)。
+-}
+viewCreate : Model -> Html Msg
+viewCreate model =
+    div [ HA.class "atelier-create mb-5 rounded-lg border border-edge bg-panel" ]
+        (button
+            [ HA.class "atelier-create-bar flex w-full cursor-pointer items-center gap-2 rounded-lg px-4 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-white/5"
+            , HE.onClick CreateToggled
+            ]
+            [ span [] [ text "✨ 新しい素材をつくる" ]
+            , span [ HA.class "flex-1" ] []
+
+            -- 開閉できる事が言葉で分かる目印(バー全体が押せる — これは chip)
+            , span [ HA.class "rounded border border-edge px-2 py-0.5 text-[12px] font-normal text-ink-soft" ]
+                [ text
+                    (if createOpen model then
+                        "▾ とじる"
+
+                     else
+                        "▸ ひらく"
+                    )
+                ]
+            ]
+            :: (if createOpen model then
+                    -- 中身は画面の半分までで内側スクロール — プロンプト箱が育っても
+                    -- 下の編集領域を潰さず、開閉バーは常に見え、常に押せる
+                    [ div [ HA.class "atelier-create-body max-h-[50vh] overflow-y-auto" ]
+                        (case model.create.path of
+                            Nothing ->
+                                -- まだ選んでいない: 「なにをつくる?」の 1 問だけ
+                                [ div [ HA.class "px-4 pb-2 text-xs font-semibold text-ink" ] [ text "なにをつくる?" ]
+                                , div [ HA.class "flex flex-col gap-1.5 px-4 pb-4" ]
+                                    (List.map (viewPathRow model) (createPaths model))
+                                ]
+
+                            Just path ->
+                                -- 選んだ 1 つのフォームだけを出す(他は出さない)
+                                [ button
+                                    [ HA.class "atelier-path-back cursor-pointer px-4 pb-2 text-left text-[11px] text-ink-faint transition-colors hover:text-ink-soft"
+                                    , HE.onClick PathCleared
+                                    ]
+                                    [ text "← ほかのつくり方" ]
+                                , div [ HA.class "px-4 pb-4" ]
+                                    [ case path of
+                                        PathGame ->
+                                            viewGameCard model.create
+
+                                        PathAi ->
+                                            viewAiCard model.create
+
+                                        PathScaffold ->
+                                            viewScaffoldCard model.create.scaffold
+                                    ]
+                                ]
+                        )
+                    ]
+
+                else
+                    []
+               )
+        )
+
+
+{-| 「なにをつくる?」の 1 行(アイコン+名前+一言)。誕生期の先頭(あそび)には
+推しバッジ「まずはこれ」を添える。
+-}
+viewPathRow : Model -> CreatePath -> Html Msg
+viewPathRow model path =
+    let
+        info =
+            pathInfo path
+
+        recommended =
+            model.create.gameHighlight && path == PathGame
+    in
+    button
+        [ HA.classList
+            [ ( "atelier-path-row flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/5", True )
+            , ( "border-accent/60 ring-1 ring-accent/40", recommended )
+            , ( "border-edge", not recommended )
+            ]
+        , HE.onClick (PathChosen path)
+        ]
+        [ span [ HA.class "text-base leading-none" ] [ text info.icon ]
+        , span [ HA.class "text-xs font-semibold text-ink" ] [ text info.title ]
+        , if recommended then
+            span [ HA.class "badge shrink-0 bg-accent/20 text-accent" ] [ text "まずはこれ" ]
+
+          else
+            text ""
+        , span [ HA.class "min-w-0 flex-1 truncate text-[11px] text-ink-faint" ] [ text info.blurb ]
+        ]
+
+
+pathInfo : CreatePath -> { icon : String, title : String, blurb : String }
+pathInfo path =
+    case path of
+        PathGame ->
+            { icon = "🕹"
+            , title = "あそびを作らせる"
+            , blurb = "遊びのルールをAIに作らせる — 先に遊びを決めると必要な素材がはっきりします"
+            }
+
+        PathAi ->
+            { icon = "🤖"
+            , title = "素材をAIに作らせる"
+            , blurb = "見た目や音の候補をAIに作らせて、えらんで装着する"
+            }
+
+        PathScaffold ->
+            { icon = "📦"
+            , title = "新しい種類を足す"
+            , blurb = "新しい種類の素材/設定の骨組み(Doc)を作る"
+            }
+
+
+{-| 「AIに作らせる」— プロンプトを組んでコピーする道。作るのは AI(外)で、
+候補が atelier/ に置かれた瞬間からこの画面が拾う(watchFile と同じ約束)。
+-}
+viewAiCard : Create -> Html Msg
+viewAiCard create =
+    div [ HA.class "atelier-create-ai min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
+        (div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "🤖 AIに作らせる" ]
+            :: (if List.isEmpty create.slots then
+                    [ div [ HA.class "text-[11px] text-ink-faint" ]
+                        [ text "スロット一覧を取得できませんでした(サーバが古い可能性があります)" ]
+                    ]
+
+                else
+                    List.concat
+                        [ [ viewSlotSelect create
+                          , viewSlotHint create
+                          , div [ HA.class "mt-2 flex items-center gap-2" ]
+                                (span [ HA.class "text-[11px] text-ink-soft" ] [ text "案数" ]
+                                    :: List.map (viewCountButton create.count) [ 1, 2, 3, 4, 5 ]
+                                )
+                          , Html.textarea
+                                [ HA.class "field mt-2 h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                                , HA.rows 3
+                                , HA.placeholder
+                                    ("方向性 "
+                                        ++ directionPlaceholder
+                                            (selectedCreateSlot create
+                                                |> Maybe.map .kind
+                                                |> Maybe.withDefault ""
+                                            )
+                                    )
+                                , HA.value create.direction
+                                , HE.onInput CreateDirectionEdited
+                                ]
+                                []
+                          , div [ HA.class "mt-3" ]
+                                [ button
+                                    [ HA.class "btn btn-primary"
+                                    , HA.disabled (create.prompt == PromptLoading)
+                                    , HE.onClick MakePromptClicked
+                                    ]
+                                    [ text
+                                        (if create.prompt == PromptLoading then
+                                            "作っています…"
+
+                                         else
+                                            "プロンプトを作る"
+                                        )
+                                    ]
+                                ]
+                          ]
+                        , viewPromptBox create
+                        ]
+               )
+        )
+
+
+{-| 選択中スロットの案内(hint)。何を書けばいいかをドロップダウンの直下で
+そっと教える。空なら何も出さない(古いサーバでも欠けない)。
+-}
+viewSlotHint : Create -> Html Msg
+viewSlotHint create =
+    case selectedCreateSlot create |> Maybe.map .hint of
+        Just hint ->
+            if hint == "" then
+                text ""
+
+            else
+                div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-faint" ] [ text hint ]
+
+        Nothing ->
+            text ""
+
+
+viewCountButton : Int -> Int -> Html Msg
+viewCountButton current n =
+    button
+        [ HA.classList
+            [ ( "btn btn-mini", True )
+            , ( "btn-primary", current == n )
+            ]
+        , HE.onClick (CreateCountChosen n)
+        ]
+        [ text (String.fromInt n) ]
+
+
+viewSlotSelect : Create -> Html Msg
+viewSlotSelect create =
+    Html.select
+        [ HA.class "field w-full text-xs"
+        , HE.onInput CreateSlotChosen
+        ]
+        (List.map
+            (\slot ->
+                Html.option
+                    [ HA.value slot.file
+                    , HA.selected (create.slot == Just slot.file)
+                    ]
+                    [ text (slotLabel slot) ]
+            )
+            create.slots
+        )
+
+
+slotLabel : CreateSlot -> String
+slotLabel slot =
+    if slot.title == "" then
+        slot.file
+
+    else
+        slot.title ++ "(" ++ baseName slot.file ++ ")"
+
+
+viewPromptBox : Create -> List (Html Msg)
+viewPromptBox create =
+    case create.prompt of
+        PromptIdle ->
+            []
+
+        PromptLoading ->
+            []
+
+        PromptFailed reason ->
+            [ div [ HA.class "mt-2 text-[11px] text-danger" ]
+                [ text ("プロンプトを作れませんでした — " ++ reason) ]
+            ]
+
+        PromptReady prompt ->
+            [ Html.textarea
+                [ HA.class "atelier-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                , HA.readonly True
+                , HA.value prompt
+                ]
+                []
+            , div [ HA.class "mt-2" ]
+                [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyPromptClicked ]
+                    [ text
+                        (if create.copied then
+                            "✓ コピーしました"
+
+                         else
+                            "📋 コピー"
+                        )
+                    ]
+                ]
+            , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
+                [ text "Claude Code などのAIに貼り付けてください。候補が atelier/ にできると、ここに自動で現れます(プレビューも自動で焼けます)" ]
+            ]
+
+
+{-| 「あそびを作らせる」— ゲームのルールそのものを AI に作らせる道。
+プロンプトを組んでコピーするだけ(作るのは AI で、続きはホームの旅路が拾う)。
+-}
+viewGameCard : Create -> Html Msg
+viewGameCard create =
+    div
+        [ HA.classList
+            [ ( "atelier-create-game min-w-[280px] flex-1 rounded-lg border bg-black/20 p-4", True )
+            , ( "border-accent/60 ring-1 ring-accent/40", create.gameHighlight )
+            , ( "border-edge", not create.gameHighlight )
+            ]
+        ]
+        (List.concat
+            [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "🕹 あそびを作らせる" ]
+              , div [ HA.class "mb-2 text-[11px] leading-relaxed text-ink-faint" ]
+                    [ text "先に遊びを決めると、必要な素材がはっきりします。素材づくりはその後がおすすめ" ]
+              , Html.textarea
+                    [ HA.class "field h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                    , HA.rows 3
+                    , HA.placeholder "どんなゲーム? 例: 落ちてくる星をバケツで受け止める。3回落とすと終わり"
+                    , HA.value create.gameDirection
+                    , HE.onInput GameDirectionEdited
+                    ]
+                    []
+              , div [ HA.class "mt-3" ]
+                    [ button
+                        [ HA.class "btn btn-primary"
+                        , HA.disabled (create.gamePrompt == PromptLoading)
+                        , HE.onClick MakeGamePromptClicked
+                        ]
+                        [ text
+                            (if create.gamePrompt == PromptLoading then
+                                "作っています…"
+
+                             else
+                                "プロンプトを作る"
+                            )
+                        ]
+                    ]
+              ]
+            , viewGamePromptBox create
+            ]
+        )
+
+
+viewGamePromptBox : Create -> List (Html Msg)
+viewGamePromptBox create =
+    case create.gamePrompt of
+        PromptIdle ->
+            []
+
+        PromptLoading ->
+            []
+
+        PromptFailed reason ->
+            [ div [ HA.class "mt-2 text-[11px] text-danger" ]
+                [ text ("プロンプトを作れませんでした — " ++ reason) ]
+            ]
+
+        PromptReady prompt ->
+            [ Html.textarea
+                [ HA.class "atelier-game-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                , HA.readonly True
+                , HA.value prompt
+                ]
+                []
+            , div [ HA.class "mt-2" ]
+                [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyGamePromptClicked ]
+                    [ text
+                        (if create.gameCopied then
+                            "✓ コピーしました"
+
+                         else
+                            "📋 コピー"
+                        )
+                    ]
+                ]
+            , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
+                [ text "AIに貼ると、ルールとテストとbakeまで作ります。できたらホームの『焼いて確かめよう』に続きます" ]
+            ]
+
+
+{-| 「新しい種類の素材/設定を足す」— Doc の骨組み(scaffold)を作る道。
+成功はできたファイル一覧と、ゲームへ配線するためのプロンプト(AI に貼る)を出す。
+-}
+viewScaffoldCard : Scaffold -> Html Msg
+viewScaffoldCard scaffold =
+    div [ HA.class "atelier-create-scaffold min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
+        (List.concat
+            [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "📦 新しい種類の素材/設定を足す" ]
+              , Html.input
+                    [ HA.class "field w-full font-mono text-xs"
+                    , HA.placeholder "種類の名前(例: enemy_wave)"
+                    , HA.value scaffold.kind
+                    , HE.onInput ScaffoldKindEdited
+                    ]
+                    []
+              , Html.input
+                    [ HA.class "field mt-2 w-full text-xs"
+                    , HA.placeholder "表示名(例: 敵の波)"
+                    , HA.value scaffold.title
+                    , HE.onInput ScaffoldTitleEdited
+                    ]
+                    []
+              , div [ HA.class "mt-2 flex flex-col gap-1" ]
+                    [ viewRoleRadio scaffold "material" "素材(えらんで装着する物)"
+                    , viewRoleRadio scaffold "tuning" "調整(数値やデータ)"
+                    ]
+              , div [ HA.class "mt-3" ]
+                    [ button
+                        [ HA.class "btn"
+                        , HA.disabled scaffold.pending
+                        , HE.onClick ScaffoldClicked
+                        ]
+                        [ text
+                            (if scaffold.pending then
+                                "作っています…"
+
+                             else
+                                "📦 骨組みを作る"
+                            )
+                        ]
+                    ]
+              , case scaffold.error of
+                    Just reason ->
+                        div [ HA.class "mt-2 text-[11px] text-danger" ]
+                            [ text ("作れませんでした — " ++ reason) ]
+
+                    Nothing ->
+                        text ""
+              ]
+            , viewScaffoldResult scaffold
+            ]
+        )
+
+
+viewRoleRadio : Scaffold -> String -> String -> Html Msg
+viewRoleRadio scaffold role label =
+    Html.label [ HA.class "flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-soft" ]
+        [ Html.input
+            [ HA.type_ "radio"
+            , HA.name "scaffold-role"
+            , HA.checked (scaffold.role == role)
+            , HE.onClick (ScaffoldRoleChosen role)
+            ]
+            []
+        , text label
+        ]
+
+
+viewScaffoldResult : Scaffold -> List (Html Msg)
+viewScaffoldResult scaffold =
+    case scaffold.result of
+        Nothing ->
+            []
+
+        Just result ->
+            List.concat
+                [ [ div [ HA.class "mt-3 text-[11px] font-semibold text-ok" ] [ text "✓ 骨組みができました" ] ]
+                , if List.isEmpty result.files then
+                    []
+
+                  else
+                    [ div [ HA.class "mt-1" ]
+                        (List.map
+                            (\file -> div [ HA.class "font-mono text-[11px] text-ink-soft" ] [ text file ])
+                            result.files
+                        )
+                    ]
+                , if result.wirePrompt == "" then
+                    []
+
+                  else
+                    -- 配線プロンプトは AI カードと同じコピーの作法(箱 + 📋コピー)
+                    [ Html.textarea
+                        [ HA.class "atelier-wire-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                        , HA.readonly True
+                        , HA.value result.wirePrompt
+                        ]
+                        []
+                    , div [ HA.class "mt-2" ]
+                        [ button [ HA.class "btn btn-primary w-full", HE.onClick ScaffoldCopyClicked ]
+                            [ text
+                                (if scaffold.copied then
+                                    "✓ コピーしました"
+
+                                 else
+                                    "📋 コピー"
+                                )
+                            ]
+                        ]
+                    , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
+                        [ text "このプロンプトをAIに貼ると、ゲームがこのDocを読むようになります" ]
+                    ]
+                ]
 
 
 

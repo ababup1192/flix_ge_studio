@@ -64,6 +64,9 @@ jre:
 	$(JLINK) --add-modules $(JRE_MODULES) \
 	  --no-header-files --no-man-pages --strip-debug --compress=2 \
 	  --output $(JRE_DIR)
+	# jlink は legal/ を読み取り専用で吐き、後段の Tauri のリソースコピーが
+	# Permission denied で死ぬ。書けるようにしてから渡す。
+	chmod -R u+w $(JRE_DIR)
 	@test -x $(JRE_DIR)/bin/java && echo "==> [jre] OK: $(JRE_DIR)" || (echo "!! JRE 作成に失敗" && exit 1)
 
 # --- app: 全部同梱の .app ---

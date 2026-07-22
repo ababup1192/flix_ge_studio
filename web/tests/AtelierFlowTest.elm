@@ -64,11 +64,22 @@ select =
 
 
 {-| 候補 a のプレビューを押した時の中身(compareWith = スロットのいまの見た目)。 -}
-candidatePreview : { file : String, note : Maybe String, compareWith : Maybe String }
+candidatePreview : { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool }
 candidatePreview =
     { file = "atelier/villager.a.sprite.json"
     , note = Just "丸み"
     , compareWith = Just "assets/prologue.sprite.json"
+    , isPrev = False
+    }
+
+
+{-| 退避(prev)版のプレビューを押した時の中身。 -}
+prevPreview : { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool }
+prevPreview =
+    { file = "atelier/prev-1.villager.sprite.json"
+    , note = Nothing
+    , compareWith = Just "assets/prologue.sprite.json"
+    , isPrev = True
     }
 
 
@@ -332,12 +343,95 @@ suite =
                     begin withCandidates
                         |> step
                             (Atelier.PreviewClicked
-                                { file = "assets/prologue.sprite.json", note = Nothing, compareWith = Nothing }
+                                { file = "assets/prologue.sprite.json", note = Nothing, compareWith = Nothing, isPrev = False }
                             )
                         |> step Atelier.CompareToggled
                         |> Tuple.first
                         |> Atelier.lightboxShownFile
                         |> Expect.equal (Just "assets/prologue.sprite.json")
+            , test "候補のライトボックスから装着 — 拡大が畳まれ、既存フローで promote が送られる" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin (running withCandidates)
+                                |> step (Atelier.PreviewClicked candidatePreview)
+                                |> step Atelier.LightboxSwapClicked
+                    in
+                    ( Atelier.lightboxOpen model, out )
+                        |> Expect.equal
+                            ( False
+                            , Atelier.OutPromote
+                                { candidate = "atelier/villager.a.sprite.json"
+                                , slot = "assets/prologue.sprite.json"
+                                }
+                            )
+            , test "候補のライトボックスから装着(ゲーム未起動)— 既存の案内(gate)がそのまま効く" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin (stopped withCandidates)
+                                |> step (Atelier.PreviewClicked candidatePreview)
+                                |> step Atelier.LightboxSwapClicked
+                    in
+                    ( model.gate, out )
+                        |> Expect.equal ( True, Atelier.OutNone )
+            , test "prev のライトボックスは「戻す」— 既存のロールバック経路で promote が送られる" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin (stopped withCandidates)
+                                |> step (Atelier.PreviewClicked prevPreview)
+                                |> step Atelier.LightboxRollbackClicked
+                    in
+                    ( Atelier.lightboxOpen model, out )
+                        |> Expect.equal
+                            ( False
+                            , Atelier.OutPromote
+                                { candidate = "atelier/prev-1.villager.sprite.json"
+                                , slot = "assets/prologue.sprite.json"
+                                }
+                            )
+            ]
+        , describe "カード内の装着導線(選んだカードにだけ決めボタン)"
+            [ test "未選択のカードには何も出ない" <|
+                \_ ->
+                    Atelier.cardAction withCandidates
+                        { slot = "assets/prologue.sprite.json"
+                        , file = "atelier/villager.a.sprite.json"
+                        , isPrev = False
+                        }
+                        |> Expect.equal Nothing
+            , test "選んだカードにだけ「装着」が出る(隣のカードには出ない)" <|
+                \_ ->
+                    let
+                        model =
+                            begin withCandidates |> select |> Tuple.first
+                    in
+                    ( Atelier.cardAction model
+                        { slot = "assets/prologue.sprite.json"
+                        , file = "atelier/villager.a.sprite.json"
+                        , isPrev = False
+                        }
+                    , Atelier.cardAction model
+                        { slot = "assets/prologue.sprite.json"
+                        , file = "atelier/prev-1.villager.sprite.json"
+                        , isPrev = True
+                        }
+                    )
+                        |> Expect.equal ( Just Atelier.Swap, Nothing )
+            , test "退避(prev)版を選ぶとボタンは「戻す」になる" <|
+                \_ ->
+                    begin withCandidates
+                        |> step (Atelier.CandidateClicked "assets/prologue.sprite.json" "atelier/prev-1.villager.sprite.json")
+                        |> Tuple.first
+                        |> (\model ->
+                                Atelier.cardAction model
+                                    { slot = "assets/prologue.sprite.json"
+                                    , file = "atelier/prev-1.villager.sprite.json"
+                                    , isPrev = True
+                                    }
+                           )
+                        |> Expect.equal (Just Atelier.Rollback)
             ]
         , describe "JSON 橋渡し(candidates)"
             [ test "壊れた JSON でも既定値に倒れる" <|

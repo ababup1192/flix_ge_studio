@@ -28,6 +28,32 @@ withDiff =
             )
 
 
+{-| DIFF と missingGolden が混ざった状態。 -}
+withMixed : Gallery.Model
+withMixed =
+    Gallery.init
+        |> Gallery.gotDiff
+            (Dict.fromList
+                [ ( "a.png", Gallery.StatusDiff )
+                , ( "new.png", Gallery.MissingGolden )
+                , ( "ok.png", Gallery.StatusOk )
+                , ( "gone.png", Gallery.MissingGallery )
+                ]
+            )
+
+
+{-| 産まれたて(全部 missingGolden — golden がまだ 1 枚も無い)。 -}
+newborn : Gallery.Model
+newborn =
+    Gallery.init
+        |> Gallery.gotDiff
+            (Dict.fromList
+                [ ( "main.png", Gallery.MissingGolden )
+                , ( "title.png", Gallery.MissingGolden )
+                ]
+            )
+
+
 step : Gallery.Msg -> ( Gallery.Model, Gallery.Out ) -> ( Gallery.Model, Gallery.Out )
 step msg ( model, _ ) =
     Gallery.update msg model
@@ -81,6 +107,33 @@ suite =
                         |> Tuple.first
                         |> .bless
                         |> Expect.equal Nothing
+            , test "missingGolden も歩きに乗る(missingGallery は乗らない)" <|
+                \_ ->
+                    begin withMixed
+                        |> step Gallery.BlessOpened
+                        |> step Gallery.BlessAccepted
+                        |> step Gallery.BlessAccepted
+                        |> Tuple.second
+                        |> Expect.equal (Gallery.OutBless [ "a.png", "new.png" ])
+            , test "産まれたて(全部 missingGolden)でも歩きが始まり、祝福が送られる" <|
+                \_ ->
+                    begin newborn
+                        |> step Gallery.BlessOpened
+                        |> step Gallery.BlessAccepted
+                        |> step Gallery.BlessAccepted
+                        |> Tuple.second
+                        |> Expect.equal (Gallery.OutBless [ "main.png", "title.png" ])
+            , test "入り口の文言: 産まれたては「最初のお手本にする」、混在は「差分を確認して祝福する」" <|
+                \_ ->
+                    ( Gallery.blessEntryLabel newborn
+                    , Gallery.blessEntryLabel withMixed
+                    , Gallery.blessEntryLabel Gallery.init
+                    )
+                        |> Expect.equal
+                            ( Just "最初のお手本にする(2件)"
+                            , Just "差分を確認して祝福する(2件)"
+                            , Nothing
+                            )
             , test "祝福が済むと golden のキャッシュ避けが進む" <|
                 \_ ->
                     Gallery.blessDone withDiff
@@ -161,6 +214,25 @@ suite =
                     ( model.runner, Gallery.isPolling model )
                         |> Expect.equal ( Gallery.RunnerUnavailable, False )
             ]
+        , describe "焼きの的(プロジェクトが持つ的だけ)"
+            [ test "的が 1 つだけなら選び(セグメント)は出ない" <|
+                \_ ->
+                    Gallery.gotTargets [ Gallery.TargetBake ] Gallery.init
+                        |> Gallery.showsTargetChooser
+                        |> Expect.equal False
+            , test "的が未着・未実装なら 3 択のまま(fail-open)" <|
+                \_ ->
+                    Gallery.showsTargetChooser Gallery.init
+                        |> Expect.equal True
+            , test "選択中の的が消えたら先頭の的に倒れる" <|
+                \_ ->
+                    begin Gallery.init
+                        |> step (Gallery.TargetChosen Gallery.TargetSounds)
+                        |> Tuple.first
+                        |> Gallery.gotTargets [ Gallery.TargetBake ]
+                        |> .bakeTarget
+                        |> Expect.equal Gallery.TargetBake
+            ]
         , describe "焼きログの進捗ミニパネル(展開の規則)"
             [ test "既定ではログ全文は開かない" <|
                 \_ ->
@@ -198,5 +270,10 @@ suite =
                     D.decodeString Gallery.runnerLogDecoder
                         """{"running":true,"target":"bake","exitCode":null,"lines":["a"]}"""
                         |> Expect.equal (Ok { running = True, exitCode = Nothing, lines = [ "a" ] })
+            , test "targets は知らない的を捨て、rows の長さに追随する" <|
+                \_ ->
+                    D.decodeString Gallery.targetsDecoder
+                        """{"targets":["bake","gallery-prologue","nazo"]}"""
+                        |> Expect.equal (Ok [ Gallery.TargetBake, Gallery.TargetPrologue ])
             ]
         ]

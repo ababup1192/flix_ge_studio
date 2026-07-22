@@ -5,6 +5,7 @@ module Schema exposing
     , Section
     , SectionKind(..)
     , decodeString
+    , isJsonSchema
     , widgetIs
     )
 
@@ -106,6 +107,22 @@ decodeString : String -> Result String Schema
 decodeString text =
     D.decodeString schemaDecoder text
         |> Result.mapError (\e -> "スキーマが読めません: " ++ errorToLine e)
+
+
+{-| draft-07 など JSON-Schema 形式か(トップに "$schema" か "properties")。
+sections 方言のパースに失敗した時の振り分け材料 — JSON-Schema 形式は
+「壊れている」のではなく「意図的にフォーム化対象外の種類」(ドット絵等)なので、
+赤エラーでなく穏やかな案内に倒す。JSON として読めない物は False(本当に壊れ)。
+-}
+isJsonSchema : String -> Bool
+isJsonSchema text =
+    D.decodeString
+        (D.map2 (\a b -> a /= Nothing || b /= Nothing)
+            (D.maybe (D.field "$schema" D.value))
+            (D.maybe (D.field "properties" D.value))
+        )
+        text
+        |> Result.withDefault False
 
 
 

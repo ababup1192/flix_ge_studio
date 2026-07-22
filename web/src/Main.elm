@@ -32,6 +32,7 @@ import Journey
 import Json.Decode as D
 import Json.Encode as E
 import Lint
+import NewGame
 import Plugins
 import Refs
 import Schema
@@ -39,6 +40,7 @@ import SchemaForm
 import Sources
 import Time
 import Table
+import Url
 import Widgets.Weights as Weights
 import Wizard
 
@@ -103,6 +105,9 @@ type SchemaState
     | SchemaLoading
     | SchemaMissing
     | SchemaBroken String
+      -- draft-07 など JSON-Schema 形式 = 意図的にフォーム化対象外の種類(ドット絵等)。
+      -- 壊れではないので赤にしない。previewBroken は /atelier/preview が 404 だった印
+    | SchemaForeign { previewBroken : Bool }
     | SchemaReady Schema.Schema
 
 
@@ -453,6 +458,9 @@ type alias Model =
     -- 「まだ自分が出した通知のままか」を確かめる合鍵
     , noticeSeq : Int
     , picker : PickerState
+
+    -- 「＋ 新しいゲームをはじめる」(ピッカー画面のまっさら開始)
+    , newGame : NewGame.Model
     , title : String
     , root : String
     , files : List String
@@ -624,6 +632,7 @@ init _ =
         , notice = Nothing
         , noticeSeq = 0
         , picker = emptyPicker
+        , newGame = NewGame.init
         , title = ""
         , root = ""
         , files = []
@@ -771,6 +780,10 @@ type Msg
     | AtelierBakePollTick
     | LaunchPollTick
     | RunnerPollTick
+    | NewGameMsg NewGame.Msg
+    | ProjectNewPollTick
+      -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
+    | ForeignPreviewFailed
 
 
 
@@ -808,7 +821,17 @@ update msg model =
             in
             case nav of
                 Just Journey.ToAtelier ->
-                    gotoTab AtelierTab m1
+                    let
+                        ( m2, fx ) =
+                            gotoTab AtelierTab m1
+                    in
+                    -- 「あそびを考える」(design)から来たら、つくるパネルを開いて
+                    -- ゲームカードを光らせる(降り立ち先を迷わせない)
+                    if Journey.suggestionId m1.journey == Just "design" then
+                        ( { m2 | atelier = Atelier.openCreateForGame m2.atelier }, fx )
+
+                    else
+                        ( m2, fx )
 
                 Just Journey.ToGallery ->
                     gotoTab GalleryTab m1
@@ -861,6 +884,44 @@ update msg model =
                 Atelier.OutStartGame ->
                     request "gameStart" (E.object []) m1
 
+                Atelier.OutFetchPrompt info ->
+                    request "promptAtelier"
+                        (E.object
+                            [ ( "slot", E.string info.slot )
+                            , ( "count", E.int info.count )
+                            , ( "direction", E.string info.direction )
+                            ]
+                        )
+                        m1
+
+                Atelier.OutFetchGamePrompt direction ->
+                    request "promptGame"
+                        (E.object [ ( "direction", E.string direction ) ])
+                        m1
+
+                Atelier.OutCopyPrompt prompt ->
+                    -- クリップボードへ(JS 側で解決するローカルな封筒)
+                    request "copyClipboard" (E.object [ ( "text", E.string prompt ) ]) m1
+
+                Atelier.OutCopyFile info ->
+                    request "atelierCopy"
+                        (E.object [ ( "slot", E.string info.slot ), ( "name", E.string info.name ) ])
+                        m1
+
+                Atelier.OutEditFile file ->
+                    -- 候補カードの「✏️ 手直し」— そうこ(エディタ)でそのまま開く
+                    openFile file m1
+
+                Atelier.OutScaffold info ->
+                    request "scaffoldDoc"
+                        (E.object
+                            [ ( "kind", E.string info.kind )
+                            , ( "title", E.string info.title )
+                            , ( "role", E.string info.role )
+                            ]
+                        )
+                        m1
+
                 Atelier.OutClosed ->
                     -- 装着の祝いを閉じた。世界が変わったので候補と旅路を取り直し、
                     -- つぎの一手(焼いて確認)へ誘う
@@ -898,6 +959,42 @@ update msg model =
         RunnerPollTick ->
             -- 焼きの走行中だけ購読が生きている(subscriptions が Gallery.isPolling で判定)
             ( model, requestInfo "runnerLog" )
+
+        NewGameMsg nmsg ->
+            let
+                ( newGame, out ) =
+                    NewGame.update nmsg model.newGame
+
+                m1 =
+                    { model | newGame = newGame }
+            in
+            case out of
+                NewGame.OutNone ->
+                    ( m1, Effect.none )
+
+                NewGame.OutCreate info ->
+                    request "projectNew"
+                        (E.object
+                            [ ( "name", E.string info.name )
+                            , ( "title", E.string info.title )
+                            , ( "w", E.int info.w )
+                            , ( "h", E.int info.h )
+                            ]
+                        )
+                        m1
+
+        ProjectNewPollTick ->
+            -- ひな形づくりを待つ間だけ購読が生きている(NewGame.isPolling が判定)
+            ( model, requestInfo "projectNewLog" )
+
+        ForeignPreviewFailed ->
+            -- プレビュー未焼成(404)。文言に切り替えるだけ(致命ではない)
+            case model.schemaState of
+                SchemaForeign _ ->
+                    ( { model | schemaState = SchemaForeign { previewBroken = True } }, Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
 
         PickerInput text_ ->
             ( { model | picker = updatePicker (\p -> { p | input = text_ }) model }, Effect.none )
@@ -3508,6 +3605,15 @@ handleOkByKind env model =
                     -- 判定だけ欠けても一覧は出す(バッジが付かないだけ)
                     ( model, Effect.none )
 
+        "galleryTargets" ->
+            case D.decodeValue Gallery.targetsDecoder env.body of
+                Ok targets ->
+                    ( { model | gallery = Gallery.gotTargets targets model.gallery }, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答は 3 択のまま(fail-open)
+                    ( model, Effect.none )
+
         "bakeStart" ->
             -- 202(受理)。409 は realApi が {busy:true} で ok に均しており、
             -- どちらも「走っている」— 本当の姿は次のログ取得が教えてくれる
@@ -3561,6 +3667,50 @@ handleOkByKind env model =
                     -- 契約とずれた応答(旧サーバ等)は候補ゾーンを出さないだけ
                     ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
 
+        "atelierSlots" ->
+            case D.decodeValue Atelier.createSlotsDecoder env.body of
+                Ok slots ->
+                    ( { model | atelier = Atelier.gotSlots slots model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.slotsFailed model.atelier }, Effect.none )
+
+        "promptAtelier" ->
+            case D.decodeValue (D.field "prompt" D.string) env.body of
+                Ok prompt ->
+                    ( { model | atelier = Atelier.gotPrompt prompt model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.promptFailed "応答が読めませんでした" model.atelier }, Effect.none )
+
+        "promptGame" ->
+            case D.decodeValue (D.field "prompt" D.string) env.body of
+                Ok prompt ->
+                    ( { model | atelier = Atelier.gotGamePrompt prompt model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.gamePromptFailed "応答が読めませんでした" model.atelier }, Effect.none )
+
+        "atelierCopy" ->
+            -- 複製できた。そうこ(エディタ)へ切り替え、できた写しをそのまま開く
+            let
+                m1 =
+                    { model | atelier = Atelier.copyDone model.atelier }
+
+                ( m2, toastFx ) =
+                    showToast "atelier/ に複製しました。そうこで編集できます" m1
+            in
+            case D.decodeValue (D.field "file" D.string) env.body of
+                Ok file ->
+                    let
+                        ( m3, openFx ) =
+                            openFile file m2
+                    in
+                    ( m3, Effect.batch [ toastFx, openFx ] )
+
+                Err _ ->
+                    ( m2, toastFx )
+
         "gameStatus" ->
             ( { model
                 | atelier =
@@ -3607,6 +3757,69 @@ handleOkByKind env model =
             -- golden が入れ替わったので判定と旅路を取り直す
             ( m1, Effect.batch [ toastFx, requestInfo "galleryDiff", requestInfo "journeyState" ] )
 
+        "projectNew" ->
+            -- 202(受理)。応答の dir(産まれるゲームの絶対パス)を覚え、
+            -- すぐ最初のログを取りに行く(以後は 2 秒のポーリング)。
+            -- dir の無い旧サーバは Nothing(誕生時は /projects 再取得だけに倒す)
+            ( { model
+                | newGame =
+                    NewGame.accepted
+                        (D.decodeValue (D.field "dir" D.string) env.body |> Result.toMaybe)
+                        model.newGame
+              }
+            , requestInfo "projectNewLog"
+            )
+
+        "projectNewLog" ->
+            case D.decodeValue NewGame.logDecoder env.body of
+                Ok log ->
+                    let
+                        ( newGame, result ) =
+                            NewGame.gotLog log model.newGame
+
+                        m1 =
+                            { model | newGame = newGame }
+                    in
+                    case result of
+                        NewGame.LogSuccess info ->
+                            -- 誕生。候補を取り直しつつ、202 で覚えた dir を
+                            -- 既存の選択フローでそのまま開く(成功でホームへ)。
+                            -- dir 不明(旧サーバ)は取り直しだけ(fail-open)
+                            let
+                                ( m2, toastFx ) =
+                                    showToast "うまれました。ホームの『つぎの一手』からどうぞ" m1
+
+                                ( m3, selectFx ) =
+                                    case info.dir of
+                                        Just dir ->
+                                            selectProject dir m2
+
+                                        Nothing ->
+                                            ( m2, Effect.none )
+                            in
+                            ( m3, Effect.batch [ toastFx, requestInfo "projects", selectFx ] )
+
+                        _ ->
+                            -- 走行中(継続)か失敗(パネルがログの尻尾を見せる)
+                            ( m1, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答で回し続けても仕方ない(準備中に倒す)
+                    ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
+
+        "scaffoldDoc" ->
+            case D.decodeValue Atelier.scaffoldResultDecoder env.body of
+                Ok result ->
+                    -- 骨組みができた。「つくる」の素材スロットも取り直す
+                    ( { model | atelier = Atelier.scaffoldDone result model.atelier }
+                    , requestInfo "atelierSlots"
+                    )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.scaffoldFailed "応答が読めませんでした" model.atelier }
+                    , Effect.none
+                    )
+
         "selectProject" ->
             case D.decodeValue Api.projectSwitchDecoder env.body of
                 Ok (Api.SwitchOk result) ->
@@ -3623,6 +3836,7 @@ handleOkByKind env model =
                                     , title = result.title
                                     , root = result.dir
                                     , picker = emptyPicker
+                                    , newGame = NewGame.init
                                     , groups = []
                                     , dashboards = []
                                     , dashboard = Nothing
@@ -3771,7 +3985,19 @@ handleOkByKind env model =
                                 ( m4, Effect.batch [ texFx, previewFx, crossFx, portraitFx ] )
 
                             Err reason ->
-                                ( { model | schemaReq = Nothing, schemaState = SchemaBroken reason }, Effect.none )
+                                -- JSON-Schema 形式(draft-07 等)は壊れではなく
+                                -- 「フォーム化対象外の種類」— 穏やかな案内に倒す
+                                ( { model
+                                    | schemaReq = Nothing
+                                    , schemaState =
+                                        if Schema.isJsonSchema fc.content then
+                                            SchemaForeign { previewBroken = False }
+
+                                        else
+                                            SchemaBroken reason
+                                  }
+                                , Effect.none
+                                )
 
                     else if Just env.id == model.texturesReq then
                         ( { model | texturesReq = Nothing, textures = texturesFrom fc.content }, Effect.none )
@@ -4188,6 +4414,26 @@ handleErrByKind env message model =
             , Effect.none
             )
 
+        "projectNew" ->
+            -- 404(旧サーバ)は「準備中」に倒す。400/409 は日本語の理由をその場に出す
+            if String.contains "404" message then
+                ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
+
+            else
+                ( { model | newGame = NewGame.createFailed message model.newGame }, Effect.none )
+
+        "projectNewLog" ->
+            -- ログ口が無い・落ちた。回し続けても仕方ないので止める(準備中に倒す)
+            ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
+
+        "scaffoldDoc" ->
+            -- 404(旧サーバ)は「準備中」、400/409 は日本語の理由をその場に出す
+            if String.contains "404" message then
+                ( { model | atelier = Atelier.scaffoldUnavailable model.atelier }, Effect.none )
+
+            else
+                ( { model | atelier = Atelier.scaffoldFailed message model.atelier }, Effect.none )
+
         "getFile" ->
             if Just env.id == model.schemaReq then
                 -- スキーマが無いのは普通のこと(生テキスト編集は常に生きている)
@@ -4304,10 +4550,48 @@ handleErrByKind env message model =
             -- 判定だけ失敗しても一覧は出す(バッジが付かないだけ)
             ( model, Effect.none )
 
+        "galleryTargets" ->
+            -- エンドポイント未実装のサーバ(404 等)。3 択のまま(fail-open)
+            ( model, Effect.none )
+
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
             -- そうこ(エディタ)は生きる(fail-open)
             ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
+
+        "atelierSlots" ->
+            -- エンドポイント未実装のサーバ(404 等)。AI カードが準備中になるだけ
+            ( { model | atelier = Atelier.slotsFailed model.atelier }, Effect.none )
+
+        "promptAtelier" ->
+            -- 理由(日本語)はボタンの近くに出す。生のエラー行は見せない
+            ( { model | atelier = Atelier.promptFailed message model.atelier }, Effect.none )
+
+        "promptGame" ->
+            -- 404(旧サーバ)は「準備中」、400 は日本語の理由をその場に出す
+            if String.contains "404" message then
+                ( { model | atelier = Atelier.gamePromptFailed "準備中 — このサーバはまだ対応していません" model.atelier }, Effect.none )
+
+            else
+                ( { model | atelier = Atelier.gamePromptFailed message model.atelier }, Effect.none )
+
+        "atelierCopy" ->
+            -- 409(名前衝突)は次の空き番でもう一度。その他はトーストで理由を告げる
+            if String.contains "409" message then
+                case Atelier.copyRetry model.atelier of
+                    ( atelier, Just retry ) ->
+                        request "atelierCopy"
+                            (E.object [ ( "slot", E.string retry.slot ), ( "name", E.string retry.name ) ])
+                            { model | atelier = atelier }
+
+                    ( atelier, Nothing ) ->
+                        showToast ("複製できませんでした — " ++ message) { model | atelier = atelier }
+
+            else
+                showToast ("複製できませんでした — " ++ message) { model | atelier = Atelier.copyFailed model.atelier }
+
+        "copyClipboard" ->
+            showToast "コピーできませんでした(手で選択してコピーしてください)" model
 
         "gameStatus" ->
             -- 状態が取れないのは致命ではない(装着前に起動の案内が挟まるだけ)
@@ -4384,12 +4668,24 @@ gotoTab tab model =
         AtelierTab ->
             -- 候補えらび(swap)の材料。無いサーバでは fail-open でゾーンごと出ない
             ( { model | tab = AtelierTab }
-            , Effect.batch [ requestInfo "atelierCandidates", requestInfo "gameStatus" ]
+            , Effect.batch
+                [ requestInfo "atelierCandidates"
+                , requestInfo "gameStatus"
+
+                -- 「つくる」の素材スロット(無いサーバでは AI カードが準備中になるだけ)
+                , requestInfo "atelierSlots"
+                ]
             )
 
         GalleryTab ->
             ( { model | tab = GalleryTab }
-            , Effect.batch [ requestInfo "galleryList", requestInfo "galleryDiff" ]
+            , Effect.batch
+                [ requestInfo "galleryList"
+                , requestInfo "galleryDiff"
+
+                -- このプロジェクトが持つ焼きの的(無いサーバでは 3 択のまま)
+                , requestInfo "galleryTargets"
+                ]
             )
 
 
@@ -4410,7 +4706,7 @@ view model =
                 ]
 
         Picker ->
-            viewPicker model.picker
+            viewPicker model.newGame model.picker
 
         Editing ->
             case model.tab of
@@ -4494,8 +4790,8 @@ isRunning runningCwds dir =
     target /= "" && List.any matches runningCwds
 
 
-viewPicker : PickerState -> Html Msg
-viewPicker picker =
+viewPicker : NewGame.Model -> PickerState -> Html Msg
+viewPicker newGame picker =
     let
         busyLabel dir =
             if picker.busy == Just dir then
@@ -4545,6 +4841,9 @@ viewPicker picker =
                         []
                     , button [ HA.class "btn", HE.onClick OpenPathClicked ] [ text "開く" ]
                     ]
+
+              -- まっさらから(ひな形を写して新しいゲームを生む)
+              , Html.map NewGameMsg (NewGame.view newGame)
               ]
             , case picker.error of
                 Just message ->
@@ -4581,6 +4880,11 @@ viewEditing model =
         Nothing ->
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
+
+                -- 「つくる」(創作の第一幕)— そうこモードでも最上段に置く。
+                -- 候補ゼロならパネルが開いて出迎える(旅路の「つくる」の降り立ち先)
+                , div [ HA.class "shrink-0 px-3 pt-3" ]
+                    [ Html.map AtelierMsg (Atelier.viewCreate model.atelier) ]
 
                 -- そうこモード中、候補がある時だけ「候補えらびに戻る」の細い帯
                 , if Atelier.hasCandidates model.atelier then
@@ -5724,6 +6028,27 @@ viewFormPane model =
                                         "この種類はスキーマ宣言が無いので、中央のテキストで編集してください"
                                 )
                             ]
+                       ]
+
+            ( Just path, SchemaForeign info ) ->
+                -- 意図的にフォーム化対象外(ドット絵等)。壊れではないので赤にしない。
+                -- 代わりに、いま開いている Doc の絵(アトリエのプレビュー)をその場で見せる
+                viewPreviewCard model
+                    ++ [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
+                            [ text "この種類はフォームになりません。ドット絵は アトリエ(候補づくり・装着)で扱うのが正です。ここでは中央のテキスト編集が使えます" ]
+                       , if info.previewBroken then
+                            div [ HA.class "form-note mt-2 text-[11px] text-ink-faint" ]
+                                [ text "プレビュー未焼成(アトリエを開くと自動で焼けます)" ]
+
+                         else
+                            img
+                                [ HA.src (model.serverBase ++ "/atelier/preview?file=" ++ Url.percentEncode path)
+                                , HA.alt ""
+                                , HA.class "mt-2 w-full rounded border border-edge bg-black/50"
+                                , HA.style "image-rendering" "pixelated"
+                                , HE.on "error" (D.succeed ForeignPreviewFailed)
+                                ]
+                                []
                        ]
 
             ( Just _, SchemaBroken reason ) ->
@@ -7832,6 +8157,13 @@ subscriptions model =
           else
             Sub.none
 
+        -- 「✓ コピーしました」の戻し(2 秒)。コピー直後だけ生きる
+        , if Atelier.needsCopyReset model.atelier then
+            Time.every 2000 (\_ -> AtelierMsg Atelier.CopyResetTick)
+
+          else
+            Sub.none
+
         -- プレビュー拡大(lightbox)が開いている間だけ Esc で閉じる購読を生かす
         , if Atelier.lightboxOpen model.atelier then
             Browser.Events.onKeyDown
@@ -7868,6 +8200,14 @@ subscriptions model =
         -- baking=false が届いた瞬間に購読ごと消え、その応答が最終形
         , if model.screen == Editing && Atelier.isBaking model.atelier then
             Time.every 2000 (\_ -> AtelierBakePollTick)
+
+          else
+            Sub.none
+
+        -- 新しいゲームのひな形づくりを待つ間だけログを追う(2 秒間隔 —
+        -- ゲーム起動と同じ拍)。止まったら購読ごと消える
+        , if model.screen == Picker && NewGame.isPolling model.newGame then
+            Time.every 2000 (\_ -> ProjectNewPollTick)
 
           else
             Sub.none

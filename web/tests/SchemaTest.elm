@@ -360,4 +360,25 @@ suite =
                     |> Result.map (\s -> s.sections |> List.map (\( key, sec ) -> ( key, sec.label )))
                     |> Expect.equal
                         (Ok [ ( "rooms", Just "部屋(矩形)" ), ( "grid", Nothing ) ])
+        , describe "パース失敗の振り分け(赤エラーか、フォーム対象外の案内か)"
+            [ test "$schema/properties 持ち(draft-07 等)はフォーム対象外の種類 = 穏やか表示" <|
+                \_ ->
+                    let
+                        draft07 =
+                            """{"$schema": "http://json-schema.org/draft-07/schema#",
+                                "type": "object",
+                                "properties": {"frames": {"type": "array"}}}"""
+                    in
+                    -- sections 方言としては読めないが、壊れ扱いにはしない
+                    ( Schema.decodeString draft07 |> Result.toMaybe, Schema.isJsonSchema draft07 )
+                        |> Expect.equal ( Nothing, True )
+            , test "sections 方言の壊れ(JSON-Schema でもない)は従来どおり赤" <|
+                \_ ->
+                    let
+                        broken =
+                            """{"version": 1, "sections": 42}"""
+                    in
+                    ( Schema.decodeString broken |> Result.toMaybe, Schema.isJsonSchema broken )
+                        |> Expect.equal ( Nothing, False )
+            ]
         ]

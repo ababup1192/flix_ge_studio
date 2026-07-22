@@ -13,7 +13,9 @@ mod Journey {
     pub type alias Checks = {
         atelierCandidates = Int32,
         staleGallery      = Bool,
-        diffCount         = Int32
+        diffCount         = Int32,
+        goldenEmpty       = Bool,
+        hasStarterDoc     = Bool
     }
 
     /// 提案 1 件。nav はエディタ画面のどこへ誘導するか。
@@ -37,11 +39,25 @@ mod Journey {
               title  = "焼いて確かめよう",
               detail = "素材が絵より新しくなっています。焼き直して、いまの見た目を確かめましょう。",
               nav    = "gallery" }
+        else if (checks#diffCount > 0 and checks#goldenEmpty)
+            // 産まれたて: お手本 (golden) がまだ 1 枚も無い。「祝福」の語彙を
+            // 知らない人が最初に読む文なので、仕組みの説明から入る。
+            { id     = "firstBless",
+              title  = "最初の絵をお手本にしよう",
+              detail = "産まれたての画面が焼けています。ギャラリーで確かめて「祝福」すると、それが基準(お手本)になります。次からは、見た目が変わった時だけ差分として教えてくれます。",
+              nav    = "gallery" }
         else if (checks#diffCount > 0)
             { id     = "bless",
               title  = "差分を確認して祝福しよう",
               detail = "お手本と違う絵が ${checks#diffCount} 枚あります。見比べて、良ければ新しいお手本にしましょう。",
               nav    = "gallery" }
+        else if (checks#hasStarterDoc)
+            // やる事が何も残っていない産まれたてスターター (見本 Doc がまだ居る):
+            // 素材いじりより先に「どんなゲームか」を言葉にしてもらう。
+            { id     = "design",
+              title  = "あそびを考えよう",
+              detail = "見た目の土台はできました。どんなゲームにするかを言葉にして、AIに作らせましょう(アトリエの『つくる』にプロンプトの入口があります)",
+              nav    = "atelier" }
         else
             { id     = "create",
               title  = "素材を試作しよう",
@@ -86,8 +102,15 @@ mod Journey {
             |> List.filter(name -> not Atelier.isPrevName(name))
             |> List.length;
         let stale = isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir));
-        let diffs = Gallery.diffItemsOf(dir) |> List.filter(item -> snd(item) != "ok") |> List.length;
-        { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs }
+        let items = Gallery.diffItemsOf(dir);
+        let diffs = items |> List.filter(item -> snd(item) != "ok") |> List.length;
+        // お手本がまだ空 = 全項目が「golden に無い」。gallery まで空なら items が空で
+        // diffs も 0 なので、firstBless ではなく create に落ちる。
+        let goldenEmpty = List.forAll(item -> snd(item) == "missingGolden", items);
+        // 産まれたてスターターの見分け: 雛形の見本 Doc がまだそのまま居るか。
+        let hasStarterDoc = new JFile("${dir}/assets/sample.kind.json").isFile();
+        { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
+          goldenEmpty = goldenEmpty, hasStarterDoc = hasStarterDoc }
 
     /// dir/subdir 直下の *.json の mtime 一覧。無ければ空。
     def jsonMtimes(dir: String, subdir: String): List[Int64] \ IO =

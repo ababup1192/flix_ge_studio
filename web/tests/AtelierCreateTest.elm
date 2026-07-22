@@ -1,0 +1,320 @@
+module AtelierCreateTest exposing (suite)
+
+{-| 「つくる」(創作の第一幕)の規則のテスト。
+
+守るのは規則だけ: パネルの既定の開閉(候補の有無で決まる)、プロンプトの
+取り寄せと表示、名前の検証、複製の依頼と成功後の行き先。カードの見た目や
+コピー札の戻りのタイミング(2 秒)の演出は焼かない。
+
+-}
+
+import Atelier
+import Expect
+import Json.Decode as D
+import Test exposing (Test, describe, test)
+
+
+slots : List Atelier.CreateSlot
+slots =
+    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人の見た目", hint = "村人の歩き・持ち物の見た目" }
+    , { file = "assets/prologue.sfx.json", entityId = Nothing, kind = "sound", title = "効果音", hint = "" }
+    ]
+
+
+{-| スロットが届いた素の状態(候補なし)。 -}
+fresh : Atelier.Model
+fresh =
+    Atelier.init
+        |> Atelier.gotSlots slots
+
+
+{-| 候補が 1 件ある状態(えらぶが主役になる側)。 -}
+withCandidates : Atelier.Model
+withCandidates =
+    fresh
+        |> Atelier.gotCandidates
+            { slots =
+                [ { slot = "assets/prologue.sprite.json"
+                  , entityId = Just "villager"
+                  , candidates =
+                        [ { file = "atelier/villager.a.sprite.json", note = Nothing, isPrev = False, mtime = 1, previewReady = True } ]
+                  , currentPreviewReady = True
+                  }
+                ]
+            , loose = []
+            , baking = False
+            }
+
+
+step : Atelier.Msg -> ( Atelier.Model, Atelier.Out ) -> ( Atelier.Model, Atelier.Out )
+step msg ( model, _ ) =
+    Atelier.update msg model
+
+
+begin : Atelier.Model -> ( Atelier.Model, Atelier.Out )
+begin model =
+    ( model, Atelier.OutNone )
+
+
+suite : Test
+suite =
+    describe "アトリエの「つくる」"
+        [ describe "パネルの開閉"
+            [ test "候補ゼロなら開いて出迎える(創作の降り立ち先)" <|
+                \_ ->
+                    Atelier.createOpen fresh
+                        |> Expect.equal True
+            , test "候補があれば畳まれる(えらぶが主役のまま)" <|
+                \_ ->
+                    Atelier.createOpen withCandidates
+                        |> Expect.equal False
+            , test "手で開けば候補があっても開いたまま" <|
+                \_ ->
+                    begin withCandidates
+                        |> step Atelier.CreateToggled
+                        |> Tuple.first
+                        |> Atelier.createOpen
+                        |> Expect.equal True
+            ]
+        , describe "AIに作らせる(プロンプト)"
+            [ test "「プロンプトを作る」で slot・案数・方向性が飛ぶ" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.CreateCountChosen 5)
+                        |> step (Atelier.CreateDirectionEdited " 冬らしく ")
+                        |> step Atelier.MakePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutFetchPrompt
+                                { slot = "assets/prologue.sprite.json"
+                                , count = 5
+                                , direction = "冬らしく"
+                                }
+                            )
+            , test "届いたプロンプトが箱に映り、コピーで中身が飛ぶ" <|
+                \_ ->
+                    let
+                        model =
+                            begin fresh
+                                |> step Atelier.MakePromptClicked
+                                |> Tuple.first
+                                |> Atelier.gotPrompt "描いてください"
+                    in
+                    ( Atelier.shownPrompt model
+                    , Atelier.update Atelier.CopyPromptClicked model |> Tuple.second
+                    )
+                        |> Expect.equal ( Just "描いてください", Atelier.OutCopyPrompt "描いてください" )
+            , test "取り寄せ中の二度押しは送らない" <|
+                \_ ->
+                    begin fresh
+                        |> step Atelier.MakePromptClicked
+                        |> step Atelier.MakePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal Atelier.OutNone
+            ]
+        , describe "あそびを作らせる(ゲームのプロンプト)"
+            [ test "空のまま押すと送らず、理由がその場に出る" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin fresh
+                                |> step Atelier.MakeGamePromptClicked
+                    in
+                    ( out, Atelier.gamePromptErrorShown model /= Nothing )
+                        |> Expect.equal ( Atelier.OutNone, True )
+            , test "「プロンプトを作る」で方向性(trim 済み)が飛ぶ" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.GameDirectionEdited " 星をバケツで受け止める ")
+                        |> step Atelier.MakeGamePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal (Atelier.OutFetchGamePrompt "星をバケツで受け止める")
+            , test "届いたプロンプトが箱に映り、コピーで中身が飛ぶ" <|
+                \_ ->
+                    let
+                        model =
+                            begin fresh
+                                |> step (Atelier.GameDirectionEdited "星をバケツで")
+                                |> step Atelier.MakeGamePromptClicked
+                                |> Tuple.first
+                                |> Atelier.gotGamePrompt "作ってください"
+                    in
+                    ( Atelier.shownGamePrompt model
+                    , Atelier.update Atelier.CopyGamePromptClicked model |> Tuple.second
+                    )
+                        |> Expect.equal ( Just "作ってください", Atelier.OutCopyPrompt "作ってください" )
+            , test "取り寄せ中の二度押しは送らない" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.GameDirectionEdited "星をバケツで")
+                        |> step Atelier.MakeGamePromptClicked
+                        |> step Atelier.MakeGamePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal Atelier.OutNone
+            , test "旅路の design から降り立つと、候補があってもつくるが開く" <|
+                \_ ->
+                    Atelier.openCreateForGame withCandidates
+                        |> Atelier.createOpen
+                        |> Expect.equal True
+            , test "プロンプト表示中でも「とじる」で閉じられ、プロンプトは保持される" <|
+                \_ ->
+                    let
+                        closed =
+                            begin fresh
+                                |> step (Atelier.GameDirectionEdited "星をバケツで")
+                                |> step Atelier.MakeGamePromptClicked
+                                |> Tuple.first
+                                |> Atelier.gotGamePrompt "作ってください"
+                                |> Atelier.update Atelier.CreateToggled
+                                |> Tuple.first
+                    in
+                    ( Atelier.createOpen closed, Atelier.shownGamePrompt closed )
+                        |> Expect.equal ( False, Just "作ってください" )
+            ]
+        , describe "なにをつくる?(選択式 1 問)"
+            [ test "優先度順: 誕生期(design)はあそびが先頭、通常時は素材が先" <|
+                \_ ->
+                    ( Atelier.createPaths (Atelier.openCreateForGame fresh)
+                    , Atelier.createPaths fresh
+                    )
+                        |> Expect.equal
+                            ( [ Atelier.PathGame, Atelier.PathAi, Atelier.PathScaffold ]
+                            , [ Atelier.PathAi, Atelier.PathGame, Atelier.PathScaffold ]
+                            )
+            , test "選ぶとその道だけが出て、「← ほかのつくり方」で選択リストへ戻る" <|
+                \_ ->
+                    let
+                        chosen =
+                            begin fresh
+                                |> step (Atelier.PathChosen Atelier.PathScaffold)
+                                |> Tuple.first
+
+                        back =
+                            Atelier.update Atelier.PathCleared chosen |> Tuple.first
+                    in
+                    ( Atelier.chosenPath fresh, Atelier.chosenPath chosen, Atelier.chosenPath back )
+                        |> Expect.equal ( Nothing, Just Atelier.PathScaffold, Nothing )
+            ]
+        , describe "手直し(えらぶ側から入る)"
+            [ test "候補カードの「手直し」でそのファイルを開く便りが飛び、そうこ側へ切り替わる" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin withCandidates
+                                |> step (Atelier.EditCandidateClicked "atelier/villager.a.sprite.json")
+                    in
+                    ( out, Atelier.showPicks model )
+                        |> Expect.equal ( Atelier.OutEditFile "atelier/villager.a.sprite.json", False )
+            , test "「写しを作って直す」で自動採番の名前が /atelier/copy へ飛ぶ" <|
+                \_ ->
+                    begin withCandidates
+                        |> step (Atelier.CopyCurrentClicked "assets/prologue.sprite.json")
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutCopyFile { slot = "assets/prologue.sprite.json", name = "prologue.a" })
+            , test "自動採番: 既存の a・b を飛ばして c を選ぶ" <|
+                \_ ->
+                    Atelier.autoCopyName "assets/prologue.sprite.json"
+                        [ "atelier/prologue.a.sprite.json", "atelier/prologue.b.sprite.json" ]
+                        |> Expect.equal "prologue.c"
+            , test "409(衝突)は次の空き番でもう一度、成功でそうこ側へ切り替わる" <|
+                \_ ->
+                    let
+                        sent =
+                            begin withCandidates
+                                |> step (Atelier.CopyCurrentClicked "assets/prologue.sprite.json")
+                                |> Tuple.first
+
+                        ( retried, retry ) =
+                            Atelier.copyRetry sent
+                    in
+                    ( retry
+                    , retried |> Atelier.copyDone |> Atelier.showPicks
+                    )
+                        |> Expect.equal
+                            ( Just { slot = "assets/prologue.sprite.json", name = "prologue.b" }
+                            , False
+                            )
+            ]
+        , describe "スロットの案内(hint)と方向性の例"
+            [ test "hint はスロットに追随し、空なら出さない(fail-open)" <|
+                \_ ->
+                    ( Atelier.selectedSlotHint fresh
+                    , begin fresh
+                        |> step (Atelier.CreateSlotChosen "assets/prologue.sfx.json")
+                        |> Tuple.first
+                        |> Atelier.selectedSlotHint
+                    )
+                        |> Expect.equal ( Just "村人の歩き・持ち物の見た目", Nothing )
+            , test "方向性の例はスロットの kind で切り替わり、不明は汎用に倒れる" <|
+                \_ ->
+                    List.map Atelier.directionPlaceholder [ "sprite", "sound", "nazo" ]
+                        |> Expect.equal
+                            [ "例: 冬支度の村人。網で虫を追いかける子供"
+                            , "例: 短く鋭い斧の音。夕暮れのひぐらし"
+                            , "例: イナゴやトンボが飛び、網で虫を追いかける子供がいる晩夏の情景"
+                            ]
+            ]
+        , describe "新しい種類の素材/設定を足す(scaffold)"
+            [ test "名前が規則(^[a-z][a-z0-9_]*$)に合わないと送らず、理由がその場に出る" <|
+                \_ ->
+                    let
+                        ( model, out ) =
+                            begin fresh
+                                |> step (Atelier.ScaffoldKindEdited "Enemy-Wave")
+                                |> step Atelier.ScaffoldClicked
+                    in
+                    ( out, Atelier.scaffoldErrorShown model /= Nothing )
+                        |> Expect.equal ( Atelier.OutNone, True )
+            , test "規則に合う名前なら kind・表示名・役割が飛ぶ" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.ScaffoldKindEdited " enemy_wave ")
+                        |> step (Atelier.ScaffoldTitleEdited "敵の波")
+                        |> step (Atelier.ScaffoldRoleChosen "tuning")
+                        |> step Atelier.ScaffoldClicked
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutScaffold { kind = "enemy_wave", title = "敵の波", role = "tuning" })
+            , test "成功で配線プロンプトが箱に映り、コピーで中身が飛ぶ" <|
+                \_ ->
+                    let
+                        model =
+                            begin fresh
+                                |> step (Atelier.ScaffoldKindEdited "enemy_wave")
+                                |> step Atelier.ScaffoldClicked
+                                |> Tuple.first
+                                |> Atelier.scaffoldDone { files = [ "assets/enemy_wave.json" ], wirePrompt = "配線して" }
+                    in
+                    ( Atelier.shownWirePrompt model
+                    , Atelier.update Atelier.ScaffoldCopyClicked model |> Tuple.second
+                    )
+                        |> Expect.equal ( Just "配線して", Atelier.OutCopyPrompt "配線して" )
+            , test "サーバの 409 の理由がその場に出て、ボタンが戻る" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.ScaffoldKindEdited "enemy_wave")
+                        |> step Atelier.ScaffoldClicked
+                        |> Tuple.first
+                        |> Atelier.scaffoldFailed "HTTP 409: /scaffold/doc — その種類は既にあります"
+                        |> Atelier.scaffoldErrorShown
+                        |> Expect.equal (Just "その種類は既にあります")
+            ]
+        , describe "/atelier/slots の橋渡し"
+            [ test "壊れた JSON は空(fail-open — カードが準備中になるだけ)" <|
+                \_ ->
+                    D.decodeString Atelier.createSlotsDecoder "{\"slots\":42}"
+                        |> Result.withDefault []
+                        |> Expect.equal []
+            , test "title 等の欠けは既定に倒し、rows の長さに追随する" <|
+                \_ ->
+                    D.decodeString Atelier.createSlotsDecoder
+                        "{\"slots\":[{\"file\":\"a.json\"},{\"file\":\"b.json\",\"title\":\"音\",\"kind\":\"sfx\",\"entityId\":\"e\"}]}"
+                        |> Expect.equal
+                            (Ok
+                                [ { file = "a.json", entityId = Nothing, kind = "", title = "", hint = "" }
+                                , { file = "b.json", entityId = Just "e", kind = "sfx", title = "音", hint = "" }
+                                ]
+                            )
+            ]
+        ]

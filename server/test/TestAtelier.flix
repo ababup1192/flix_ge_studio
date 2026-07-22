@@ -15,9 +15,9 @@ mod TestAtelier {
                                   Some("other.sprites"), "villager.a.sprite.json"),
              Atelier.isCompatible(Some("prologue.sprites"), "prologue.sprite.json",
                                   None, "villager.a.sprite.json"),
-             Atelier.isCompatible(None, "spring.theme.json", None, "moss.theme.json"),
+             Atelier.isCompatible(None, "spring.theme.json", None, "spring.a.theme.json"),
              Atelier.isCompatible(None, "spring.theme.json", None, "villager.sprite.json"),
-             Atelier.isCompatible(None, "plain.json", None, "other.json")))
+             Atelier.isCompatible(None, "autumn.theme.json", None, "summer.a.theme.json")))
 
     /// 退避の名前: "<base>.prev-N.<kind>.json"。多段の base も kind の手前で切る。
     @Test
@@ -65,6 +65,76 @@ mod TestAtelier {
              Atelier.previewName("assets/prologue.sprite.json"),
              Atelier.previewName("atelier/../assets/prologue.sprite.json"),
              Atelier.previewName("debug/atelier/x.png")))
+
+    /// プロンプトの組み立て: スキル名・スロット・案数 (1〜9 に丸め)・方向性が本文に載る。
+    /// 方向性の省略は「おまかせ」、entityId 無しは「なし」に落ちる。
+    @Test
+    def testAtelierPrompt(): Unit \ Assert =
+        let prompt = Atelier.atelierPrompt("/proj", "assets/prologue.sprite.json",
+            Some("prologue.sprites"), "assets/sprite.schema.json", 3, Some("冬らしく"));
+        let fallback = Atelier.atelierPrompt("/proj", "assets/x.theme.json", None,
+            "assets/theme.schema.json", 99, None);
+        Assert.assertEq(
+            expected = (true, true, true, true, true, true, true, true),
+            (String.contains(substr = "/atelier-draft", prompt),
+             String.contains(substr = "assets/prologue.sprite.json", prompt),
+             String.contains(substr = "entityId: prologue.sprites", prompt),
+             String.contains(substr = "案数: 3", prompt),
+             String.contains(substr = "方向性: 冬らしく", prompt),
+             String.contains(substr = "案数: 9", fallback),
+             String.contains(substr = "方向性: おまかせ", fallback),
+             String.contains(substr = "/wire-doc", Atelier.wirePrompt("/proj", "assets/x.kind.json"))))
+
+    /// 遊びのプロンプト: プロジェクトと方向性が本文に載り、規約 (AGENTS.md と skills) と
+    /// 仕上げ (make bake まで) を参照する形になっている。
+    @Test
+    def testGamePrompt(): Unit \ Assert =
+        let prompt = Atelier.gamePrompt("/proj", "星をあつめる採集ゲーム");
+        Assert.assertEq(
+            expected = (true, true, true, true, true),
+            (String.startsWith(prefix = "このゲームに遊びを実装してください。", prompt),
+             String.contains(substr = "対象プロジェクト: /proj", prompt),
+             String.contains(substr = "どんな遊びか: 星をあつめる採集ゲーム", prompt),
+             String.contains(substr = "AGENTS.md と .claude/skills", prompt),
+             String.contains(substr = "make bake", prompt)))
+
+    /// 自作コピーの名前づけ: スロットの種類の尻尾を受け継ぐ。名前の門番は
+    /// 英数・_ - と途中の . だけを通す (区切り・.. ・端の . は弾く)。
+    @Test
+    def testCopyNaming(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("villager.d.sprite.json", "moss.theme.json", true, false, false, false, false),
+            (Atelier.copyTargetName("prologue.sprite.json", "villager.d"),
+             Atelier.copyTargetName("spring.theme.json", "moss"),
+             Atelier.isCopyBaseName("villager.d"),
+             Atelier.isCopyBaseName(""),
+             Atelier.isCopyBaseName("a/b"),
+             Atelier.isCopyBaseName("a..b"),
+             Atelier.isCopyBaseName(".hidden")))
+
+    /// 素材の選別: role="material" の宣言に pattern が当たるスロットだけが対象。
+    /// role="tuning" も role 欠落 (fail-open で tuning 扱い) も外れる。
+    @Test
+    def testMaterialFiltering(): Unit \ Assert =
+        let decl = (id, pattern, role) ->
+            { id = id, pattern = pattern, title = None, schemaPath = None,
+              plugin = None, builtin = false, role = role };
+        let decls = decl("sprite", "assets/*.sprite.json", Some("material"))
+            :: decl("balance", "assets/balance.kind.json", Some("tuning"))
+            :: decl("terrain", "assets/terrain.kind.json", None)
+            :: Nil;
+        // 先勝ち: 同じファイルに当たる素材宣言が並んでいたら、宣言順で最初のものを採る
+        // (村の prologueTheme が汎用 theme より前に置かれる並び順を前提にしている)。
+        let overlapping = decl("prologueTheme", "assets/*.theme.json", Some("material"))
+            :: decl("theme", "assets/*.theme.json", Some("material"))
+            :: Nil;
+        Assert.assertEq(
+            expected = (Some("sprite"), None, None, None, Some("prologueTheme")),
+            (ResourceDecl.materialDeclFor(decls, "assets/prologue.sprite.json") |> Option.map(d -> d#id),
+             ResourceDecl.materialDeclFor(decls, "assets/balance.kind.json") |> Option.map(d -> d#id),
+             ResourceDecl.materialDeclFor(decls, "assets/terrain.kind.json") |> Option.map(d -> d#id),
+             ResourceDecl.materialDeclFor(decls, "assets/other.kind.json") |> Option.map(d -> d#id),
+             ResourceDecl.materialDeclFor(overlapping, "assets/prologue.theme.json") |> Option.map(d -> d#id)))
 
     /// 焼き直しの要否: PNG が無い (0)・JSON より古い、は要。同時刻・より新しい、は不要。
     @Test
