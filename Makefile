@@ -8,7 +8,7 @@
 #   make jar   → server/artifact/server.jar          (Flix fatjar)
 #   make web   → web/dist                            (Vite build)
 #   make jre   → app/runtime/jre                     (jlink 最小 JRE)
-#   make app   → app/src-tauri/target/.../Flix GE Editor.app (全部同梱)
+#   make app   → app/src-tauri/target/.../Flix GE Studio.app (全部同梱)
 #   make dev   → server を web/dist 配信で開発起動
 #   make clean → 生成物を消す
 #
@@ -82,7 +82,7 @@ app: jar web jre
 	@echo "==> [app] cargo tauri build (bundle=app)"
 	cd app/src-tauri && env -u DEVELOPER_DIR -u SDKROOT cargo tauri build --bundles app
 	@echo "==> [app] 完了。生成 .app:"
-	@find app/src-tauri/target -name "Flix GE Editor.app" -maxdepth 4 2>/dev/null | head -1
+	@find app/src-tauri/target -name "Flix GE Studio.app" -maxdepth 4 2>/dev/null | head -1
 
 # --- dev: 開発起動 ---
 # server を web/dist 配信で起動 (ブラウザ / .app なしでの動作確認用)。

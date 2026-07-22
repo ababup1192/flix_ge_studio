@@ -56,7 +56,7 @@ engine の fpkg（0.7.1）は `server/lib/` に同梱済みなので、**clone �
 make app
 ```
 
-`app/src-tauri/target/release/bundle/macos/Flix GE Editor.app` ができる。これを
+`app/src-tauri/target/release/bundle/macos/Flix GE Studio.app` ができる。これを
 `/Applications` に置けばダブルクリックで起動し、プロジェクトを選ぶ画面が出る。
 （自作アプリで署名していないので、初回だけ Finder で右クリック →「開く」で許可する。）
 

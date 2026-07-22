@@ -35,7 +35,7 @@ mod Editor {
         if (Object.isNull(value) or value == "")
             None
         else if (not Projects.hasProjectJson(value)) {
-            println("[editor] EDITOR_DIR にプロジェクトが見つかりません (project.json 無し): ${value} — 未選択で起動します");
+            println("[studio] EDITOR_DIR にプロジェクトが見つかりません (project.json 無し): ${value} — 未選択で起動します");
             None
         } else
             Some(value)
@@ -82,12 +82,12 @@ mod Editor {
         });
         server.start();
         match initialDir {
-            case Some(dir) => println("[editor] serving ${dir} on http://127.0.0.1:${port}")
-            case None      => println("[editor] no project selected — GET /projects で候補を見て POST /project で選ぶ (http://127.0.0.1:${port})")
+            case Some(dir) => println("[studio] serving ${dir} on http://127.0.0.1:${port}")
+            case None      => println("[studio] no project selected — GET /projects で候補を見て POST /project で選ぶ (http://127.0.0.1:${port})")
         };
         match webRoot {
-            case Some(_) => println("[editor] web UI: http://127.0.0.1:${port}/")
-            case None    => println("[editor] web UI: 無効(EDITOR_WEB が見つかりません)")
+            case Some(_) => println("[studio] web UI: http://127.0.0.1:${port}/")
+            case None    => println("[studio] web UI: 無効(EDITOR_WEB が見つかりません)")
         };
         waitForever()
 

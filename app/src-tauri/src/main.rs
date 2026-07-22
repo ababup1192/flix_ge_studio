@@ -1,4 +1,4 @@
-// Flix GE Editor ランチャー (Tauri v2)。
+// Flix GE Studio ランチャー (Tauri v2)。
 //
 // 役割はランチャーに徹する (ロジックは editor_server 側):
 //   1. 空きポートを選ぶ
@@ -355,7 +355,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![list_running_games])
         .setup(move |app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(external))
-                .title("Flix GE Editor")
+                .title("Flix GE Studio")
                 .inner_size(1200.0, 820.0)
                 .build()?;
             Ok(())
