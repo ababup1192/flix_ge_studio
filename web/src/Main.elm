@@ -33,6 +33,7 @@ import Json.Encode as E
 import Lint
 import NewGame
 import Plugins
+import Progress
 import Refs
 import Schema
 import SchemaForm
@@ -457,6 +458,9 @@ type alias Model =
     -- アトリエの「候補選び」(swap)。調整(Doc エディタ)は従来どおり Main が持つ
     , atelier : Atelier.Model
 
+    -- ミニプレイヤー(これから)の折りたたみ。開いている間だけ枠と状態行を出す
+    , miniPlayerOpen : Bool
+
     -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
     -- 一方向の封筒(kind serverBase)で知らせる。届くまでは同一オリジン扱い("")
     , serverBase : String
@@ -654,6 +658,7 @@ init _ =
         , changesModal = Nothing
         , scenes = Nothing
         , atelier = Atelier.init
+        , miniPlayerOpen = False
         , serverBase = ""
         , reqCounter = 0
         , notice = Nothing
@@ -811,6 +816,7 @@ type Msg
     | AtelierBakePollTick
     | LaunchPollTick
     | RunnerPollTick
+    | MiniPlayerToggled
     | NewGameMsg NewGame.Msg
     | ProjectNewPollTick
       -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
@@ -852,17 +858,41 @@ update msg model =
             in
             case nav of
                 Just Journey.ToAtelier ->
+                    -- 提案(候補選び・試作)からは入口を挟まず素材セクションへ直行
                     let
                         ( m2, fx ) =
                             gotoTab AtelierTab m1
                     in
-                    -- 「あそびを考える」(design)から来たら、つくるパネルを開いて
-                    -- ゲームカードを光らせる(降り立ち先を迷わせない)
-                    if Journey.suggestionId m1.journey == Just "design" then
-                        ( { m2 | atelier = Atelier.openCreateForGame m2.atelier }, fx )
+                    ( { m2 | atelier = Atelier.update Atelier.OpenPicks m2.atelier |> Tuple.first }
+                    , fx
+                    )
 
-                    else
-                        ( m2, fx )
+                Just Journey.ToLaunch ->
+                    -- ホームに居たまま起動する(アトリエの起動と同じ経路に委譲 —
+                    -- 二度押しの守りもそのまま効く)。進みは提案カードの下の実況が見せる
+                    let
+                        ( atelier, out ) =
+                            Atelier.update Atelier.StartGameClicked m1.atelier
+
+                        m2 =
+                            { m1 | atelier = atelier }
+                    in
+                    case out of
+                        Atelier.OutStartGame ->
+                            request "gameStart" (E.object []) m2
+
+                        _ ->
+                            ( m2, Effect.none )
+
+                Just Journey.ToArrange ->
+                    -- アトリエの調整セクションへ直行(入口も候補選びも挟まない)
+                    let
+                        ( m2, fx ) =
+                            gotoTab AtelierTab m1
+                    in
+                    ( { m2 | atelier = Atelier.update Atelier.OpenStorehouse m2.atelier |> Tuple.first }
+                    , fx
+                    )
 
                 Just Journey.ToChanges ->
                     -- 押した足でモーダル(読み込み中)を出し、知らせを取りに行く
@@ -930,6 +960,9 @@ update msg model =
 
                 Atelier.OutStartGame ->
                     request "gameStart" (E.object []) m1
+
+                Atelier.OutToast message ->
+                    showToast message m1
 
                 Atelier.OutFetchPrompt info ->
                     request "promptAtelier"
@@ -1023,6 +1056,9 @@ update msg model =
             -- プレビューの描き出し中だけ購読が生きている(subscriptions が
             -- Atelier.isBaking で判定)。進捗パネルのログ末尾の材料
             ( model, requestInfo "runnerLog" )
+
+        MiniPlayerToggled ->
+            ( { model | miniPlayerOpen = not model.miniPlayerOpen }, Effect.none )
 
         NewGameMsg nmsg ->
             let
@@ -3829,13 +3865,17 @@ handleOkByKind env model =
                     ( m2, toastFx )
 
         "gameStatus" ->
-            ( { model
-                | atelier =
-                    Atelier.gotGameStatus
-                        (D.decodeValue Atelier.statusDecoder env.body |> Result.withDefault False)
-                        model.atelier
-              }
-            , Effect.none
+            let
+                running =
+                    D.decodeValue Atelier.statusDecoder env.body |> Result.withDefault False
+            in
+            ( { model | atelier = Atelier.gotGameStatus running model.atelier }
+            , -- 起動待ちが実った瞬間だけ提案を取り直す(カードが次の一歩へ進む)
+              if running && Atelier.isLaunchPolling model.atelier then
+                requestInfo "journeyState"
+
+              else
+                Effect.none
             )
 
         "gameStart" ->
@@ -4861,8 +4901,12 @@ gotoTab tab model =
             )
 
         AtelierTab ->
+            -- 開くたび入口へ戻す(提案からの直行はこの後にセクションを開く)。
             -- 候補選び(swap)の材料。無いサーバでは fail-open でゾーンごと出ない
-            ( { model | tab = AtelierTab }
+            ( { model
+                | tab = AtelierTab
+                , atelier = Atelier.update Atelier.OpenLanding model.atelier |> Tuple.first
+              }
             , Effect.batch
                 [ requestInfo "atelierCandidates"
                 , requestInfo "gameStatus"
@@ -4896,22 +4940,27 @@ view model =
             viewPicker model.newGame model.picker
 
         Editing ->
-            case model.tab of
-                HomeTab ->
-                    viewShell model (viewHome model)
+            -- ミニプレイヤー(fixed)はどのタブでも右下に居る
+            div []
+                [ case model.tab of
+                    HomeTab ->
+                        viewShell model (viewHome model)
 
-                AtelierTab ->
-                    -- 3 モード: 候補が 1 件以上あれば「候補選び」が主役
-                    -- (エディタもそのタブ群も描かない)。アーカイブは第 3 の
-                    -- 置き場。どちらでもなければ従来の「調整」(Doc エディタ)
-                    if Atelier.showArchiver model.atelier then
-                        viewShell model (Html.map AtelierMsg (Atelier.viewArchiver model.atelier))
+                    AtelierTab ->
+                        -- 入口から素材 / 調整 / アーカイブへ。調整は従来の Doc エディタ
+                        if Atelier.showLanding model.atelier then
+                            viewShell model (Html.map AtelierMsg (Atelier.viewLanding model.atelier))
 
-                    else if Atelier.showPicks model.atelier then
-                        viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))
+                        else if Atelier.showArchiver model.atelier then
+                            viewShell model (Html.map AtelierMsg (Atelier.viewArchiver model.atelier))
 
-                    else
-                        viewEditing model
+                        else if Atelier.showPicks model.atelier then
+                            viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))
+
+                        else
+                            viewEditing model
+                , viewMiniPlayer model
+                ]
 
 
 {-| ホームの外枠。アトリエ(viewEditing)の作業用ツールバーは
@@ -4947,6 +4996,57 @@ viewNavTabs tab =
         ]
 
 
+{-| ミニプレイヤー(これから)。右下の折りたたみピル。枠は予定の姿だが、
+状態行(走行中 / 停止中)だけは本物 — /game/status か journey の checks を映す。
+-}
+viewMiniPlayer : Model -> Html Msg
+viewMiniPlayer model =
+    let
+        running =
+            Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
+    in
+    div [ HA.class "mini-player fixed bottom-4 right-4 z-40" ]
+        [ if model.miniPlayerOpen then
+            div [ HA.class "w-72 rounded-lg border border-edge bg-panel p-3 shadow-[0_4px_16px_rgb(0_0_0/0.45)]" ]
+                [ button
+                    [ HA.class "flex w-full cursor-pointer items-center gap-1.5 text-left text-xs font-semibold text-ink"
+                    , HE.onClick MiniPlayerToggled
+                    ]
+                    [ text "▶ ミニプレイヤー"
+                    , Atelier.mockChip
+                    , span [ HA.class "flex-1" ] []
+                    , span [ HA.class "text-[11px] font-normal text-ink-faint" ] [ text "たたむ" ]
+                    ]
+                , div [ HA.class "mt-2 flex h-28 items-center justify-center rounded border border-dashed border-ink-faint/50 px-3 text-center text-[11px] leading-relaxed text-ink-faint" ]
+                    [ text "走っているゲームをここに小さく映す予定です。いまは別ウィンドウで走ります。" ]
+                , div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
+                    [ span
+                        [ HA.classList
+                            [ ( "inline-block h-2 w-2 rounded-full", True )
+                            , ( "bg-ok", running )
+                            , ( "bg-ink-faint", not running )
+                            ]
+                        ]
+                        []
+                    , text
+                        (if running then
+                            "走行中"
+
+                         else
+                            "停止中"
+                        )
+                    ]
+                ]
+
+          else
+            button
+                [ HA.class "mini-player-pill flex cursor-pointer items-center gap-1.5 rounded-full border border-edge bg-panel px-3 py-1.5 text-xs text-ink shadow-[0_2px_8px_rgb(0_0_0/0.35)] hover:bg-white/5"
+                , HE.onClick MiniPlayerToggled
+                ]
+                [ text "▶ ミニプレイヤー", Atelier.mockChip ]
+        ]
+
+
 {-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
 見比べ・全場面のモーダルもここにぶら下がる。
 -}
@@ -4954,6 +5054,7 @@ viewHome : Model -> Html Msg
 viewHome model =
     div [ HA.class "home flex min-h-0 flex-1 flex-col overflow-y-auto pb-6" ]
         [ Html.map JourneyMsg (Journey.view model.journey)
+        , viewLaunchLine model
         , viewDrawingLine model
         , div [ HA.class "mt-auto flex justify-center pt-10" ]
             [ button
@@ -4972,6 +5073,29 @@ viewHome model =
         , viewChangesModal model
         , viewScenesModal model
         ]
+
+
+{-| ゲーム起動の実況。起動を待つ間だけ、提案のカードの下に
+アトリエと同じ形(インジケーター+一言+ログ末尾)で出す。
+-}
+viewLaunchLine : Model -> Html Msg
+viewLaunchLine model =
+    case Atelier.launchStarting model.atelier of
+        Just info ->
+            div [ HA.class "launch-line mx-auto mt-3 w-full max-w-lg px-4" ]
+                [ Html.map AtelierMsg
+                    (Progress.view
+                        { message = "起動しています…(初回は少しかかります)"
+                        , lines = info.lines
+                        , failed = False
+                        , expanded = info.expanded
+                        , onToggle = Atelier.LaunchLogToggled
+                        }
+                    )
+                ]
+
+        Nothing ->
+            text ""
 
 
 {-| 描き出しの実況。エンジンが全場面を出力し直している間だけ、
@@ -5250,19 +5374,13 @@ viewEditing model =
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
 
-                -- 「つくる」(創作の第一幕)— 調整モードでも最上段に置く。
-                -- 候補ゼロならパネルが開いて出迎える(提案の「つくる」の降り立ち先)
+                -- 「つくる」(創作の第一幕)— 調整でも最上段に置く(既定は畳む)
                 , div [ HA.class "shrink-0 px-3 pt-3" ]
                     [ Html.map AtelierMsg (Atelier.viewCreate model.atelier) ]
 
-                -- 調整モード中、行き先(候補選び / アーカイブ)がある時だけ
-                -- モード切替の細い帯
-                , if Atelier.hasCandidates model.atelier || Atelier.archiveAvailable model.atelier then
-                    div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
-                        [ Html.map AtelierMsg (Atelier.viewModeSwitch model.atelier) ]
-
-                  else
-                    text ""
+                -- 調整セクションの最上段 — 「← アトリエ」で入口へ戻れる
+                , div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
+                    [ Html.map AtelierMsg (Atelier.viewSectionTop "⚙️ パラメータを変える") ]
                 , div [ HA.class "panes flex min-h-0 flex-1" ]
                     (viewFilePane model
                         :: viewPaneHandle LeftPane

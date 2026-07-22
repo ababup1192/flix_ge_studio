@@ -46,11 +46,12 @@ module Atelier exposing
     , init
     , isBaking
     , isLaunchPolling
+    , launchStarting
     , lightboxOpen
     , lightboxShownFile
+    , mockChip
     , needsCopyReset
     , needsTick
-    , openCreateForGame
     , previewState
     , promoteFailed
     , promoted
@@ -65,6 +66,7 @@ module Atelier exposing
     , shownWirePrompt
     , shownPrompt
     , showArchiver
+    , showLanding
     , showPicks
     , slotsFailed
     , statusDecoder
@@ -72,22 +74,21 @@ module Atelier exposing
     , view
     , viewArchiver
     , viewCreate
-    , viewModeSwitch
+    , viewLanding
+    , viewSectionTop
     )
 
-{-| アトリエの「候補選び」— 生成された見た目候補をゲームへ装着(swap)する。
+{-| アトリエの「候補選び」— 生成された見た目候補を見比べて、ゲームで使う(採用する)。
 
-アトリエタブは 3 モード:
-候補が 1 件以上あれば「候補選び」が既定(この view が画面の主役 —
-Doc エディタもそのタブ群も描かない)、無ければ従来の「調整」(Doc エディタ)。
-さらに「アーカイブ」— 使っていない候補と昔のバージョン(atelier/archive/)の置き場。
-どれを描くかは Main が showArchiver / showPicks で判定し、最上段の
-モード切替(viewModeSwitch)で行き来する。
+アトリエタブは入口(viewLanding)から始まり、行き先は
+素材(候補選び+つくるバー)/ 調整(Doc エディタ)/ アーカイブの 3 つ。
+どれを描くかは Main が showLanding / showArchiver / showPicks で判定し、
+各セクションの最上段の「← アトリエ」(viewSectionTop)で入口へ戻る。
 
 サーバ往復は持たない(封筒は Main が発行し、応答をここへ流し込む)。
 送りたい事は update の戻り値 Out で Main へ返す(Journey と同じ流儀)。
-エンドポイント未実装のサーバでは候補モードに入らない(fail-open — 既存の
-調整(Doc エディタ)はそのまま生きる)。候補ゼロのスロットはサーバが
+エンドポイント未実装のサーバでは候補の一覧が出ないだけ(fail-open —
+つくるバーも調整(Doc エディタ)もそのまま生きる)。候補ゼロのスロットはサーバが
 返さない契約だが、来ても捨てる(防御 — ファイル名の羅列で画面を埋めない)。
 
 装着の瞬間はこの画面の見せ場。成功はオーバーレイで大きく祝い、
@@ -144,11 +145,13 @@ type Data
     | Ready Candidates
 
 
-{-| アトリエタブの 3 モード。Picks(候補選び)/ Storehouse(調整 = Doc エディタ)/
-Archiver(アーカイブ)。候補ゼロの Picks は調整に倒れる(currentSection)。
+{-| アトリエタブのセクション。Landing(入口)から
+Picks(素材 = 候補選び+つくる)/ Storehouse(調整 = Doc エディタ)/
+Archiver(アーカイブ)へ入る。
 -}
 type Section
-    = SectionPicks
+    = SectionLanding
+    | SectionPicks
     | SectionStorehouse
     | SectionArchiver
 
@@ -311,9 +314,8 @@ initScaffold =
     }
 
 
-{-| 「つくる」(創作の第一幕)。open = Nothing は既定に従う —
-候補が 1 つも無い時は開いて出迎え(提案の「つくる」の降り立ち先)、
-候補があれば畳んで「えらぶ」を主役のままにする。
+{-| 「つくる」(創作の第一幕)。open = Nothing は既定(畳む)に従う —
+開くのは手だけ。
 -}
 type alias Create =
     { open : Maybe Bool
@@ -342,10 +344,6 @@ type alias Create =
     , gameEssence : String
     , gamePrompt : PromptState
     , gameCopied : Bool
-
-    -- 提案の「あそびを考える」(design)から降り立った印。
-    -- 「なにをつくる?」の並びで あそび が先頭・推しになる
-    , gameHighlight : Bool
 
     -- 「なにをつくる?」で選んだ道。Nothing = まだ選んでいない(選択リストを出す)。
     -- とじる→ひらくでも保持する(入力も同様に消えない)
@@ -468,7 +466,6 @@ initCreate =
     , gameEssence = ""
     , gamePrompt = PromptIdle
     , gameCopied = False
-    , gameHighlight = False
     , path = Nothing
     }
 
@@ -491,7 +488,7 @@ type alias Model =
     , pending : Maybe Mode
     , overlay : Maybe Overlay
 
-    -- いま開いているモード(候補選び / 調整 / アーカイブ)
+    -- いま開いているセクション(入口 / 素材 / 調整 / アーカイブ)
     , section : Section
 
     -- アーカイブの中身(GET /atelier/archive)
@@ -540,7 +537,7 @@ init =
     , promoteError = Nothing
     , pending = Nothing
     , overlay = Nothing
-    , section = SectionPicks
+    , section = SectionLanding
     , archive = ArchiveLoading
     , archivePending = Nothing
     , restorePending = Nothing
@@ -569,9 +566,12 @@ type Msg
     | RollbackClicked String String
     | OverlayTick
     | OverlayClosed
+    | OpenLanding
     | OpenStorehouse
     | OpenPicks
     | OpenArchiver
+    | ComboTrialClicked
+    | AuditionClicked
     | ArchiveClicked String
     | RestoreClicked String
     | LaunchLogToggled
@@ -611,12 +611,14 @@ type Msg
 
 {-| サーバへ送りたい事(封筒の発行は Main)。OutClosed はオーバーレイを
 閉じた合図 — Main が候補と提案を取り直し、焼きへの誘いを出す。
+OutToast は一言の知らせ(◇これから の答えもこれで返す — 黙るボタンを作らない)。
 -}
 type Out
     = OutNone
     | OutPromote { candidate : String, slot : String }
     | OutStartGame
     | OutClosed
+    | OutToast String
     | OutFetchPrompt { slot : String, count : Int, direction : String }
     | OutFetchGamePrompt String
     | OutCopyPrompt String
@@ -697,6 +699,9 @@ update msg model =
         OverlayClosed ->
             ( { model | overlay = Nothing }, OutClosed )
 
+        OpenLanding ->
+            ( switchSection SectionLanding model, OutNone )
+
         OpenStorehouse ->
             ( switchSection SectionStorehouse model, OutNone )
 
@@ -705,6 +710,12 @@ update msg model =
 
         OpenArchiver ->
             ( switchSection SectionArchiver model, OutNone )
+
+        ComboTrialClicked ->
+            ( model, OutToast "これから: 複数の候補を、何も書き換えずに組み合わせて走らせて比べられるようになります" )
+
+        AuditionClicked ->
+            ( model, OutToast "これから: 候補の音をこの場で聴き比べられるようになります" )
 
         ArchiveClicked file ->
             -- 候補カードの 🗃️ — アーカイブへ送る(消さない。候補に戻せる)。
@@ -973,7 +984,7 @@ mapCreate f model =
     { model | create = f model.create }
 
 
-{-| モードの行き来。前の失敗文言は持ち越さない(古い理由を残さない)。 -}
+{-| セクションの行き来。前の失敗文言は持ち越さない(古い理由を残さない)。 -}
 switchSection : Section -> Model -> Model
 switchSection section model =
     { model | section = section, promoteError = Nothing, versionPending = Nothing }
@@ -1087,7 +1098,7 @@ archiveSettled model =
 
 
 {-| アーカイブが使えるか(GET /atelier/archive が読めた)。
-モード切替の入口と候補カードの 🗃️ を出す条件。
+入口のアーカイブ行きと候補カードの 🗃️ を出す条件。
 -}
 archiveAvailable : Model -> Bool
 archiveAvailable model =
@@ -1099,7 +1110,7 @@ archiveAvailable model =
             False
 
 
-{-| アーカイブの中身の件数(モード切替のバッジ)。 -}
+{-| アーカイブの中身の件数(入口のアーカイブ行きに添える)。 -}
 archiveCount : Model -> Int
 archiveCount model =
     case model.archive of
@@ -1240,6 +1251,17 @@ isLaunchPolling model =
             False
 
 
+{-| 起動待ちの間だけ Just(実況パネルの材料)。ホームの提案カードの下も同じ形で使う。 -}
+launchStarting : Model -> Maybe { lines : List String, expanded : Bool }
+launchStarting model =
+    case model.launch of
+        LaunchStarting info ->
+            Just { lines = info.lines, expanded = model.launchLogExpanded }
+
+        _ ->
+            Nothing
+
+
 {-| POST /atelier/promote 成功。選択を畳んでオーバーレイの祝いへ。 -}
 promoted : Maybe String -> Model -> Model
 promoted retired model =
@@ -1360,24 +1382,10 @@ gamePromptErrorShown model =
             Nothing
 
 
-{-| 提案の「あそびを考える」(design)から降り立った。「つくる」を開き、
-「なにをつくる?」の並びで あそび を先頭・推しにする(候補があっても畳まない)。
--}
-openCreateForGame : Model -> Model
-openCreateForGame model =
-    mapCreate (\c -> { c | open = Just True, gameHighlight = True, path = Nothing }) model
-
-
-{-| 「なにをつくる?」の並び(優先度順)。誕生期(design で降り立った)は
-あそびが先頭、素材サイクル中は素材の道が先。
--}
-createPaths : Model -> List CreatePath
-createPaths model =
-    if model.create.gameHighlight then
-        [ PathGame, PathAi, PathScaffold ]
-
-    else
-        [ PathAi, PathGame, PathScaffold ]
+{-| 「なにをつくる?」の並び。素材の道が先(あそび・新種はその後)。 -}
+createPaths : List CreatePath
+createPaths =
+    [ PathAi, PathGame, PathScaffold ]
 
 
 {-| いま選んでいる道(Nothing = 選択リストを出している)。テストの覗き窓。 -}
@@ -1547,12 +1555,10 @@ needsCopyReset model =
     model.create.copied || model.create.gameCopied || model.create.scaffold.copied
 
 
-{-| 「つくる」パネルが開いているか。手で触っていなければ既定に従う —
-候補ゼロなら開いて出迎え、候補があれば畳んで「えらぶ」を主役に。
--}
+{-| 「つくる」パネルが開いているか。手で触っていなければ畳む。 -}
 createOpen : Model -> Bool
 createOpen model =
-    Maybe.withDefault (not (hasCandidates model)) model.create.open
+    Maybe.withDefault False model.create.open
 
 
 {-| 画面に映っているプロンプト(テストの覗き窓)。 -}
@@ -1740,7 +1746,7 @@ gameLogDecoder =
         (D.oneOf [ D.field "lines" (D.list D.string), D.succeed [] ])
 
 
-{-| 候補(1 件以上)が届いているか。アトリエタブのモード分けの材料。 -}
+{-| 候補(1 件以上)が届いているか。候補ゾーンを出すかの材料。 -}
 hasCandidates : Model -> Bool
 hasCandidates model =
     case model.data of
@@ -1751,30 +1757,24 @@ hasCandidates model =
             False
 
 
-{-| アトリエタブで「候補選び」を主役に描くべきか。候補が 1 件以上ある時の
-既定で、調整・アーカイブを選んでいる間は譲る。
+{-| アトリエタブで入口を描くべきか。タブを手で開いた直後の既定 —
+提案(journey)からの直行はセクションを開いてから来る。
 -}
+showLanding : Model -> Bool
+showLanding model =
+    model.section == SectionLanding
+
+
+{-| アトリエタブで素材(候補選び+つくる)を主役に描くべきか。 -}
 showPicks : Model -> Bool
 showPicks model =
-    currentSection model == SectionPicks
+    model.section == SectionPicks
 
 
-{-| アトリエタブでアーカイブを描くべきか(第 3 モード)。 -}
+{-| アトリエタブでアーカイブを描くべきか。 -}
 showArchiver : Model -> Bool
 showArchiver model =
-    currentSection model == SectionArchiver
-
-
-{-| 実際に描くモード。候補ゼロの「候補選び」は調整に倒れる
-(ファイル名の無い空画面を出さない)。
--}
-currentSection : Model -> Section
-currentSection model =
-    if model.section == SectionPicks && not (hasCandidates model) then
-        SectionStorehouse
-
-    else
-        model.section
+    model.section == SectionArchiver
 
 
 {-| カードの中に出す決めボタン(導線の規則)。選んだカードにだけ出る —
@@ -1800,84 +1800,142 @@ cardAction model info =
 -- 画面
 
 
-{-| 候補選びモードの画面(Main が showPicks の時だけこれを主役に描く —
+{-| 素材セクションの画面(Main が showPicks の時だけこれを主役に描く —
 Doc エディタもそのタブ群もここには出ない)。1 画面に収まる密度を保つ:
 スロットは実際には 1〜数個で、カードの直下に装着ボタンが必ず見える。
+候補が届く前(Loading 等)でも、つくるバーは出す(空の画面で待たせない)。
 -}
 view : String -> Model -> Html Msg
 view base model =
+    div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
+        [ div [ HA.class "mx-auto w-full max-w-3xl" ]
+            (List.concat
+                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を作る" ] ]
+                , [ viewCreate model ]
+                , case model.data of
+                    Ready candidates ->
+                        List.concat
+                            [ if List.isEmpty candidates.slots then
+                                []
+
+                              else
+                                [ div [ HA.class "mb-5" ]
+                                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "🎨 候補選び" ]
+                                    , div [ HA.class "mt-1 text-[11px] text-ink-soft" ]
+                                        [ text "新しい見た目の候補です。カードを選んで、ゲームで使いましょう" ]
+                                    ]
+                                ]
+                            , viewBakePanel model candidates
+                            , List.map (viewSlot base model candidates.baking) candidates.slots
+                            , viewComboTrial candidates.slots
+                            , viewLoose candidates.loose
+                            ]
+
+                    _ ->
+                        []
+                ]
+            )
+        , case model.overlay of
+            Just overlay ->
+                viewOverlay overlay
+
+            Nothing ->
+                text ""
+        , case model.lightbox of
+            Just lightbox ->
+                viewLightbox base model.bust lightbox
+
+            Nothing ->
+                text ""
+        ]
+
+
+{-| セクションの最上段。「← アトリエ」で入口へ戻る(現在地名を添える)。 -}
+viewSectionTop : String -> Html Msg
+viewSectionTop place =
+    div [ HA.class "atelier-section-top flex items-center gap-2" ]
+        [ button [ HA.class "btn btn-mini", HE.onClick OpenLanding ] [ text "← アトリエ" ]
+        , span [ HA.class "text-[11px] text-ink-faint" ] [ text place ]
+        ]
+
+
+{-| アトリエの入口。行き先の大きなカード 2 枚(初期表示で両方見える大きさ)と、
+アーカイブへの控えめな入口。生まれたてはパラメータ側を推す。
+-}
+viewLanding : Model -> Html Msg
+viewLanding model =
+    div [ HA.class "atelier-landing flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-6" ]
+        [ div [ HA.class "flex w-full max-w-2xl flex-col gap-4 sm:flex-row" ]
+            [ landingCard
+                { icon = "⚙️"
+                , title = "パラメータを変える"
+                , body = "ゲームのパラメータを変えられます。保存した瞬間、走っているゲームに反映されます。"
+                , chip =
+                    if model.starterFresh then
+                        Just "おすすめ"
+
+                    else
+                        Nothing
+                , msg = OpenStorehouse
+                }
+            , landingCard
+                { icon = "🎨"
+                , title = "素材を作る"
+                , body = "見た目や音の候補を AI に作らせて、選んで使う。あそびを大きく変えるのもここから。"
+                , chip =
+                    case candidateCount model of
+                        0 ->
+                            Nothing
+
+                        n ->
+                            Just ("候補 " ++ String.fromInt n ++ " 件")
+                , msg = OpenPicks
+                }
+            ]
+        , if archiveAvailable model then
+            button
+                [ HA.class "atelier-landing-archive mt-6 cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HE.onClick OpenArchiver
+                ]
+                [ text (archiverLabel model) ]
+
+          else
+            text ""
+        ]
+
+
+landingCard : { icon : String, title : String, body : String, chip : Maybe String, msg : Msg } -> Html Msg
+landingCard info =
+    button
+        [ HA.class "atelier-landing-card flex-1 cursor-pointer rounded-lg border border-edge bg-panel p-5 text-left transition-colors hover:border-ink-faint hover:bg-white/5"
+        , HE.onClick info.msg
+        ]
+        [ div [ HA.class "flex items-center gap-2.5" ]
+            [ span [ HA.class "text-2xl leading-none" ] [ text info.icon ]
+            , span [ HA.class "text-sm font-semibold text-ink" ] [ text info.title ]
+            , case info.chip of
+                Just label ->
+                    span [ HA.class "badge shrink-0 bg-accent/20 text-accent" ] [ text label ]
+
+                Nothing ->
+                    text ""
+            ]
+        , div [ HA.class "mt-2 text-xs leading-relaxed text-ink-soft" ] [ text info.body ]
+        ]
+
+
+{-| 入口カードのチップに出す候補の総数(prev の退避札は数えない)。 -}
+candidateCount : Model -> Int
+candidateCount model =
     case model.data of
         Ready candidates ->
-            div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
-                [ div [ HA.class "mx-auto w-full max-w-3xl" ]
-                    (List.concat
-                        [ [ div [ HA.class "mb-4" ] [ viewModeSwitch model ] ]
-                        , [ viewCreate model ]
-                        , [ div [ HA.class "mb-5" ]
-                                [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "🎨 候補選び" ]
-                                , div [ HA.class "mt-1 text-[11px] text-ink-soft" ]
-                                    [ text "新しい見た目の候補です。カードを選んで、ゲームで使いましょう" ]
-                                ]
-                          ]
-                        , viewBakePanel model candidates
-                        , List.map (viewSlot base model candidates.baking) candidates.slots
-                        , viewLoose candidates.loose
-                        ]
-                    )
-                , case model.overlay of
-                    Just overlay ->
-                        viewOverlay overlay
-
-                    Nothing ->
-                        text ""
-                , case model.lightbox of
-                    Just lightbox ->
-                        viewLightbox base model.bust lightbox
-
-                    Nothing ->
-                        text ""
-                ]
+            candidates.slots
+                |> List.concatMap .candidates
+                |> List.filter (\c -> not c.isPrev)
+                |> List.length
 
         _ ->
-            text ""
-
-
-{-| アトリエの 3 モード切替(候補選び / 調整 / アーカイブ)。どのモードでも
-最上段に同じ列が出る — 次の行き先が常に見えて押せる(スクロール不要)。
-候補ゼロの候補選びと、未対応サーバのアーカイブは出さない(空の画面へ誘わない)。
-アーカイブには中身の件数をバッジで添える。
--}
-viewModeSwitch : Model -> Html Msg
-viewModeSwitch model =
-    let
-        active =
-            currentSection model
-
-        chip section label msg =
-            button
-                [ HA.classList
-                    [ ( "atelier-mode btn btn-mini", True )
-                    , ( "btn-primary", active == section )
-                    ]
-                , HE.onClick msg
-                ]
-                [ text label ]
-    in
-    div [ HA.class "atelier-modes flex items-center gap-1" ]
-        (List.concat
-            [ if hasCandidates model then
-                [ chip SectionPicks "🖼️ 候補選び" OpenPicks ]
-
-              else
-                []
-            , [ chip SectionStorehouse "⚙️ 調整" OpenStorehouse ]
-            , if archiveAvailable model then
-                [ chip SectionArchiver (archiverLabel model) OpenArchiver ]
-
-              else
-                []
-            ]
-        )
+            0
 
 
 archiverLabel : Model -> String
@@ -1890,7 +1948,7 @@ archiverLabel model =
             "🗃️ アーカイブ(" ++ String.fromInt n ++ ")"
 
 
-{-| アーカイブ(第 3 モード)。使っていない候補と昔のバージョンの置き場 —
+{-| アーカイブのセクション。使っていない候補と昔のバージョンの置き場 —
 何も捨てない。ボタンは対象の行の中(次のアクションを探させない)。
 「vN に戻す」は既存の promote 経路なので、成功のオーバーレイもここに出る。
 -}
@@ -1908,7 +1966,7 @@ viewArchiver model =
     div [ HA.class "atelier-archiver min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
-                [ [ div [ HA.class "mb-4" ] [ viewModeSwitch model ]
+                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🗃️ アーカイブ" ]
                   , div [ HA.class "mb-5" ]
                         [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "🗃️ アーカイブ" ]
                         , div [ HA.class "mt-1 text-[11px] text-ink-soft" ]
@@ -2278,6 +2336,17 @@ viewCard base model baking slotName candidate =
         , div [ HA.class "mt-1.5 flex items-center gap-2" ]
             [ span [ HA.class "min-w-0 flex-1 truncate text-[10px] text-ink-faint" ] [ text (mtimeLabel candidate.mtime) ]
 
+            -- 音の候補の聴き比べ(これから)。押すと予定を一言で返す
+            , if slotKind model slotName == Just "sound" then
+                button
+                    [ HA.class "btn btn-ghost btn-mini shrink-0"
+                    , stopClick AuditionClicked
+                    ]
+                    [ text "▶ 試聴", mockChip ]
+
+              else
+                text ""
+
             -- 調整(エディタ)でこの候補ファイルを開く。カードの選択とは
             -- 別の動詞なので伝播は止める
             , button
@@ -2360,6 +2429,38 @@ viewCard base model baking slotName candidate =
 stopClick : msg -> Html.Attribute msg
 stopClick msg =
     HE.stopPropagationOn "click" (D.succeed ( msg, True ))
+
+
+{-| まだ形だけの機能の目印。これを付けたボタンは黙らない —
+押されたら必ず一言(何になる予定か)を返す。
+-}
+mockChip : Html msg
+mockChip =
+    span [ HA.class "mock-chip ml-1.5 rounded border border-dashed border-ink-faint/70 px-1 text-[10px] font-normal text-ink-faint" ]
+        [ text "◇これから" ]
+
+
+{-| 候補一覧の下の「選んだ組み合わせで試す」(これから)。押すと予定を一言で返す。 -}
+viewComboTrial : List Slot -> List (Html Msg)
+viewComboTrial slots =
+    if List.isEmpty slots then
+        []
+
+    else
+        [ div [ HA.class "atelier-combo mb-4" ]
+            [ button [ HA.class "btn btn-mini", HE.onClick ComboTrialClicked ]
+                [ text "選んだ組み合わせで試す", mockChip ]
+            ]
+        ]
+
+
+{-| スロットの素材種(/atelier/slots の kind)。一覧に無ければ不明。 -}
+slotKind : Model -> String -> Maybe String
+slotKind model file =
+    model.create.slots
+        |> List.filter (\s -> s.file == file)
+        |> List.head
+        |> Maybe.map .kind
 
 
 {-| ゲーム未起動の案内カード(選んだカードのあるスロットの直下)。
@@ -2598,7 +2699,7 @@ viewLightbox base bust lightbox =
 {-| 「つくる」の畳めるセクション。畳んでいる時は 1 行の帯だけ
 (候補がある時の既定 — えらぶが主役のまま)。開くと「なにをつくる?」の
 選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
-調整モードでも Main がこれを最上段に描く(創作の入口はどちらのモードにもある)。
+調整でも Main がこれを最上段に描く(創作の入口はどちらのセクションにもある)。
 -}
 viewCreate : Model -> Html Msg
 viewCreate model =
@@ -2630,7 +2731,7 @@ viewCreate model =
                                 -- まだ選んでいない: 「なにをつくる?」の 1 問だけ
                                 [ div [ HA.class "px-4 pb-2 text-xs font-semibold text-ink" ] [ text "なにをつくる?" ]
                                 , div [ HA.class "flex flex-col gap-1.5 px-4 pb-4" ]
-                                    (List.map (viewPathRow model) (createPaths model))
+                                    (List.map viewPathRow createPaths)
                                 ]
 
                             Just path ->
@@ -2661,33 +2762,19 @@ viewCreate model =
         )
 
 
-{-| 「なにをつくる?」の 1 行(アイコン+名前+一言)。誕生期の先頭(あそび)には
-推しバッジ「まずはこれ」を添える。
--}
-viewPathRow : Model -> CreatePath -> Html Msg
-viewPathRow model path =
+{-| 「なにをつくる?」の 1 行(アイコン+名前+一言)。 -}
+viewPathRow : CreatePath -> Html Msg
+viewPathRow path =
     let
         info =
             pathInfo path
-
-        recommended =
-            model.create.gameHighlight && path == PathGame
     in
     button
-        [ HA.classList
-            [ ( "atelier-path-row flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/5", True )
-            , ( "border-accent/60 ring-1 ring-accent/40", recommended )
-            , ( "border-edge", not recommended )
-            ]
+        [ HA.class "atelier-path-row flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-edge px-3 py-2 text-left transition-colors hover:bg-white/5"
         , HE.onClick (PathChosen path)
         ]
         [ span [ HA.class "text-base leading-none" ] [ text info.icon ]
         , span [ HA.class "text-xs font-semibold text-ink" ] [ text info.title ]
-        , if recommended then
-            span [ HA.class "badge shrink-0 bg-accent/20 text-accent" ] [ text "まずはこれ" ]
-
-          else
-            text ""
         , span [ HA.class "min-w-0 flex-1 truncate text-[11px] text-ink-faint" ] [ text info.blurb ]
         ]
 
@@ -2877,12 +2964,7 @@ viewPromptBox create =
 viewGameCard : Bool -> Create -> Html Msg
 viewGameCard starterFresh create =
     div
-        [ HA.classList
-            [ ( "atelier-create-game min-w-[280px] flex-1 rounded-lg border bg-black/20 p-4", True )
-            , ( "border-accent/60 ring-1 ring-accent/40", create.gameHighlight )
-            , ( "border-edge", not create.gameHighlight )
-            ]
-        ]
+        [ HA.class "atelier-create-game min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
         (List.concat
             [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "🕹️ あそびを作らせる" ]
               , div [ HA.class "mb-2 text-[11px] leading-relaxed text-ink-faint" ]

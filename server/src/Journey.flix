@@ -9,13 +9,15 @@ mod Journey {
     use Util.Json.Json.{JObject, JString, JNumber, JBool}
 
     /// 判断の材料。atelierCandidates = atelier/ の試作 JSON の数、
-    /// staleGallery = 素材の方が絵より新しい (焼き直しが要る)、diffCount = golden との差分の数。
+    /// staleGallery = 素材の方が絵より新しい (焼き直しが要る)、diffCount = golden との差分の数、
+    /// gameRunning = このプロジェクトのゲームが走っているか。
     pub type alias Checks = {
         atelierCandidates = Int32,
         staleGallery      = Bool,
         diffCount         = Int32,
         goldenEmpty       = Bool,
-        hasStarterDoc     = Bool
+        hasStarterDoc     = Bool,
+        gameRunning       = Bool
     }
 
     /// 提案 1 件。nav はエディタ画面のどこへ誘導するか。
@@ -27,7 +29,8 @@ mod Journey {
     }
 
     /// 材料から提案を 1 つ決める。上から順に見て、最初に当たった物を出す:
-    /// 候補あり → 選ぶ / 未読の知らせあり → 見比べ / どれも無し → 設計か試作。
+    /// 候補あり → 選ぶ / 未読の知らせあり → 見比べ /
+    /// 生まれたて (雛形 Doc が居る) → 走っていなければ起動、走っていればアレンジ / どれも無し → 試作。
     /// 検査と基準の追随は Changes が裏で自動でやるので、ここでは頼まない —
     /// 提案するのは人の判断が要る事だけ。
     pub def suggest(checks: Checks, unseen: Int32): Suggestion =
@@ -43,13 +46,19 @@ mod Journey {
               title  = "見た目が変わりました(${unseen}場面)",
               detail = "触った素材のぶんなら、そのままでどうぞ。心当たりがなければ、前と今を見比べてください。",
               nav    = "changes" }
+        else if (checks#hasStarterDoc and not checks#gameRunning)
+            // 生まれたてで、まだ走っていない: 何かをいじる前に、まず遊んで
+            // 「動くゲームがもう手元にある」を体で分かってもらう。
+            { id     = "launch",
+              title  = "ゲームを起動してみましょう",
+              detail = "テンプレートのゲームが起動します。まずは遊んで試してみましょう。",
+              nav    = "launch" }
         else if (checks#hasStarterDoc)
-            // やる事が何も残っていない産まれたてテンプレート (雛形 Doc がまだ居る):
-            // 素材いじりより先に「どんなゲームか」を言葉にしてもらう。
-            { id     = "design",
-              title  = "あそびを考えよう",
-              detail = "見た目の土台はできました。どんなゲームにするかを言葉にして、AIに作らせましょう(アトリエの『つくる』にプロンプトの入口があります)",
-              nav    = "atelier" }
+            // 生まれたてで、もう走っている: 次の一歩は自分の手で変えること。
+            { id     = "arrange",
+              title  = "ゲームをアレンジしてみましょう",
+              detail = "ゲームのパラメータを変えられます。保存した瞬間、走っているゲームに反映されます。",
+              nav    = "arrange" }
         else
             { id     = "create",
               title  = "素材を試作しよう",
@@ -90,7 +99,8 @@ mod Journey {
                 "diffCount"         => JNumber(JsonCodec.intToBd(checks#diffCount)),
                 // 生まれたての見本 (sample.kind.json が残っている) か。web は
                 // 「テンプレートのまま」前提の問い (インタビューのチップ等) をこれで出し分ける。
-                "hasStarterDoc"     => JBool(checks#hasStarterDoc)
+                "hasStarterDoc"     => JBool(checks#hasStarterDoc),
+                "gameRunning"       => JBool(checks#gameRunning)
             })
         })
 
@@ -108,8 +118,10 @@ mod Journey {
         let goldenEmpty = List.forAll(item -> snd(item) == "missingGolden", items);
         // 産まれたてテンプレートの見分け: 雛形 Doc がまだそのまま居るか。
         let hasStarterDoc = new JFile("${dir}/assets/sample.kind.json").isFile();
+        // このプロジェクトのゲームが走っているか (GET /game/status と同じ見方)。
+        let gameRunning = Game.isRunning(dir);
         { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
-          goldenEmpty = goldenEmpty, hasStarterDoc = hasStarterDoc }
+          goldenEmpty = goldenEmpty, hasStarterDoc = hasStarterDoc, gameRunning = gameRunning }
 
     /// dir/subdir 直下の *.json の mtime 一覧。無ければ空。
     def jsonMtimes(dir: String, subdir: String): List[Int64] \ IO =

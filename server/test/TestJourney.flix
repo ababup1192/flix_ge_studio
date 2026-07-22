@@ -1,13 +1,14 @@
 // TestJourney — 「次のやること」を決める優先順位と、素材の鮮度判定のルールを固定する。
 // 文言そのものは仕様ではないので見ない (id と nav だけを見る)。
 // 検査と基準の追随は Changes が自動でやるため、提案は「人の判断が要る事」だけ:
-// 候補あり → pick / 未読の知らせ → changed / テンプレート直後 → design / それ以外 → create。
+// 候補あり → pick / 未読の知らせ → changed /
+// 生まれたて → 走っていなければ launch・走っていれば arrange / それ以外 → create。
 
 mod TestJourney {
 
     def checks(candidates: Int32, stale: Bool, diffs: Int32): Journey.Checks =
         { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
-          goldenEmpty = false, hasStarterDoc = false }
+          goldenEmpty = false, hasStarterDoc = false, gameRunning = false }
 
     def idNav(suggestion: Journey.Suggestion): (String, String) =
         (suggestion#id, suggestion#nav)
@@ -37,18 +38,23 @@ mod TestJourney {
              Journey.isStale(Nil, Nil),
              Journey.isStale(20i64 :: Nil, 20i64 :: Nil)))
 
-    /// 産まれたてテンプレート (雛形 Doc が居て、他にやる事が無い) は create でなく design。
-    /// pick と changed は design より優先。雛形 Doc が無ければ create のまま。
+    /// 産まれたてテンプレート (雛形 Doc が居て、他にやる事が無い): ゲームが
+    /// 走っていなければ launch、走っていれば arrange。pick と changed はどちらより優先。
+    /// 雛形 Doc が無ければ create のまま (走っているかは関係しない)。
     @Test
-    def testDesign(): Unit \ Assert =
-        def withStarter(candidates: Int32, unseen: Int32): String =
-            Journey.suggest({ atelierCandidates = candidates, staleGallery = false,
-                              diffCount = 0, goldenEmpty = false, hasStarterDoc = true }, unseen)#id;
+    def testLaunchArrange(): Unit \ Assert =
+        def withStarter(candidates: Int32, unseen: Int32, running: Bool): (String, String) =
+            idNav(Journey.suggest({ atelierCandidates = candidates, staleGallery = false,
+                                    diffCount = 0, goldenEmpty = false, hasStarterDoc = true,
+                                    gameRunning = running }, unseen));
         Assert.assertEq(
-            expected = (("design", "atelier"), "create", "pick", "changed"),
-            ((idNav(Journey.suggest({ atelierCandidates = 0, staleGallery = false,
-                                      diffCount = 0, goldenEmpty = false, hasStarterDoc = true }, 0))),
-             Journey.suggest(checks(0, false, 0), 0)#id,
-             withStarter(1, 0),
-             withStarter(0, 2)))
+            expected = (("launch", "launch"), ("arrange", "arrange"),
+                        "pick", "changed", "create"),
+            (withStarter(0, 0, false),
+             withStarter(0, 0, true),
+             fst(withStarter(1, 0, false)),
+             fst(withStarter(0, 2, true)),
+             Journey.suggest({ atelierCandidates = 0, staleGallery = false,
+                               diffCount = 0, goldenEmpty = false, hasStarterDoc = false,
+                               gameRunning = true }, 0)#id))
 }

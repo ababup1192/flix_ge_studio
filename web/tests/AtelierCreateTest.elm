@@ -2,7 +2,7 @@ module AtelierCreateTest exposing (suite)
 
 {-| 「つくる」(創作の第一幕)の規則のテスト。
 
-守るのは規則だけ: パネルの既定の開閉(候補の有無で決まる)、プロンプトの
+守るのは規則だけ: パネルの既定の開閉(既定は畳む)、プロンプトの
 取り寄せと表示、名前の検証、複製の依頼と成功後の行き先。カードの見た目や
 コピー札の戻りのタイミング(2 秒)の演出は焼かない。
 
@@ -69,11 +69,11 @@ suite : Test
 suite =
     describe "アトリエの「つくる」"
         [ describe "パネルの開閉"
-            [ test "候補ゼロなら開いて出迎える(創作の降り立ち先)" <|
+            [ test "候補ゼロでも畳まれている(開くのは手だけ)" <|
                 \_ ->
                     Atelier.createOpen fresh
-                        |> Expect.equal True
-            , test "候補があれば畳まれる(えらぶが主役のまま)" <|
+                        |> Expect.equal False
+            , test "候補があっても畳まれている" <|
                 \_ ->
                     Atelier.createOpen withCandidates
                         |> Expect.equal False
@@ -188,16 +188,12 @@ suite =
                         |> step Atelier.MakeGamePromptClicked
                         |> Tuple.second
                         |> Expect.equal Atelier.OutNone
-            , test "提案の design から降り立つと、候補があってもつくるが開く" <|
-                \_ ->
-                    Atelier.openCreateForGame withCandidates
-                        |> Atelier.createOpen
-                        |> Expect.equal True
             , test "プロンプト表示中でも「とじる」で閉じられ、プロンプトは保持される" <|
                 \_ ->
                     let
                         closed =
                             begin fresh
+                                |> step Atelier.CreateToggled
                                 |> step (Atelier.GameDirectionEdited "星をバケツで")
                                 |> step Atelier.MakeGamePromptClicked
                                 |> Tuple.first
@@ -209,16 +205,7 @@ suite =
                         |> Expect.equal ( False, Just "作ってください" )
             ]
         , describe "なにをつくる?(選択式 1 問)"
-            [ test "優先度順: 誕生期(design)はあそびが先頭、通常時は素材が先" <|
-                \_ ->
-                    ( Atelier.createPaths (Atelier.openCreateForGame fresh)
-                    , Atelier.createPaths fresh
-                    )
-                        |> Expect.equal
-                            ( [ Atelier.PathGame, Atelier.PathAi, Atelier.PathScaffold ]
-                            , [ Atelier.PathAi, Atelier.PathGame, Atelier.PathScaffold ]
-                            )
-            , test "選ぶとその道だけが出て、「← ほかのつくり方」で選択リストへ戻る" <|
+            [ test "選ぶとその道だけが出て、「← ほかのつくり方」で選択リストへ戻る" <|
                 \_ ->
                     let
                         chosen =

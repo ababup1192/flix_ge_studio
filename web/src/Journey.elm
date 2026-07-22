@@ -7,11 +7,11 @@ module Journey exposing
     , State
     , changesDecoder
     , failed
+    , gameRunning
     , init
     , loaded
     , starterFresh
     , stateDecoder
-    , suggestionId
     , update
     , view
     )
@@ -30,12 +30,14 @@ import Html.Events as HE
 import Json.Decode as D
 
 
-{-| 提案の行き先。サーバの文字列(atelier|changes|home)を型に起こす —
+{-| 提案の行き先。サーバの文字列(atelier|changes|launch|arrange|home)を型に起こす —
 知らない文字列はホーム留まり(押しても壊れない)。
 -}
 type Nav
     = ToAtelier
     | ToChanges
+    | ToLaunch
+    | ToArrange
     | ToHome
 
 
@@ -53,6 +55,9 @@ type alias Checks =
     -- 生まれたてのテンプレート(sample.kind.json が残っている)か。
     -- 「テンプレートのまま」前提の UI(インタビューのチップ等)の出し分けに使う
     , hasStarterDoc : Bool
+
+    -- このプロジェクトのゲームが走っているか
+    , gameRunning : Bool
     }
 
 
@@ -66,6 +71,19 @@ type alias State =
 starterFresh : State -> Bool
 starterFresh state =
     state.checks.hasStarterDoc
+
+
+{-| checks の gameRunning(読めていない間は「走っていない」に倒す)。
+Main のミニプレイヤーの状態行が使う。
+-}
+gameRunning : Model -> Bool
+gameRunning model =
+    case model of
+        Loaded info ->
+            info.state.checks.gameRunning
+
+        _ ->
+            False
 
 
 {-| skipped は「今日はこの提案に乗らない」の印。次の応答が来たら新しい提案として
@@ -90,17 +108,6 @@ loaded state =
 failed : String -> Model
 failed message =
     Failed message
-
-
-{-| いま出ている提案の id(Main が「design ならつくるを開く」を判定する窓)。 -}
-suggestionId : Model -> Maybe String
-suggestionId model =
-    case model of
-        Loaded info ->
-            Just info.state.suggestion.id
-
-        _ ->
-            Nothing
 
 
 type Msg
@@ -153,16 +160,24 @@ navFrom raw =
         "changes" ->
             ToChanges
 
+        "launch" ->
+            ToLaunch
+
+        "arrange" ->
+            ToArrange
+
         _ ->
             ToHome
 
 
 checksDecoder : D.Decoder Checks
 checksDecoder =
-    D.map2 Checks
+    D.map3 Checks
         (D.field "atelierCandidates" D.int)
         -- 無いサーバでは「テンプレートではない」に倒す(fail-open)
         (D.oneOf [ D.field "hasStarterDoc" D.bool, D.succeed False ])
+        -- 無いサーバでは「走っていない」に倒す(fail-open)
+        (D.oneOf [ D.field "gameRunning" D.bool, D.succeed False ])
 
 
 {-| GET /journey/changes — 自動検査の知らせ。baking は描き出しが走っている最中、
@@ -215,15 +230,14 @@ view model =
                 [ quietCard "読み込み中…" "次のやることを考えています。" ]
 
             Failed _ ->
-                -- 提案が読めない時も行き止まりにしない。して欲しいことを言う:
-                -- 何かひとつ変えて、保存した瞬間にゲームが変わるのを見てもらう
+                -- 提案が読めない時も行き止まりにしない。して欲しいことを言う
                 [ div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5" ]
-                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "ひとつ、変えてみましょう" ]
+                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "ゲームをアレンジしてみましょう" ]
                     , div [ HA.class "mt-1.5 text-xs text-ink-soft" ]
-                        [ text "色でも数値でもいい。保存した瞬間、走っているゲームに映ります。" ]
+                        [ text "ゲームのパラメータを変えられます。保存した瞬間、走っているゲームに反映されます。" ]
                     , div [ HA.class "mt-4" ]
-                        [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked ToAtelier) ]
-                            [ text "アトリエへ" ]
+                        [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked ToArrange) ]
+                            [ text "アレンジする" ]
                         ]
                     ]
                 ]
@@ -297,8 +311,11 @@ iconFor id =
         "create" ->
             "🌱"
 
-        "design" ->
+        "launch" ->
             "🕹️"
+
+        "arrange" ->
+            "🎨"
 
         _ ->
             "🧭"
@@ -313,6 +330,12 @@ goLabel nav =
         ToChanges ->
             "見比べる"
 
+        ToLaunch ->
+            "▶ 起動する"
+
+        ToArrange ->
+            "アレンジする"
+
         ToHome ->
             "はじめる"
 
@@ -325,19 +348,30 @@ goLabel nav =
 viewTrail : String -> Html msg
 viewTrail sid =
     let
-        current =
+        -- 生まれたて(launch / arrange)は「遊ぶ → アレンジ → 反映」の一巡、
+        -- それ以外は素材の一巡(候補 → 使う → 知らせ)
+        ( steps, current ) =
             case sid of
+                "launch" ->
+                    ( starterSteps, Just 0 )
+
+                "arrange" ->
+                    ( starterSteps, Just 1 )
+
                 "pick" ->
-                    Just 0
+                    ( materialSteps, Just 0 )
 
                 "changed" ->
-                    Just 2
+                    ( materialSteps, Just 2 )
 
                 _ ->
                     -- "create" と未知の id: どのステップも点けない
-                    Nothing
+                    ( materialSteps, Nothing )
 
-        steps =
+        starterSteps =
+            [ "遊んでみる", "アレンジする", "ゲームに反映させる" ]
+
+        materialSteps =
             [ "候補を選ぶ", "使う", "変わったら知らせ" ]
 
         done index =

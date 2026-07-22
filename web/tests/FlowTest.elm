@@ -277,6 +277,28 @@ runningGamesBody cwds =
         ]
 
 
+{-| GET /journey/state の応答。id と nav だけが仕様(文言は見ない)。 -}
+journeyBody : String -> String -> E.Value
+journeyBody id nav =
+    E.object
+        [ ( "suggestion"
+          , E.object
+                [ ( "id", E.string id )
+                , ( "title", E.string "見出し" )
+                , ( "detail", E.string "本文" )
+                , ( "nav", E.string nav )
+                ]
+          )
+        , ( "checks"
+          , E.object
+                [ ( "atelierCandidates", E.int 0 )
+                , ( "staleGallery", E.bool False )
+                , ( "diffCount", E.int 0 )
+                ]
+          )
+        ]
+
+
 {-| health は 200 だが未選択({ok:false})→ projects(2)・runningGames(3) を要求した
 picker 状態。プロジェクト未選択は「サーバは居るが選べていない」で HTTP 200 の
 {ok:false} が契約なので、respondErr(サーバ不在)でなく respondOk で流す。
@@ -300,12 +322,11 @@ booted =
     bootedWith resourcesBody
 
 
-{-| resources 応答だけ差し替えて起動を済ませる(kind 別のフローの入口)。
-既定画面はホームなので、編集フローの検査はアトリエへ移ってから。
+{-| resources 応答だけ差し替えて起動を済ませ、アトリエの入口で止まった状態。
 journeyState は採番外(id 0)の読み取り封筒で、以降の id はこれまで通り 4 から。
 -}
-bootedWith : E.Value -> App
-bootedWith resources =
+landingWith : E.Value -> App
+landingWith resources =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
@@ -315,6 +336,13 @@ bootedWith resources =
         |> ProgramTest.clickButton "アトリエ"
         -- アトリエは開くたび候補えらび(swap)とアーカイバの材料を取り直す(採番外 id 0)
         |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+
+
+{-| 入口から調整(Doc エディタ)へ入った状態(編集フローの検査はここから)。 -}
+bootedWith : E.Value -> App
+bootedWith resources =
+    landingWith resources
+        |> ProgramTest.clickButton "パラメータを変える"
 
 
 {-| kind = ui の宣言(プラグイン・スキーマ無し)。エンジン焼き(/preview/ui)の対象。 -}
@@ -641,43 +669,64 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "新しい一巡を始めましょう" ]
                     |> ProgramTest.ensureViewHasNot [ text "✓ 候補を選ぶ" ]
                     |> ProgramTest.expectViewHasNot [ class "journey-step-current" ]
-        , test "ホーム: design(あそびを考える)で降り立つと、つくるが開きゲームカードが見える" <|
+        , test "ホーム: launch(起動してみましょう)は、その場で gameStart が飛び実況が出る" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
-                    |> respondOk 0
-                        "journeyState"
-                        (E.object
-                            [ ( "suggestion"
-                              , E.object
-                                    [ ( "id", E.string "design" )
-                                    , ( "title", E.string "あそびを考えよう" )
-                                    , ( "detail", E.string "どんなゲームにするか、AI と作ります。" )
-                                    , ( "nav", E.string "atelier" )
-                                    ]
-                              )
-                            , ( "checks"
-                              , E.object
-                                    [ ( "atelierCandidates", E.int 0 )
-                                    , ( "staleGallery", E.bool False )
-                                    , ( "diffCount", E.int 0 )
-                                    ]
-                              )
-                            ]
-                        )
-                    |> ProgramTest.clickButton "アトリエへ"
-                    -- 「なにをつくる?」が開き、あそびが推し(まずはこれ)で並ぶ
-                    |> ProgramTest.ensureViewHas [ text "なにをつくる?" ]
-                    |> ProgramTest.ensureViewHas [ text "あそびを作らせる" ]
-                    |> ProgramTest.expectViewHas [ text "まずはこれ" ]
-        , test "ホーム: /journey/state が無いサーバでも落ちず、「変えてみましょう」の一手に倒れる" <|
+                    |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
+                    |> ProgramTest.clickButton "▶ 起動する"
+                    |> ensureKinds [ "gameStart" ]
+                    -- ホームに居たまま、提案カードの下に実況が出る
+                    |> ProgramTest.ensureViewHas [ text "起動しています…(初回は少しかかります)" ]
+                    |> ProgramTest.expectViewHas [ class "launch-line" ]
+        , test "ホーム: 起動が確認できたら提案を取り直す(カードが次の一歩へ進む)" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
+                    |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
+                    |> ProgramTest.clickButton "▶ 起動する"
+                    |> ensureKinds [ "gameStart" ]
+                    |> respondOk 4 "gameStart" (E.object [ ( "ok", E.bool True ) ])
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
+                    |> expectKinds [ "journeyState" ]
+        , test "ホーム: arrange(アレンジ)はアトリエの調整モードへ直行する" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
+                    |> respondOk 0 "journeyState" (journeyBody "arrange" "arrange")
+                    |> ProgramTest.clickButton "アレンジする"
+                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+                    -- 候補選びでなく、Doc エディタ(調整)が出ている
+                    |> ProgramTest.expectViewHas [ text "assets/level.json" ]
+        , test "ホーム: /journey/state が無いサーバでも落ちず、アレンジの一手に倒れる" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondErr 0 "journeyState" "HTTP 404"
-                    |> ProgramTest.expectViewHas [ text "ひとつ、変えてみましょう" ]
+                    |> ProgramTest.expectViewHas [ text "ゲームをアレンジしてみましょう" ]
+        , test "アトリエ: タブから開くと入口が出て、カードで素材へ、「← アトリエ」で入口へ戻る" <|
+            \() ->
+                landingWith resourcesBody
+                    |> ProgramTest.ensureViewHas [ class "atelier-landing" ]
+                    |> ProgramTest.ensureViewHas [ text "パラメータを変える" ]
+                    |> ProgramTest.clickButton "素材を作る"
+                    |> ProgramTest.ensureViewHas [ text "✨ 新しい素材を作る" ]
+                    |> ProgramTest.clickButton "← アトリエ"
+                    |> ProgramTest.expectViewHas [ class "atelier-landing" ]
+        , test "ホーム: pick(候補を比べて選ぼう)は入口を挟まず素材セクションへ直行する" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
+                    |> respondOk 0 "journeyState" (journeyBody "pick" "atelier")
+                    |> ProgramTest.clickButton "アトリエへ"
+                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+                    |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
+                    |> ProgramTest.expectViewHas [ text "✨ 新しい素材を作る" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted

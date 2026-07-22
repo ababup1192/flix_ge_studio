@@ -185,35 +185,35 @@ suite =
                                 }
                             )
             ]
-        , describe "モード分け(候補えらび / そうこ)"
-            [ test "候補が 1 件以上あれば候補えらびが既定" <|
+        , describe "セクション分け(入口 / 素材 / 調整 / アーカイブ)"
+            [ test "最初は入口(候補があっても勝手に素材へ飛ばない)" <|
                 \_ ->
-                    Atelier.showPicks withCandidates
-                        |> Expect.equal True
-            , test "候補ゼロのスロットは捨てられ、そうこが既定になる(防御)" <|
+                    ( Atelier.showLanding withCandidates, Atelier.showPicks withCandidates )
+                        |> Expect.equal ( True, False )
+            , test "素材を開いて「← アトリエ」で入口へ戻れる" <|
                 \_ ->
-                    Atelier.init
-                        |> Atelier.gotCandidates
-                            { slots = [ { slot = "assets/x.schema.json", entityId = Nothing, candidates = [], currentPreviewReady = False } ]
-                            , loose = []
-                            , baking = False
-                            }
-                        |> Atelier.showPicks
-                        |> Expect.equal False
-            , test "「そうこを開く」と「候補えらびに戻る」で行き来できる" <|
+                    let
+                        opened =
+                            begin withCandidates
+                                |> step Atelier.OpenPicks
+                                |> Tuple.first
+
+                        back =
+                            Atelier.update Atelier.OpenLanding opened |> Tuple.first
+                    in
+                    ( Atelier.showPicks opened, Atelier.showLanding back )
+                        |> Expect.equal ( True, True )
+            , test "調整を開くと入口でも素材でもアーカイブでもない" <|
                 \_ ->
                     let
                         opened =
                             begin withCandidates
                                 |> step Atelier.OpenStorehouse
                                 |> Tuple.first
-
-                        back =
-                            Atelier.update Atelier.OpenPicks opened |> Tuple.first
                     in
-                    ( Atelier.showPicks opened, Atelier.showPicks back )
-                        |> Expect.equal ( False, True )
-            , test "アーカイバを開くと第 3 モード(候補えらびでも倉庫でもない)" <|
+                    ( Atelier.showLanding opened, Atelier.showPicks opened, Atelier.showArchiver opened )
+                        |> Expect.equal ( False, False, False )
+            , test "アーカイブを開くと第 3 のセクション(入口でも素材でもない)" <|
                 \_ ->
                     let
                         opened =
@@ -221,8 +221,18 @@ suite =
                                 |> step Atelier.OpenArchiver
                                 |> Tuple.first
                     in
-                    ( Atelier.showArchiver opened, Atelier.showPicks opened )
-                        |> Expect.equal ( True, False )
+                    ( Atelier.showArchiver opened, Atelier.showLanding opened, Atelier.showPicks opened )
+                        |> Expect.equal ( True, False, False )
+            , test "候補ゼロのスロットは捨てられる(防御 — ファイル名の羅列を出さない)" <|
+                \_ ->
+                    Atelier.init
+                        |> Atelier.gotCandidates
+                            { slots = [ { slot = "assets/x.schema.json", entityId = Nothing, candidates = [], currentPreviewReady = False } ]
+                            , loose = []
+                            , baking = False
+                            }
+                        |> Atelier.hasCandidates
+                        |> Expect.equal False
             ]
         , describe "アーカイバ(何も捨てない置き場)"
             [ test "🗃 でアーカイブ送りの便りが飛び、飛行中の二度押しは送らない" <|
