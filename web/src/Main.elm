@@ -4965,8 +4965,7 @@ view model =
                 ]
 
 
-{-| ホームの外枠。アトリエ(viewEditing)の作業用ツールバーは
-出さず、題名とナビだけの静かな上部にする。
+{-| ホームの外枠。題名とナビだけの静かな上部にする。
 -}
 viewShell : Model -> Html Msg -> Html Msg
 viewShell model content =
@@ -5376,13 +5375,12 @@ viewEditing model =
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
 
-                -- 「つくる」(創作の第一幕)— 調整でも最上段に置く(既定は畳む)
-                , div [ HA.class "shrink-0 px-3 pt-3" ]
-                    [ Html.map AtelierMsg (Atelier.viewCreate model.atelier) ]
-
                 -- 調整セクションの最上段 — 「← アトリエ」で入口へ戻れる
                 , div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
                     [ Html.map AtelierMsg (Atelier.viewSectionTop "⚙️ パラメータを変える") ]
+
+                -- 開いたファイルの道具は編集枠の直上に(対象のそばに道具を置く)
+                , viewEditToolbar model
                 , div [ HA.class "panes flex min-h-0 flex-1" ]
                     (viewFilePane model
                         :: viewPaneHandle LeftPane
@@ -5499,12 +5497,44 @@ effectiveMode model =
             mode
 
 
+{-| 画面全体のバー。ゲーム名・ナビと、画面共通の通知トーストだけ。
+開いたファイルの道具は編集枠側(viewEditToolbar)にある。
+-}
 viewTopbar : Model -> Html Msg
 viewTopbar model =
     div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
         , viewNavTabs model.tab
-        , viewModeSeg model
+        , case model.notice of
+            Just message ->
+                -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔
+                div [ HA.class "pointer-events-none fixed right-3 bottom-10 z-50" ]
+                    [ Html.node "sl-alert"
+                        [ HA.class "notice"
+                        , HA.attribute "variant"
+                            (if String.startsWith "保存しました" message || String.startsWith "改名しました" message then
+                                "success"
+
+                             else
+                                "danger"
+                            )
+                        , HA.attribute "open" ""
+                        ]
+                        [ text message ]
+                    ]
+
+            Nothing ->
+                text ""
+        ]
+
+
+{-| 開いたファイルの道具(モード切替・ファイル名・ライブ反映・保存)。
+編集枠の直上に置く。高さは固定せず、狭い幅では折り返して収める。
+-}
+viewEditToolbar : Model -> Html Msg
+viewEditToolbar model =
+    div [ HA.class "edit-toolbar flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge bg-panel px-3 py-1" ]
+        [ viewModeSeg model
         , case currentGroup model of
             Just group ->
                 span [ HA.class "group-badge badge shrink-0 bg-accent/15 text-accent" ]
@@ -5532,26 +5562,6 @@ viewTopbar model =
           else
             text ""
         , span [ HA.class "spacer flex-1" ] []
-        , case model.notice of
-            Just message ->
-                -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔
-                div [ HA.class "pointer-events-none fixed right-3 bottom-10 z-50" ]
-                    [ Html.node "sl-alert"
-                        [ HA.class "notice"
-                        , HA.attribute "variant"
-                            (if String.startsWith "保存しました" message || String.startsWith "改名しました" message then
-                                "success"
-
-                             else
-                                "danger"
-                            )
-                        , HA.attribute "open" ""
-                        ]
-                        [ text message ]
-                    ]
-
-            Nothing ->
-                text ""
         , button
             [ HA.classList
                 [ ( "live-toggle btn", True )
