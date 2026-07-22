@@ -36,7 +36,7 @@ mod Genesis {
             includes = "コマンド型RPG・剣と探索・ダンジョン",
             controls = "←→↑↓ + 話す",
             skeleton = "見下ろしマップを ←→↑↓ で歩く / 人に触れると話す(1行ふきだし) / 扉と鍵 / 宝を拾う。終わり: 宝を N 個でクリア(N は Doc)",
-            starter = "" }
+            starter = "templates/rpg-starter" }
        :: { id = "sports",  name = "スポーツ・対戦",
             verb = "競って、勝つ",
             includes = "野球・サッカー・1対1の対戦格闘",
