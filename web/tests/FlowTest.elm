@@ -300,15 +300,21 @@ booted =
     bootedWith resourcesBody
 
 
-{-| resources 応答だけ差し替えて起動を済ませる(kind 別のフローの入口)。 -}
+{-| resources 応答だけ差し替えて起動を済ませる(kind 別のフローの入口)。
+既定画面はホーム(旅路)なので、編集フローの検査はアトリエへ移ってから。
+journeyState は採番外(id 0)の読み取り封筒で、以降の id はこれまで通り 4 から。
+-}
 bootedWith : E.Value -> App
 bootedWith resources =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources" ]
+        |> ensureKinds [ "files", "resources", "journeyState" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resources
+        |> ProgramTest.clickButton "アトリエ"
+        -- アトリエは開くたび候補えらび(swap)の材料を取り直す(採番外 id 0)
+        |> ensureKinds [ "atelierCandidates", "gameStatus" ]
 
 
 {-| kind = ui の宣言(プラグイン・スキーマ無し)。エンジン焼き(/preview/ui)の対象。 -}
@@ -552,12 +558,79 @@ discardDialogText =
 suite : Test
 suite =
     describe "配線フロー"
-        [ test "起動: health が通ると files と resources を要求する" <|
+        [ test "起動: health が通ると files と resources(とホームの旅路)を要求する" <|
             \() ->
                 start
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
-                    |> expectKinds [ "files", "resources" ]
+                    |> expectKinds [ "files", "resources", "journeyState" ]
+        , test "ナビ: ギャラリーを開くと galleryList と galleryDiff を要求する" <|
+            \() ->
+                booted
+                    |> ProgramTest.clickButton "ギャラリー"
+                    |> expectKinds [ "galleryList", "galleryDiff" ]
+        , test "ホーム: 提案の主ボタンで行き先のタブへ移り、その中身を要求する" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState" ]
+                    |> respondOk 0
+                        "journeyState"
+                        (E.object
+                            [ ( "suggestion"
+                              , E.object
+                                    [ ( "id", E.string "bake" )
+                                    , ( "title", E.string "焼いて確かめよう" )
+                                    , ( "detail", E.string "候補を装着したら、絵にして見比べます。" )
+                                    , ( "nav", E.string "gallery" )
+                                    ]
+                              )
+                            , ( "checks"
+                              , E.object
+                                    [ ( "atelierCandidates", E.int 2 )
+                                    , ( "staleGallery", E.bool True )
+                                    , ( "diffCount", E.int 0 )
+                                    ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.clickButton "ギャラリーへ"
+                    |> expectKinds [ "galleryList", "galleryDiff" ]
+        , test "ホーム: create(新しい一巡)は済み(✓)も現在地も点けず、始まりの一言を出す" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState" ]
+                    |> respondOk 0
+                        "journeyState"
+                        (E.object
+                            [ ( "suggestion"
+                              , E.object
+                                    [ ( "id", E.string "create" )
+                                    , ( "title", E.string "新しく作ろう" )
+                                    , ( "detail", E.string "まだ何も無いので、最初の候補から。" )
+                                    , ( "nav", E.string "atelier" )
+                                    ]
+                              )
+                            , ( "checks"
+                              , E.object
+                                    [ ( "atelierCandidates", E.int 0 )
+                                    , ( "staleGallery", E.bool False )
+                                    , ( "diffCount", E.int 0 )
+                                    ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.ensureViewHas [ text "新しい一巡を始めましょう" ]
+                    |> ProgramTest.ensureViewHasNot [ text "✓ 候補を選ぶ" ]
+                    |> ProgramTest.expectViewHasNot [ class "journey-step-current" ]
+        , test "ホーム: /journey/state が無いサーバでも落ちず『準備中』に倒れる" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState" ]
+                    |> respondErr 0 "journeyState" "HTTP 404"
+                    |> ProgramTest.expectViewHas [ text "準備中" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted

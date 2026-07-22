@@ -60,13 +60,15 @@ mod Editor {
     pub def serve(initialDir: Option[String], port: Int32): Unit \ IO =
         let selection = Projects.makeSelection(initialDir);
         let caches = Caches.make();
+        let runner = Runner.make();
+        let game = Game.make();
         let webRoot = webRootFromEnv();
         let server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         discard server.createContext("/", new HttpHandler {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, webRoot, exchange)
                 } catch {
                     case e: Exception => {
                         let message = e.toString();
@@ -94,7 +96,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -127,6 +129,40 @@ mod Editor {
                 let (status, json) = PreviewItems.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)
             })
+            case ("GET", "/gallery/list") => withProject(selection, exchange, dir ->
+                sendJson(200, Gallery.listJson(dir), exchange))
+            case ("GET", "/gallery/image") => withProject(selection, exchange, dir ->
+                handleGalleryImage(dir, params, exchange))
+            case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
+                handleGallerySound(dir, params, exchange))
+            case ("GET", "/gallery/diff") => withProject(selection, exchange, dir ->
+                sendJson(200, Gallery.diffJson(dir), exchange))
+            case ("GET", "/journey/state") => withProject(selection, exchange, dir ->
+                sendJson(200, Journey.stateJson(dir), exchange))
+            case ("POST", "/gallery/bake") => withProject(selection, exchange, dir -> {
+                let (status, json) = Runner.startBake(runner, dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/runner/log") => sendJson(200, Runner.logJson(runner), exchange)
+            case ("POST", "/gallery/bless") => withProject(selection, exchange, dir -> {
+                let (status, json) = Runner.bless(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/atelier/candidates") => withProject(selection, exchange, dir ->
+                sendJson(200, Atelier.candidatesJson(runner, dir), exchange))
+            case ("GET", "/atelier/preview") => withProject(selection, exchange, dir ->
+                handleAtelierPreview(dir, params, exchange))
+            case ("POST", "/atelier/promote") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.promote(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/game/status") => withProject(selection, exchange, dir ->
+                sendJson(200, Game.statusJson(dir), exchange))
+            case ("POST", "/game/start") => withProject(selection, exchange, dir -> {
+                let (status, json) = Game.start(game, dir);
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/game/log") => sendJson(200, Runner.logJson(game), exchange)
             case ("GET", _)            => handleStatic(webRoot, path, exchange)
             case ("HEAD", _)           => handleStatic(webRoot, path, exchange)
             case _                     => sendJson(404, errorJson("unknown endpoint: ${methodName} ${path}"), exchange)
@@ -529,6 +565,42 @@ mod Editor {
                         "mtime" => JNumber(mtimeToBd(mtimeOf(dir, relPath)))
                     }), exchange)
                 }
+        }
+
+    // ── ギャラリー (読むだけの絵と音) ─────────────────────
+
+    /// GET /gallery/image?dir=…&name=… — PNG のバイト列。不正な指定・無いファイルは 404。
+    def handleGalleryImage(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
+        let found = match (Map.get("dir", params), Map.get("name", params)) {
+            case (Some(subdir), Some(name)) => Gallery.imageBytes(dir, subdir, name)
+            case _                          => None
+        };
+        match found {
+            case Some(bytes) => sendBytes("image/png", bytes, exchange)
+            case None        => sendJson(404, errorJson("image not found"), exchange)
+        }
+
+    /// GET /atelier/preview?file=… — 候補/スロットのプレビュー PNG のバイト列。
+    /// 不正な指定・PNG 無し・元 JSON より古い (未焼成) はどれも 404。
+    def handleAtelierPreview(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
+        let found = match Map.get("file", params) {
+            case Some(file) => Atelier.previewBytes(dir, file)
+            case None       => None
+        };
+        match found {
+            case Some(bytes) => sendBytes("image/png", bytes, exchange)
+            case None        => sendJson(404, errorJson("preview not found"), exchange)
+        }
+
+    /// GET /gallery/sound?name=… — debug/sounds/ の WAV のバイト列。無ければ 404。
+    def handleGallerySound(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
+        let found = match Map.get("name", params) {
+            case Some(name) => Gallery.soundBytes(dir, name)
+            case None       => None
+        };
+        match found {
+            case Some(bytes) => sendBytes("audio/wav", bytes, exchange)
+            case None        => sendJson(404, errorJson("sound not found"), exchange)
         }
 
     // ── 静的配信 (ビルド済みエディタ画面) ─────────────────

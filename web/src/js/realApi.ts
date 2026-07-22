@@ -83,6 +83,69 @@ export function realApi(base: string): Api {
             return await raiseHttpError(res, `${base}/file`);
           }
         }
+        case "journeyState":
+          return getJson(`${base}/journey/state`);
+        case "galleryList":
+          return getJson(`${base}/gallery/list`);
+        case "galleryDiff":
+          return getJson(`${base}/gallery/diff`);
+        case "bakeStart": {
+          // 409(既に走っている)は失敗ではなく「走っている」の便り。
+          // {busy:true} の ok 応答に均して Elm へ渡す(ログ取得が本当の姿を教える)
+          const url = `${base}/gallery/bake`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (res.status === 409) return { busy: true };
+          if (!res.ok) await raiseHttpError(res, url);
+          return res.json();
+        }
+        case "runnerLog":
+          return getJson(`${base}/runner/log`);
+        case "blessFiles":
+          return sendJson("POST", `${base}/gallery/bless`, payload);
+        case "atelierCandidates":
+          return getJson(`${base}/atelier/candidates`);
+        case "promoteCandidate": {
+          // 400 は {"error":{"message":…}} の日本語の理由が契約。
+          // その文言だけを " — " の後ろに載せて投げる(Elm 側が理由だけ表示する)
+          const url = `${base}/atelier/promote`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            let detail = "";
+            try {
+              const body = await res.json();
+              const msg = body?.error?.message ?? body?.error;
+              if (typeof msg === "string") detail = " — " + msg;
+            } catch {
+              // JSON でない失敗応答はステータスだけで伝える
+            }
+            throw new Error(`HTTP ${res.status}: ${url}${detail}`);
+          }
+          return res.json();
+        }
+        case "gameStatus":
+          return getJson(`${base}/game/status`);
+        case "gameStart": {
+          // 409(既に走っている)は失敗ではなく「走っている」の便り
+          const url = `${base}/game/start`;
+          const res = await fetch(url, { method: "POST" });
+          if (res.status === 409) return { running: true };
+          if (!res.ok) await raiseHttpError(res, url);
+          try {
+            return await res.json();
+          } catch {
+            return {}; // 202 が本文なしでも受理は受理
+          }
+        }
+        case "gameLog":
+          return getJson(`${base}/game/log`);
         case "previewItems":
           return sendJson("POST", `${base}/preview/items`, payload);
         case "previewUi":

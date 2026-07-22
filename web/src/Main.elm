@@ -17,15 +17,18 @@ update は Cmd でなく自前データ Effect を返す(Cmd 化は main の Eff
 import Api
 import Browser
 import Browser.Events
+import Atelier
 import Dashboards
 import Dict
 import Doc
 import Draft
 import Effect exposing (Effect)
 import EntryOps
+import Gallery
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
+import Journey
 import Json.Decode as D
 import Json.Encode as E
 import Lint
@@ -59,6 +62,13 @@ type Screen
     | NoServer
     | Picker
     | Editing
+
+
+{-| 上部ナビの現在地。アトリエ = 既存の Doc エディタ一式(3 ペイン)。 -}
+type Tab
+    = HomeTab
+    | AtelierTab
+    | GalleryTab
 
 
 {-| プロジェクトピッカーの状態。候補一覧そのものはサーバ応答(Api.Projects)が正で、
@@ -424,6 +434,18 @@ emptyWizard =
 
 type alias Model =
     { screen : Screen
+
+    -- 上部ナビ。ホーム/ギャラリーの中身は Journey / Gallery が持つ(Main は配線だけ)
+    , tab : Tab
+    , journey : Journey.Model
+    , gallery : Gallery.Model
+
+    -- アトリエの「候補えらび」(swap)。そうこ(Doc エディタ)は従来どおり Main が持つ
+    , atelier : Atelier.Model
+
+    -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
+    -- 一方向の封筒(kind serverBase)で知らせる。届くまでは同一オリジン扱い("")
+    , serverBase : String
     , reqCounter : Int
     , notice : Maybe String
 
@@ -593,6 +615,11 @@ init : () -> ( Model, Effect )
 init _ =
     request "health" (E.object [])
         { screen = Booting
+        , tab = HomeTab
+        , journey = Journey.init
+        , gallery = Gallery.init
+        , atelier = Atelier.init
+        , serverBase = ""
         , reqCounter = 0
         , notice = Nothing
         , noticeSeq = 0
@@ -736,6 +763,14 @@ type Msg
     | AutosaveFired Int
     | ActivePollTick
     | RunningGamesPollTick
+    | TabClicked Tab
+    | JourneyMsg Journey.Msg
+    | GalleryMsg Gallery.Msg
+    | AtelierMsg Atelier.Msg
+    | AtelierOverlayTick
+    | AtelierBakePollTick
+    | LaunchPollTick
+    | RunnerPollTick
 
 
 
@@ -759,6 +794,110 @@ update msg model =
 
         RetryClicked ->
             request "health" (E.object []) { model | screen = Booting }
+
+        TabClicked tab ->
+            gotoTab tab model
+
+        JourneyMsg jmsg ->
+            let
+                ( journey, nav ) =
+                    Journey.update jmsg model.journey
+
+                m1 =
+                    { model | journey = journey }
+            in
+            case nav of
+                Just Journey.ToAtelier ->
+                    gotoTab AtelierTab m1
+
+                Just Journey.ToGallery ->
+                    gotoTab GalleryTab m1
+
+                Just Journey.ToHome ->
+                    gotoTab HomeTab m1
+
+                Nothing ->
+                    ( m1, Effect.none )
+
+        GalleryMsg gmsg ->
+            let
+                ( gallery, out ) =
+                    Gallery.update gmsg model.gallery
+
+                m1 =
+                    { model | gallery = gallery }
+            in
+            case out of
+                Gallery.OutNone ->
+                    ( m1, Effect.none )
+
+                Gallery.OutBake target ->
+                    request "bakeStart"
+                        (E.object [ ( "target", E.string (Gallery.targetString target) ) ])
+                        m1
+
+                Gallery.OutBless names ->
+                    request "blessFiles"
+                        (E.object [ ( "names", E.list E.string names ), ( "confirm", E.bool True ) ])
+                        m1
+
+        AtelierMsg amsg ->
+            let
+                ( atelier, out ) =
+                    Atelier.update amsg model.atelier
+
+                m1 =
+                    { model | atelier = atelier }
+            in
+            case out of
+                Atelier.OutNone ->
+                    ( m1, Effect.none )
+
+                Atelier.OutPromote info ->
+                    request "promoteCandidate"
+                        (E.object [ ( "candidate", E.string info.candidate ), ( "slot", E.string info.slot ) ])
+                        m1
+
+                Atelier.OutStartGame ->
+                    request "gameStart" (E.object []) m1
+
+                Atelier.OutClosed ->
+                    -- 装着の祝いを閉じた。世界が変わったので候補と旅路を取り直し、
+                    -- つぎの一手(焼いて確認)へ誘う
+                    let
+                        ( m2, toastFx ) =
+                            showToast "つぎは『焼いて確認』です" m1
+                    in
+                    ( m2
+                    , Effect.batch
+                        [ toastFx
+                        , requestInfo "atelierCandidates"
+                        , requestInfo "gameStatus"
+                        , requestInfo "journeyState"
+                        ]
+                    )
+
+        AtelierOverlayTick ->
+            -- オーバーレイの段送り待ちだけ購読が生きている(needsTick が判定)
+            let
+                ( atelier, _ ) =
+                    Atelier.update Atelier.OverlayTick model.atelier
+            in
+            ( { model | atelier = atelier }, Effect.none )
+
+        AtelierBakePollTick ->
+            -- サーバがプレビューを焼いている間だけ購読が生きている(Atelier.isBaking
+            -- が判定)。baking=false が届いた取得がそのまま「最終の取り直し」になる
+            ( model, requestInfo "atelierCandidates" )
+
+        LaunchPollTick ->
+            -- ゲーム起動待ちの間だけ購読が生きている(isLaunchPolling が判定)。
+            -- ログ(進捗)と状態(起動完了)を同じ拍で追う
+            ( model, Effect.batch [ requestInfo "gameLog", requestInfo "gameStatus" ] )
+
+        RunnerPollTick ->
+            -- 焼きの走行中だけ購読が生きている(subscriptions が Gallery.isPolling で判定)
+            ( model, requestInfo "runnerLog" )
 
         PickerInput text_ ->
             ( { model | picker = updatePicker (\p -> { p | input = text_ }) model }, Effect.none )
@@ -3294,7 +3433,8 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
                     in
-                    ( m2, Effect.batch [ c1, c2 ] )
+                    -- 既定の画面はホーム(旅路)なので、その中身も最初に取っておく
+                    ( m2, Effect.batch [ c1, c2, requestInfo "journeyState" ] )
 
                 Ok (Api.HealthErr _) ->
                     -- プロジェクト未選択(または project.json が読めない)。候補を出して選ばせる。
@@ -3332,6 +3472,141 @@ handleOkByKind env model =
                     -- 起動中情報が読めないのは致命ではない(バッジが出ないだけ)。黙って無視する
                     ( model, Effect.none )
 
+        "serverBase" ->
+            -- JS が起動時に流し込む一方向の封筒(接続先サーバの付け根 URL)
+            ( { model
+                | serverBase =
+                    D.decodeValue (D.field "base" D.string) env.body
+                        |> Result.withDefault ""
+              }
+            , Effect.none
+            )
+
+        "journeyState" ->
+            case D.decodeValue Journey.stateDecoder env.body of
+                Ok state ->
+                    ( { model | journey = Journey.loaded state }, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答(旧サーバ等)も「準備中」の 1 枚に倒す(落とさない)
+                    ( { model | journey = Journey.failed "契約とずれた応答" }, Effect.none )
+
+        "galleryList" ->
+            case D.decodeValue Gallery.listingDecoder env.body of
+                Ok listing ->
+                    ( { model | gallery = Gallery.gotList listing model.gallery }, Effect.none )
+
+                Err _ ->
+                    ( { model | gallery = Gallery.failed "契約とずれた応答" model.gallery }, Effect.none )
+
+        "galleryDiff" ->
+            case D.decodeValue Gallery.diffDecoder env.body of
+                Ok diff ->
+                    ( { model | gallery = Gallery.gotDiff diff model.gallery }, Effect.none )
+
+                Err _ ->
+                    -- 判定だけ欠けても一覧は出す(バッジが付かないだけ)
+                    ( model, Effect.none )
+
+        "bakeStart" ->
+            -- 202(受理)。409 は realApi が {busy:true} で ok に均しており、
+            -- どちらも「走っている」— 本当の姿は次のログ取得が教えてくれる
+            ( { model | gallery = Gallery.bakeAccepted model.gallery }, Effect.none )
+
+        "runnerLog" ->
+            case D.decodeValue Gallery.runnerLogDecoder env.body of
+                Ok log ->
+                    let
+                        ( gallery, finished ) =
+                            Gallery.gotRunnerLog log model.gallery
+
+                        m1 =
+                            -- 走者は gallery の焼きとアトリエのプレビュー焼きで共用。
+                            -- 行はアトリエの進捗パネルにも写す
+                            { model
+                                | gallery = gallery
+                                , atelier = Atelier.gotRunnerLines log.lines model.atelier
+                            }
+                    in
+                    case finished of
+                        Just True ->
+                            -- 焼き上がり。一覧・判定・旅路を取り直してから静かに祝う
+                            let
+                                ( m2, toastFx ) =
+                                    showToast "焼き上がりました" m1
+                            in
+                            ( m2
+                            , Effect.batch
+                                [ toastFx
+                                , requestInfo "galleryList"
+                                , requestInfo "galleryDiff"
+                                , requestInfo "journeyState"
+                                ]
+                            )
+
+                        _ ->
+                            -- 走行中(継続)か失敗(板がログの尻尾を見せる)
+                            ( m1, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答で回し続けても仕方ない(準備中に倒す)
+                    ( { model | gallery = Gallery.runnerStopped model.gallery }, Effect.none )
+
+        "atelierCandidates" ->
+            case D.decodeValue Atelier.candidatesDecoder env.body of
+                Ok candidates ->
+                    ( { model | atelier = Atelier.gotCandidates candidates model.atelier }, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答(旧サーバ等)は候補ゾーンを出さないだけ
+                    ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
+
+        "gameStatus" ->
+            ( { model
+                | atelier =
+                    Atelier.gotGameStatus
+                        (D.decodeValue Atelier.statusDecoder env.body |> Result.withDefault False)
+                        model.atelier
+              }
+            , Effect.none
+            )
+
+        "gameStart" ->
+            -- 202(受理)。409(すでに起動中)も realApi が ok に均しており、
+            -- どちらも「起動処理は走っている」— ポーリングが本当の姿を教える
+            ( { model | atelier = Atelier.gameStarted model.atelier }, Effect.none )
+
+        "gameLog" ->
+            case D.decodeValue Atelier.gameLogDecoder env.body of
+                Ok log ->
+                    ( { model | atelier = Atelier.gotGameLog log model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "promoteCandidate" ->
+            let
+                retired =
+                    D.decodeValue (D.field "retired" D.string) env.body
+                        |> Result.toMaybe
+            in
+            -- オーバーレイの祝いへ(閉じた時に候補・旅路を取り直す)
+            ( { model | atelier = Atelier.promoted retired model.atelier }, Effect.none )
+
+        "blessFiles" ->
+            let
+                count =
+                    D.decodeValue (D.field "blessed" (D.list D.string)) env.body
+                        |> Result.map List.length
+                        |> Result.withDefault 0
+
+                ( m1, toastFx ) =
+                    showToast ("祝福しました(" ++ String.fromInt count ++ "件)")
+                        { model | gallery = Gallery.blessDone model.gallery }
+            in
+            -- golden が入れ替わったので判定と旅路を取り直す
+            ( m1, Effect.batch [ toastFx, requestInfo "galleryDiff", requestInfo "journeyState" ] )
+
         "selectProject" ->
             case D.decodeValue Api.projectSwitchDecoder env.body of
                 Ok (Api.SwitchOk result) ->
@@ -3341,6 +3616,10 @@ handleOkByKind env model =
                                 (E.object [])
                                 { model
                                     | screen = Editing
+                                    , tab = HomeTab
+                                    , journey = Journey.init
+                                    , gallery = Gallery.init
+                                    , atelier = Atelier.init
                                     , title = result.title
                                     , root = result.dir
                                     , picker = emptyPicker
@@ -3386,7 +3665,7 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
                     in
-                    ( m2, Effect.batch [ c1, c2 ] )
+                    ( m2, Effect.batch [ c1, c2, requestInfo "journeyState" ] )
 
                 Ok (Api.SwitchErr message) ->
                     ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
@@ -3885,6 +4164,25 @@ handleErrByKind env message model =
         "projects" ->
             ( { model | picker = updatePicker (\p -> { p | error = Just message }) model }, Effect.none )
 
+        "bakeStart" ->
+            -- 404(旧サーバ)は Gallery が「準備中」に倒す。それ以外は文言を見せる
+            let
+                m1 =
+                    { model | gallery = Gallery.bakeFailed message model.gallery }
+            in
+            if String.contains "404" message then
+                ( m1, Effect.none )
+
+            else
+                showToast ("焼けませんでした — " ++ message) m1
+
+        "runnerLog" ->
+            -- ログ口が無い・落ちた。回し続けても仕方ないので止める(準備中に倒す)
+            ( { model | gallery = Gallery.runnerStopped model.gallery }, Effect.none )
+
+        "blessFiles" ->
+            showToast ("祝福できませんでした — " ++ message) model
+
         "selectProject" ->
             ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
             , Effect.none
@@ -3995,6 +4293,39 @@ handleErrByKind env message model =
             -- サーバが一瞬繋がらないだけの定期ポーリングで赤エラーを出さない
             ( model, Effect.none )
 
+        "journeyState" ->
+            -- エンドポイント未実装のサーバでも赤エラーは出さない(「準備中」の 1 枚へ)
+            ( { model | journey = Journey.failed message }, Effect.none )
+
+        "galleryList" ->
+            ( { model | gallery = Gallery.failed message model.gallery }, Effect.none )
+
+        "galleryDiff" ->
+            -- 判定だけ失敗しても一覧は出す(バッジが付かないだけ)
+            ( model, Effect.none )
+
+        "atelierCandidates" ->
+            -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
+            -- そうこ(エディタ)は生きる(fail-open)
+            ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
+
+        "gameStatus" ->
+            -- 状態が取れないのは致命ではない(装着前に起動の案内が挟まるだけ)
+            ( model, Effect.none )
+
+        "gameStart" ->
+            -- ボタンを戻してから理由を告げる(押せないまま残さない)
+            showToast ("ゲームを起動できませんでした — " ++ message)
+                { model | atelier = Atelier.gameStartFailed model.atelier }
+
+        "gameLog" ->
+            -- ログ口が無い・落ちた。回し続けても仕方ない(status 側が真実を教える)
+            ( { model | atelier = Atelier.gameStartFailed model.atelier }, Effect.none )
+
+        "promoteCandidate" ->
+            -- 400 の理由(日本語)はボタンの近くに出す。生のエラー行は見せない
+            ( { model | atelier = Atelier.promoteFailed message model.atelier }, Effect.none )
+
         _ ->
             ( { model | notice = Just message }, Effect.none )
 
@@ -4032,6 +4363,36 @@ request kind payload model =
     )
 
 
+{-| 読み取り専用(ホーム・ギャラリー)の封筒。応答は kind で受けるので、
+古い応答を id で捨てる採番(reqCounter)を進めない — 既存フロー(ファイルを
+開く・保存等)の封筒 id 並びを乱さないため。id 0 はどの往復とも衝突しない。
+-}
+requestInfo : String -> Effect
+requestInfo kind =
+    Effect.SendApi { id = 0, kind = kind, payload = E.object [] }
+
+
+{-| タブ移動。開くたびに中身を取り直す(ホーム = 提案、ギャラリー = 一覧と判定)—
+外(bake や祝福)で世界が進んでいても、開いた瞬間の最新を見せるため。
+-}
+gotoTab : Tab -> Model -> ( Model, Effect )
+gotoTab tab model =
+    case tab of
+        HomeTab ->
+            ( { model | tab = HomeTab }, requestInfo "journeyState" )
+
+        AtelierTab ->
+            -- 候補えらび(swap)の材料。無いサーバでは fail-open でゾーンごと出ない
+            ( { model | tab = AtelierTab }
+            , Effect.batch [ requestInfo "atelierCandidates", requestInfo "gameStatus" ]
+            )
+
+        GalleryTab ->
+            ( { model | tab = GalleryTab }
+            , Effect.batch [ requestInfo "galleryList", requestInfo "galleryDiff" ]
+            )
+
+
 
 -- 画面
 
@@ -4052,7 +4413,55 @@ view model =
             viewPicker model.picker
 
         Editing ->
-            viewEditing model
+            case model.tab of
+                HomeTab ->
+                    viewShell model (Html.map JourneyMsg (Journey.view model.journey))
+
+                GalleryTab ->
+                    viewShell model (Html.map GalleryMsg (Gallery.view model.serverBase model.gallery))
+
+                AtelierTab ->
+                    -- 2 モード: 候補が 1 件以上あれば「候補えらび」が主役
+                    -- (エディタもそのタブ群も描かない)。無ければ従来の「そうこ」
+                    if Atelier.showPicks model.atelier then
+                        viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))
+
+                    else
+                        viewEditing model
+
+
+{-| ホーム・ギャラリーの外枠。アトリエ(viewEditing)の作業用ツールバーは
+出さず、題名とナビだけの静かな上部にする。
+-}
+viewShell : Model -> Html Msg -> Html Msg
+viewShell model content =
+    div [ HA.class "app flex h-screen flex-col" ]
+        [ div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
+            [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
+            , viewNavTabs model.tab
+            ]
+        , content
+        ]
+
+
+viewNavTabs : Tab -> Html Msg
+viewNavTabs tab =
+    let
+        item target label =
+            button
+                [ HA.classList
+                    [ ( "nav-tab", True )
+                    , ( "nav-tab-active", tab == target )
+                    ]
+                , HE.onClick (TabClicked target)
+                ]
+                [ text label ]
+    in
+    div [ HA.class "nav-tabs flex shrink-0 items-center gap-0.5" ]
+        [ item HomeTab "ホーム"
+        , item AtelierTab "アトリエ"
+        , item GalleryTab "ギャラリー"
+        ]
 
 
 {-| 候補プロジェクトの dir が、走っているゲームの cwd 一覧のどれかと同じ場所を
@@ -4172,6 +4581,19 @@ viewEditing model =
         Nothing ->
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
+
+                -- そうこモード中、候補がある時だけ「候補えらびに戻る」の細い帯
+                , if Atelier.hasCandidates model.atelier then
+                    div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
+                        [ button
+                            [ HA.class "btn btn-ghost btn-mini"
+                            , HE.onClick (AtelierMsg Atelier.OpenPicks)
+                            ]
+                            [ text "🎨 候補えらびに戻る" ]
+                        ]
+
+                  else
+                    text ""
                 , div [ HA.class "panes flex min-h-0 flex-1" ]
                     (viewFilePane model
                         :: viewPaneHandle LeftPane
@@ -4292,6 +4714,7 @@ viewTopbar : Model -> Html Msg
 viewTopbar model =
     div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
+        , viewNavTabs model.tab
         , viewModeSeg model
         , case currentGroup model of
             Just group ->
@@ -7398,6 +7821,53 @@ subscriptions model =
         -- 「いま画面に出ている Doc」(ゲームが書く debug/active-docs.json)の定期確認
         , if model.screen == Editing then
             Time.every 2000 (\_ -> ActivePollTick)
+
+          else
+            Sub.none
+
+        -- 装着オーバーレイの段送り(装着しました → 反映の報せ)。待ちの間だけ生きる
+        , if Atelier.needsTick model.atelier then
+            Time.every 1000 (\_ -> AtelierOverlayTick)
+
+          else
+            Sub.none
+
+        -- プレビュー拡大(lightbox)が開いている間だけ Esc で閉じる購読を生かす
+        , if Atelier.lightboxOpen model.atelier then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed (AtelierMsg Atelier.LightboxClosed)
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else
+            Sub.none
+
+        -- ゲーム起動(make debug)を待つ間だけログと状態を追う(2 秒間隔)
+        , if model.screen == Editing && Atelier.isLaunchPolling model.atelier then
+            Time.every 2000 (\_ -> LaunchPollTick)
+
+          else
+            Sub.none
+
+        -- 焼き(gallery / アトリエのプレビュー — 走者は共用)が走っている間だけ
+        -- ログを追う(止まったら購読ごと消える)
+        , if model.screen == Editing && (Gallery.isPolling model.gallery || Atelier.isBaking model.atelier) then
+            Time.every 1000 (\_ -> RunnerPollTick)
+
+          else
+            Sub.none
+
+        -- サーバがプレビューを焼いている間だけ候補を取り直す(2 秒間隔)。
+        -- baking=false が届いた瞬間に購読ごと消え、その応答が最終形
+        , if model.screen == Editing && Atelier.isBaking model.atelier then
+            Time.every 2000 (\_ -> AtelierBakePollTick)
 
           else
             Sub.none

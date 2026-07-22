@@ -74,6 +74,10 @@ document.addEventListener("sl-request-close", (e) => e.preventDefault());
   }
 }
 
+// 画像・音の URL の付け根を一方向の封筒で知らせる(vite dev は別オリジンのため、
+// Elm 側が <img src> を組むのに要る)。id 0 はどの往復とも衝突しない
+app.ports.apiResponse.send({ id: 0, kind: "serverBase", ok: true, body: { base: SERVER_BASE } });
+
 // Elm → API(kind で振り分け、応答は id 付きの封筒 {id, kind, ok, body} で返す)
 app.ports.apiRequest.subscribe(async (req: { id: number; kind: string; payload: unknown }) => {
   try {

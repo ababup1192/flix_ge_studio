@@ -123,6 +123,88 @@
     @apply rounded-lg border border-edge bg-panel p-1.5 shadow-[0_2px_8px_rgb(0_0_0/0.35)];
   }
 
+  /* 上部ナビ(ホーム / アトリエ / ギャラリー)。タブは押し物なので btn より静かに */
+  .nav-tab {
+    @apply inline-flex h-6 cursor-pointer items-center rounded px-2.5 text-[11px] leading-none text-ink-soft select-none hover:bg-white/5 hover:text-ink;
+  }
+
+  .nav-tab-active {
+    @apply bg-accent/15 font-semibold text-accent hover:bg-accent/15 hover:text-accent;
+  }
+
+  /* ギャラリーの絵はドット絵なのでぼかさない */
+  .gallery-shot {
+    image-rendering: pixelated;
+  }
+
+  /* 焼きの的(3 択)。外枠は Elm 側(.gallery-segs)が持ち、ここは 1 コマの姿 */
+  .gallery-seg {
+    @apply inline-flex h-6 cursor-pointer items-center bg-transparent px-2.5 text-[11px] leading-none text-ink-soft select-none hover:bg-white/5 hover:text-ink disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent;
+  }
+
+  .gallery-seg + .gallery-seg {
+    @apply border-l border-edge;
+  }
+
+  .gallery-seg-active {
+    @apply bg-accent/15 font-semibold text-accent hover:bg-accent/15 hover:text-accent;
+  }
+
+  /* 進捗ミニパネルの動くしるし。prefers-reduced-motion では回さず静かな輪で示す */
+  .progress-spinner {
+    @apply inline-block h-3 w-3 rounded-full border-2 border-accent/30 border-t-accent;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .progress-spinner {
+      animation: progress-spin 0.9s linear infinite;
+    }
+  }
+
+  @keyframes progress-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* アトリエの装着オーバーレイ。段送り(装着しました → 反映の報せ)は
+     ふわりと出す。prefers-reduced-motion では遷移なしで即時に出す */
+  .atelier-settle {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  .atelier-settle-on {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .atelier-settle {
+      transition:
+        opacity 0.5s ease,
+        transform 0.5s ease;
+    }
+
+    .atelier-overlay {
+      animation: atelier-overlay-in 0.25s ease;
+    }
+
+    /* プレビュー拡大(lightbox)も同じふわり */
+    .atelier-lightbox {
+      animation: atelier-overlay-in 0.2s ease;
+    }
+  }
+
+  @keyframes atelier-overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   /* メーターバー(体力・速さ・% の読み取り表示) */
   .meter {
     @apply h-2 overflow-hidden rounded-full bg-well;
