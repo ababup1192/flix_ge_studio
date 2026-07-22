@@ -24,7 +24,6 @@ import Doc
 import Draft
 import Effect exposing (Effect)
 import EntryOps
-import Gallery
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -70,7 +69,6 @@ type Screen
 type Tab
     = HomeTab
     | AtelierTab
-    | GalleryTab
 
 
 {-| プロジェクトピッカーの状態。候補一覧そのものはサーバ応答(Api.Projects)が正で、
@@ -440,12 +438,23 @@ emptyWizard =
 type alias Model =
     { screen : Screen
 
-    -- 上部ナビ。ホーム/ギャラリーの中身は Journey / Gallery が持つ(Main は配線だけ)
+    -- 上部ナビ。ホーム(旅路)の中身は Journey が持つ(Main は配線だけ)
     , tab : Tab
     , journey : Journey.Model
-    , gallery : Gallery.Model
 
-    -- アトリエの「候補えらび」(swap)。そうこ(Doc エディタ)は従来どおり Main が持つ
+    -- 見た目の自動検査(/journey/changes)。baking = エンジンが全場面を
+    -- 描き出している最中(ホームに実況を出す)。available = False は
+    -- この口を持たないサーバ(404)の印 — 実況もモーダルも出さない(fail-open)
+    , changesBaking : Bool
+    , changesAvailable : Bool
+
+    -- 「前と今」の見比べモーダル(Nothing = 閉じている)
+    , changesModal : Maybe ChangesModal
+
+    -- 「全場面を見る」モーダル(Nothing = 閉じている)
+    , scenes : Maybe Scenes
+
+    -- アトリエの「候補選び」(swap)。調整(Doc エディタ)は従来どおり Main が持つ
     , atelier : Atelier.Model
 
     -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
@@ -619,13 +628,31 @@ type alias WeightsAddState =
     }
 
 
+{-| 見比べモーダル。開いた瞬間は Loading(押した足でモーダルを出す)、
+知らせが届いたら 1 場面ずつ歩く。remaining の先頭がいま見せている場面。
+見るだけで承認は無い — 基準はサーバが既に追随させている。
+-}
+type ChangesModal
+    = ChangesLoading
+    | ChangesReady { remaining : List Journey.Change, total : Int }
+
+
+{-| 「全場面を見る」モーダル。gallery/ の一覧(読むだけ)。 -}
+type Scenes
+    = ScenesLoading
+    | ScenesReady (List String)
+
+
 init : () -> ( Model, Effect )
 init _ =
     request "health" (E.object [])
         { screen = Booting
         , tab = HomeTab
         , journey = Journey.init
-        , gallery = Gallery.init
+        , changesBaking = False
+        , changesAvailable = True
+        , changesModal = Nothing
+        , scenes = Nothing
         , atelier = Atelier.init
         , serverBase = ""
         , reqCounter = 0
@@ -774,7 +801,11 @@ type Msg
     | RunningGamesPollTick
     | TabClicked Tab
     | JourneyMsg Journey.Msg
-    | GalleryMsg Gallery.Msg
+    | ChangesPollTick
+    | ChangesNextClicked
+    | ChangesModalClosed
+    | ScenesOpened
+    | ScenesClosed
     | AtelierMsg Atelier.Msg
     | AtelierOverlayTick
     | AtelierBakePollTick
@@ -833,8 +864,13 @@ update msg model =
                     else
                         ( m2, fx )
 
-                Just Journey.ToGallery ->
-                    gotoTab GalleryTab m1
+                Just Journey.ToChanges ->
+                    -- 押した足でモーダル(読み込み中)を出し、知らせを取りに行く
+                    if m1.changesModal == Nothing then
+                        ( { m1 | changesModal = Just ChangesLoading }, requestInfo "journeyChanges" )
+
+                    else
+                        ( m1, Effect.none )
 
                 Just Journey.ToHome ->
                     gotoTab HomeTab m1
@@ -842,27 +878,38 @@ update msg model =
                 Nothing ->
                     ( m1, Effect.none )
 
-        GalleryMsg gmsg ->
-            let
-                ( gallery, out ) =
-                    Gallery.update gmsg model.gallery
+        ChangesPollTick ->
+            -- ホームに居る間の定期便。呼ぶだけで検査が 1 目盛り進み、
+            -- 描き出しの実況(baking)も乗ってくる
+            ( model, requestInfo "journeyChanges" )
 
-                m1 =
-                    { model | gallery = gallery }
-            in
-            case out of
-                Gallery.OutNone ->
-                    ( m1, Effect.none )
+        ChangesNextClicked ->
+            case model.changesModal of
+                Just (ChangesReady info) ->
+                    ( { model
+                        | changesModal =
+                            Just (ChangesReady { info | remaining = List.drop 1 info.remaining })
+                      }
+                    , Effect.none
+                    )
 
-                Gallery.OutBake target ->
-                    request "bakeStart"
-                        (E.object [ ( "target", E.string (Gallery.targetString target) ) ])
-                        m1
+                _ ->
+                    ( model, Effect.none )
 
-                Gallery.OutBless names ->
-                    request "blessFiles"
-                        (E.object [ ( "names", E.list E.string names ), ( "confirm", E.bool True ) ])
-                        m1
+        ChangesModalClosed ->
+            -- 見終わった時だけ既読を送る(読み込み中に閉じたなら知らせは立ったまま)
+            case model.changesModal of
+                Just (ChangesReady _) ->
+                    ( { model | changesModal = Nothing }, requestInfo "journeyChangesSeen" )
+
+                _ ->
+                    ( { model | changesModal = Nothing }, Effect.none )
+
+        ScenesOpened ->
+            ( { model | scenes = Just ScenesLoading }, requestInfo "galleryList" )
+
+        ScenesClosed ->
+            ( { model | scenes = Nothing }, Effect.none )
 
         AtelierMsg amsg ->
             let
@@ -909,7 +956,7 @@ update msg model =
                         m1
 
                 Atelier.OutEditFile file ->
-                    -- 候補カードの「✏️ 手直し」— そうこ(エディタ)でそのまま開く
+                    -- 候補カードの「✏️ 手直し」— 調整(エディタ)でそのまま開く
                     openFile file m1
 
                 Atelier.OutScaffold info ->
@@ -922,17 +969,33 @@ update msg model =
                         )
                         m1
 
+                Atelier.OutArchive candidate ->
+                    -- 候補カードの 🗃️ — アーカイブへ送る(消さない)
+                    request "atelierArchiveAdd"
+                        (E.object [ ( "candidate", E.string candidate ) ])
+                        m1
+
+                Atelier.OutRestore file ->
+                    -- アーカイブの「↩ 候補に戻す」— 候補の列へ戻す
+                    request "atelierRestore"
+                        (E.object [ ( "file", E.string file ) ])
+                        m1
+
                 Atelier.OutClosed ->
-                    -- 装着の祝いを閉じた。世界が変わったので候補と旅路を取り直し、
-                    -- つぎの一手(焼いて確認)へ誘う
+                    -- 装着の祝いを閉じた。世界が変わったので候補と旅路を取り直す。
+                    -- 見た目の検査は裏で自動に進み、変わればホームに知らせが立つ
                     let
                         ( m2, toastFx ) =
-                            showToast "つぎは『焼いて確認』です" m1
+                            showToast "見た目が変わると、ホームに知らせが届きます" m1
                     in
                     ( m2
                     , Effect.batch
                         [ toastFx
                         , requestInfo "atelierCandidates"
+
+                        -- 切り替えの前のバージョン(retired)が archive に積まれた —
+                        -- アーカイブのバッジ件数も追随させる
+                        , requestInfo "atelierArchive"
                         , requestInfo "gameStatus"
                         , requestInfo "journeyState"
                         ]
@@ -957,7 +1020,8 @@ update msg model =
             ( model, Effect.batch [ requestInfo "gameLog", requestInfo "gameStatus" ] )
 
         RunnerPollTick ->
-            -- 焼きの走行中だけ購読が生きている(subscriptions が Gallery.isPolling で判定)
+            -- プレビューの描き出し中だけ購読が生きている(subscriptions が
+            -- Atelier.isBaking で判定)。進捗パネルのログ末尾の材料
             ( model, requestInfo "runnerLog" )
 
         NewGameMsg nmsg ->
@@ -982,6 +1046,23 @@ update msg model =
                             ]
                         )
                         m1
+
+                NewGame.OutFetchFamilies ->
+                    -- ジャンル一覧(人気順)。404(旧サーバ)はプリセット入力に倒れる
+                    ( m1, requestInfo "genesisFamilies" )
+
+                NewGame.OutFetchGenesisPrompt info ->
+                    request "promptGenesis"
+                        (E.object
+                            [ ( "family", E.string info.family )
+                            , ( "direction", E.string info.direction )
+                            ]
+                        )
+                        m1
+
+                NewGame.OutCopyPrompt prompt ->
+                    -- クリップボードへ(JS 側で解決するローカルな封筒)
+                    request "copyClipboard" (E.object [ ( "text", E.string prompt ) ]) m1
 
         ProjectNewPollTick ->
             -- ひな形づくりを待つ間だけ購読が生きている(NewGame.isPolling が判定)
@@ -3582,81 +3663,83 @@ handleOkByKind env model =
         "journeyState" ->
             case D.decodeValue Journey.stateDecoder env.body of
                 Ok state ->
-                    ( { model | journey = Journey.loaded state }, Effect.none )
+                    -- 生まれたてのテンプレートかどうかはアトリエ(インタビューのチップの
+                    -- 出し分け)にも渡す — 育ったゲームにテンプレートの言葉を並べない
+                    ( { model
+                        | journey = Journey.loaded state
+                        , atelier = Atelier.setStarterFresh (Journey.starterFresh state) model.atelier
+                      }
+                    , Effect.none
+                    )
 
                 Err _ ->
                     -- 契約とずれた応答(旧サーバ等)も「準備中」の 1 枚に倒す(落とさない)
                     ( { model | journey = Journey.failed "契約とずれた応答" }, Effect.none )
 
-        "galleryList" ->
-            case D.decodeValue Gallery.listingDecoder env.body of
-                Ok listing ->
-                    ( { model | gallery = Gallery.gotList listing model.gallery }, Effect.none )
-
-                Err _ ->
-                    ( { model | gallery = Gallery.failed "契約とずれた応答" model.gallery }, Effect.none )
-
-        "galleryDiff" ->
-            case D.decodeValue Gallery.diffDecoder env.body of
-                Ok diff ->
-                    ( { model | gallery = Gallery.gotDiff diff model.gallery }, Effect.none )
-
-                Err _ ->
-                    -- 判定だけ欠けても一覧は出す(バッジが付かないだけ)
-                    ( model, Effect.none )
-
-        "galleryTargets" ->
-            case D.decodeValue Gallery.targetsDecoder env.body of
-                Ok targets ->
-                    ( { model | gallery = Gallery.gotTargets targets model.gallery }, Effect.none )
-
-                Err _ ->
-                    -- 契約とずれた応答は 3 択のまま(fail-open)
-                    ( model, Effect.none )
-
-        "bakeStart" ->
-            -- 202(受理)。409 は realApi が {busy:true} で ok に均しており、
-            -- どちらも「走っている」— 本当の姿は次のログ取得が教えてくれる
-            ( { model | gallery = Gallery.bakeAccepted model.gallery }, Effect.none )
-
-        "runnerLog" ->
-            case D.decodeValue Gallery.runnerLogDecoder env.body of
-                Ok log ->
+        "journeyChanges" ->
+            case D.decodeValue Journey.changesDecoder env.body of
+                Ok changes ->
                     let
-                        ( gallery, finished ) =
-                            Gallery.gotRunnerLog log model.gallery
+                        modal =
+                            case model.changesModal of
+                                Just ChangesLoading ->
+                                    if List.isEmpty changes.changes then
+                                        -- 変わった場面が無いなら空のモーダルは出さない
+                                        Nothing
+
+                                    else
+                                        Just
+                                            (ChangesReady
+                                                { remaining = changes.changes
+                                                , total = List.length changes.changes
+                                                }
+                                            )
+
+                                other ->
+                                    other
 
                         m1 =
-                            -- 走者は gallery の焼きとアトリエのプレビュー焼きで共用。
-                            -- 行はアトリエの進捗パネルにも写す
-                            { model
-                                | gallery = gallery
-                                , atelier = Atelier.gotRunnerLines log.lines model.atelier
-                            }
-                    in
-                    case finished of
-                        Just True ->
-                            -- 焼き上がり。一覧・判定・旅路を取り直してから静かに祝う
-                            let
-                                ( m2, toastFx ) =
-                                    showToast "焼き上がりました" m1
-                            in
-                            ( m2
-                            , Effect.batch
-                                [ toastFx
-                                , requestInfo "galleryList"
-                                , requestInfo "galleryDiff"
-                                , requestInfo "journeyState"
-                                ]
-                            )
+                            { model | changesBaking = changes.baking, changesModal = modal }
 
-                        _ ->
-                            -- 走行中(継続)か失敗(板がログの尻尾を見せる)
-                            ( m1, Effect.none )
+                        ( m2, toastFx ) =
+                            if model.changesModal == Just ChangesLoading && modal == Nothing then
+                                showToast "変わった場面はありません" m1
+
+                            else
+                                ( m1, Effect.none )
+                    in
+                    -- 描き出しが終わった瞬間に旅路を取り直す(知らせが立つ)
+                    if model.changesBaking && not changes.baking then
+                        ( m2, Effect.batch [ toastFx, requestInfo "journeyState" ] )
+
+                    else
+                        ( m2, toastFx )
 
                 Err _ ->
-                    -- 契約とずれた応答で回し続けても仕方ない(準備中に倒す)
-                    ( { model | gallery = Gallery.runnerStopped model.gallery }, Effect.none )
+                    -- 契約とずれた応答。読み込み中のモーダルだけ静かに畳む
+                    ( { model | changesModal = closeIfLoading model.changesModal }, Effect.none )
+
+        "journeyChangesSeen" ->
+            -- 既読が付いた。知らせのカードを最新に(提案が次へ進む)
+            ( model, requestInfo "journeyState" )
+
+        "galleryList" ->
+            case D.decodeValue scenesDecoder env.body of
+                Ok names ->
+                    ( { model
+                        | scenes =
+                            if model.scenes == Just ScenesLoading then
+                                Just (ScenesReady names)
+
+                            else
+                                model.scenes
+                      }
+                    , Effect.none
+                    )
+
+                Err _ ->
+                    -- 契約とずれた応答。モーダルは静かに畳む
+                    ( { model | scenes = Nothing }, Effect.none )
 
         "atelierCandidates" ->
             case D.decodeValue Atelier.candidatesDecoder env.body of
@@ -3666,6 +3749,37 @@ handleOkByKind env model =
                 Err _ ->
                     -- 契約とずれた応答(旧サーバ等)は候補ゾーンを出さないだけ
                     ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
+
+        "atelierArchive" ->
+            case D.decodeValue Atelier.archiveDecoder env.body of
+                Ok archive ->
+                    ( { model | atelier = Atelier.gotArchive archive model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.archiveFailed model.atelier }, Effect.none )
+
+        "atelierArchiveAdd" ->
+            -- 候補がアーカイブへ移った。カードが消え、バッジ件数が進む —
+            -- 候補とアーカイブの両方を取り直す
+            let
+                ( m1, toastFx ) =
+                    showToast "🗃️ アーカイブしました(いつでも候補に戻せます)"
+                        { model | atelier = Atelier.archiveSettled model.atelier }
+            in
+            ( m1
+            , Effect.batch [ toastFx, requestInfo "atelierCandidates", requestInfo "atelierArchive" ]
+            )
+
+        "atelierRestore" ->
+            -- 札が候補の列へ戻った。両方の一覧を取り直す
+            let
+                ( m1, toastFx ) =
+                    showToast "↩ 候補に戻しました"
+                        { model | atelier = Atelier.archiveSettled model.atelier }
+            in
+            ( m1
+            , Effect.batch [ toastFx, requestInfo "atelierCandidates", requestInfo "atelierArchive" ]
+            )
 
         "atelierSlots" ->
             case D.decodeValue Atelier.createSlotsDecoder env.body of
@@ -3692,13 +3806,13 @@ handleOkByKind env model =
                     ( { model | atelier = Atelier.gamePromptFailed "応答が読めませんでした" model.atelier }, Effect.none )
 
         "atelierCopy" ->
-            -- 複製できた。そうこ(エディタ)へ切り替え、できた写しをそのまま開く
+            -- 複製できた。調整(エディタ)へ切り替え、できた写しをそのまま開く
             let
                 m1 =
                     { model | atelier = Atelier.copyDone model.atelier }
 
                 ( m2, toastFx ) =
-                    showToast "atelier/ に複製しました。そうこで編集できます" m1
+                    showToast "atelier/ に複製しました。調整で編集できます" m1
             in
             case D.decodeValue (D.field "file" D.string) env.body of
                 Ok file ->
@@ -3734,6 +3848,16 @@ handleOkByKind env model =
                 Err _ ->
                     ( model, Effect.none )
 
+        "runnerLog" ->
+            -- /runner/log は /game/log と同じ形。プレビューの描き出しの
+            -- 進捗パネルへ流し込む(失敗の自動展開も Atelier の規則)
+            case D.decodeValue Atelier.gameLogDecoder env.body of
+                Ok log ->
+                    ( { model | atelier = Atelier.gotBakeLog log model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
         "promoteCandidate" ->
             let
                 retired =
@@ -3743,19 +3867,22 @@ handleOkByKind env model =
             -- オーバーレイの祝いへ(閉じた時に候補・旅路を取り直す)
             ( { model | atelier = Atelier.promoted retired model.atelier }, Effect.none )
 
-        "blessFiles" ->
-            let
-                count =
-                    D.decodeValue (D.field "blessed" (D.list D.string)) env.body
-                        |> Result.map List.length
-                        |> Result.withDefault 0
+        "genesisFamilies" ->
+            -- ジャンルえらびの札。読めない応答は従来のプリセット入力に倒す(fail-open)
+            case D.decodeValue NewGame.familiesDecoder env.body of
+                Ok families ->
+                    ( { model | newGame = NewGame.gotFamilies families model.newGame }, Effect.none )
 
-                ( m1, toastFx ) =
-                    showToast ("祝福しました(" ++ String.fromInt count ++ "件)")
-                        { model | gallery = Gallery.blessDone model.gallery }
-            in
-            -- golden が入れ替わったので判定と旅路を取り直す
-            ( m1, Effect.batch [ toastFx, requestInfo "galleryDiff", requestInfo "journeyState" ] )
+                Err _ ->
+                    ( { model | newGame = NewGame.familiesUnavailable model.newGame }, Effect.none )
+
+        "promptGenesis" ->
+            case D.decodeValue (D.field "prompt" D.string) env.body of
+                Ok prompt ->
+                    ( { model | newGame = NewGame.gotGenesisPrompt prompt model.newGame }, Effect.none )
+
+                Err _ ->
+                    ( { model | newGame = NewGame.genesisPromptFailed "応答が読めませんでした" model.newGame }, Effect.none )
 
         "projectNew" ->
             -- 202(受理)。応答の dir(産まれるゲームの絶対パス)を覚え、
@@ -3787,7 +3914,7 @@ handleOkByKind env model =
                             -- dir 不明(旧サーバ)は取り直しだけ(fail-open)
                             let
                                 ( m2, toastFx ) =
-                                    showToast "うまれました。ホームの『つぎの一手』からどうぞ" m1
+                                    showToast "うまれました。ホームの『次のやること』からどうぞ" m1
 
                                 ( m3, selectFx ) =
                                     case info.dir of
@@ -3831,7 +3958,10 @@ handleOkByKind env model =
                                     | screen = Editing
                                     , tab = HomeTab
                                     , journey = Journey.init
-                                    , gallery = Gallery.init
+                                    , changesBaking = False
+                                    , changesAvailable = True
+                                    , changesModal = Nothing
+                                    , scenes = Nothing
                                     , atelier = Atelier.init
                                     , title = result.title
                                     , root = result.dir
@@ -4390,29 +4520,22 @@ handleErrByKind env message model =
         "projects" ->
             ( { model | picker = updatePicker (\p -> { p | error = Just message }) model }, Effect.none )
 
-        "bakeStart" ->
-            -- 404(旧サーバ)は Gallery が「準備中」に倒す。それ以外は文言を見せる
-            let
-                m1 =
-                    { model | gallery = Gallery.bakeFailed message model.gallery }
-            in
-            if String.contains "404" message then
-                ( m1, Effect.none )
-
-            else
-                showToast ("焼けませんでした — " ++ message) m1
-
-        "runnerLog" ->
-            -- ログ口が無い・落ちた。回し続けても仕方ないので止める(準備中に倒す)
-            ( { model | gallery = Gallery.runnerStopped model.gallery }, Effect.none )
-
-        "blessFiles" ->
-            showToast ("祝福できませんでした — " ++ message) model
-
         "selectProject" ->
             ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
             , Effect.none
             )
+
+        "genesisFamilies" ->
+            -- 旧サーバ(404 等)。従来のプリセット入力に倒す(fail-open)
+            ( { model | newGame = NewGame.familiesUnavailable model.newGame }, Effect.none )
+
+        "promptGenesis" ->
+            -- 404(旧サーバ)は「準備中」、400 は日本語の理由をその場に出す
+            if String.contains "404" message then
+                ( { model | newGame = NewGame.genesisPromptFailed "準備中 — このサーバはまだ対応していません" model.newGame }, Effect.none )
+
+            else
+                ( { model | newGame = NewGame.genesisPromptFailed message model.newGame }, Effect.none )
 
         "projectNew" ->
             -- 404(旧サーバ)は「準備中」に倒す。400/409 は日本語の理由をその場に出す
@@ -4543,25 +4666,57 @@ handleErrByKind env message model =
             -- エンドポイント未実装のサーバでも赤エラーは出さない(「準備中」の 1 枚へ)
             ( { model | journey = Journey.failed message }, Effect.none )
 
+        "journeyChanges" ->
+            -- 404 = この口を持たないサーバ。実況もモーダルも出さないだけ(fail-open)
+            if String.contains "404" message then
+                ( { model
+                    | changesAvailable = False
+                    , changesBaking = False
+                    , changesModal = Nothing
+                  }
+                , Effect.none
+                )
+
+            else if model.changesModal == Just ChangesLoading then
+                -- 開こうとした矢先の失敗だけは理由を告げる(押しっぱなしにしない)
+                showToast ("見比べを開けませんでした — " ++ message)
+                    { model | changesModal = Nothing }
+
+            else
+                -- 定期便の一時的な失敗。次の拍がまた試す
+                ( model, Effect.none )
+
+        "journeyChangesSeen" ->
+            -- 既読が付けられなくても見る分には困らない。旅路だけ最新へ
+            ( model, requestInfo "journeyState" )
+
         "galleryList" ->
-            ( { model | gallery = Gallery.failed message model.gallery }, Effect.none )
-
-        "galleryDiff" ->
-            -- 判定だけ失敗しても一覧は出す(バッジが付かないだけ)
-            ( model, Effect.none )
-
-        "galleryTargets" ->
-            -- エンドポイント未実装のサーバ(404 等)。3 択のまま(fail-open)
-            ( model, Effect.none )
+            -- 一覧が取れないならモーダルは畳む(404 の旧サーバも同じ)
+            ( { model | scenes = Nothing }, Effect.none )
 
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
-            -- そうこ(エディタ)は生きる(fail-open)
+            -- 調整(エディタ)は生きる(fail-open)
             ( { model | atelier = Atelier.candidatesFailed model.atelier }, Effect.none )
 
         "atelierSlots" ->
             -- エンドポイント未実装のサーバ(404 等)。AI カードが準備中になるだけ
             ( { model | atelier = Atelier.slotsFailed model.atelier }, Effect.none )
+
+        "atelierArchive" ->
+            -- エンドポイント未実装のサーバ(404 等)。アーカイブの入口が
+            -- 出ないだけで、候補選びも調整も生きる(fail-open)
+            ( { model | atelier = Atelier.archiveFailed model.atelier }, Effect.none )
+
+        "atelierArchiveAdd" ->
+            -- 409(同名あり)等。⏳ を戻してから理由をそのまま告げる
+            showToast ("アーカイブへ送れませんでした — " ++ Atelier.cleanReason message)
+                { model | atelier = Atelier.archiveSettled model.atelier }
+
+        "atelierRestore" ->
+            -- 409(同じ名前の候補が既にある)等。⏳ を戻してから理由を告げる
+            showToast ("候補に戻せませんでした — " ++ Atelier.cleanReason message)
+                { model | atelier = Atelier.archiveSettled model.atelier }
 
         "promptAtelier" ->
             -- 理由(日本語)はボタンの近くに出す。生のエラー行は見せない
@@ -4606,6 +4761,11 @@ handleErrByKind env message model =
             -- ログ口が無い・落ちた。回し続けても仕方ない(status 側が真実を教える)
             ( { model | atelier = Atelier.gameStartFailed model.atelier }, Effect.none )
 
+        "runnerLog" ->
+            -- ログ口が無いサーバでも進捗パネルは一言だけで生きる(fail-open)。
+            -- ポーリングは baking が終われば自然に止まる
+            ( model, Effect.none )
+
         "promoteCandidate" ->
             -- 400 の理由(日本語)はボタンの近くに出す。生のエラー行は見せない
             ( { model | atelier = Atelier.promoteFailed message model.atelier }, Effect.none )
@@ -4647,7 +4807,7 @@ request kind payload model =
     )
 
 
-{-| 読み取り専用(ホーム・ギャラリー)の封筒。応答は kind で受けるので、
+{-| 読み取り専用(ホームの旅路・知らせ等)の封筒。応答は kind で受けるので、
 古い応答を id で捨てる採番(reqCounter)を進めない — 既存フロー(ファイルを
 開く・保存等)の封筒 id 並びを乱さないため。id 0 はどの往復とも衝突しない。
 -}
@@ -4656,17 +4816,49 @@ requestInfo kind =
     Effect.SendApi { id = 0, kind = kind, payload = E.object [] }
 
 
-{-| タブ移動。開くたびに中身を取り直す(ホーム = 提案、ギャラリー = 一覧と判定)—
-外(bake や祝福)で世界が進んでいても、開いた瞬間の最新を見せるため。
+{-| 読み込み中の見比べモーダルだけ畳む(場面を見ている最中は触らない)。 -}
+closeIfLoading : Maybe ChangesModal -> Maybe ChangesModal
+closeIfLoading modal =
+    if modal == Just ChangesLoading then
+        Nothing
+
+    else
+        modal
+
+
+{-| GET /gallery/list の gallery 節から場面名だけ引く(「全場面を見る」用)。
+節が欠けたサーバでも空で通す(fail-open)。
+-}
+scenesDecoder : D.Decoder (List String)
+scenesDecoder =
+    D.oneOf
+        [ D.field "gallery" (D.list (D.field "name" D.string))
+        , D.succeed []
+        ]
+
+
+{-| タブ移動。開くたびに中身を取り直す(ホーム = 提案と知らせ)—
+外で世界が進んでいても、開いた瞬間の最新を見せるため。
 -}
 gotoTab : Tab -> Model -> ( Model, Effect )
 gotoTab tab model =
     case tab of
         HomeTab ->
-            ( { model | tab = HomeTab }, requestInfo "journeyState" )
+            ( { model | tab = HomeTab }
+            , Effect.batch
+                (requestInfo "journeyState"
+                    :: (if model.changesAvailable then
+                            -- 知らせと描き出しの実況も開いた足で取る
+                            [ requestInfo "journeyChanges" ]
+
+                        else
+                            []
+                       )
+                )
+            )
 
         AtelierTab ->
-            -- 候補えらび(swap)の材料。無いサーバでは fail-open でゾーンごと出ない
+            -- 候補選び(swap)の材料。無いサーバでは fail-open でゾーンごと出ない
             ( { model | tab = AtelierTab }
             , Effect.batch
                 [ requestInfo "atelierCandidates"
@@ -4674,17 +4866,9 @@ gotoTab tab model =
 
                 -- 「つくる」の素材スロット(無いサーバでは AI カードが準備中になるだけ)
                 , requestInfo "atelierSlots"
-                ]
-            )
 
-        GalleryTab ->
-            ( { model | tab = GalleryTab }
-            , Effect.batch
-                [ requestInfo "galleryList"
-                , requestInfo "galleryDiff"
-
-                -- このプロジェクトが持つ焼きの的(無いサーバでは 3 択のまま)
-                , requestInfo "galleryTargets"
+                -- アーカイブの中身(無いサーバでは入口ごと出ないだけ)
+                , requestInfo "atelierArchive"
                 ]
             )
 
@@ -4711,22 +4895,23 @@ view model =
         Editing ->
             case model.tab of
                 HomeTab ->
-                    viewShell model (Html.map JourneyMsg (Journey.view model.journey))
-
-                GalleryTab ->
-                    viewShell model (Html.map GalleryMsg (Gallery.view model.serverBase model.gallery))
+                    viewShell model (viewHome model)
 
                 AtelierTab ->
-                    -- 2 モード: 候補が 1 件以上あれば「候補えらび」が主役
-                    -- (エディタもそのタブ群も描かない)。無ければ従来の「そうこ」
-                    if Atelier.showPicks model.atelier then
+                    -- 3 モード: 候補が 1 件以上あれば「候補選び」が主役
+                    -- (エディタもそのタブ群も描かない)。アーカイブは第 3 の
+                    -- 置き場。どちらでもなければ従来の「調整」(Doc エディタ)
+                    if Atelier.showArchiver model.atelier then
+                        viewShell model (Html.map AtelierMsg (Atelier.viewArchiver model.atelier))
+
+                    else if Atelier.showPicks model.atelier then
                         viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))
 
                     else
                         viewEditing model
 
 
-{-| ホーム・ギャラリーの外枠。アトリエ(viewEditing)の作業用ツールバーは
+{-| ホームの外枠。アトリエ(viewEditing)の作業用ツールバーは
 出さず、題名とナビだけの静かな上部にする。
 -}
 viewShell : Model -> Html Msg -> Html Msg
@@ -4756,8 +4941,189 @@ viewNavTabs tab =
     div [ HA.class "nav-tabs flex shrink-0 items-center gap-0.5" ]
         [ item HomeTab "ホーム"
         , item AtelierTab "アトリエ"
-        , item GalleryTab "ギャラリー"
         ]
+
+
+{-| ホーム。旅路のカードに、描き出しの実況と「全場面を見る」の入口を添える。
+見比べ・全場面のモーダルもここにぶら下がる。
+-}
+viewHome : Model -> Html Msg
+viewHome model =
+    div [ HA.class "home flex min-h-0 flex-1 flex-col overflow-y-auto pb-6" ]
+        [ Html.map JourneyMsg (Journey.view model.journey)
+        , viewDrawingLine model
+        , div [ HA.class "mt-auto flex justify-center pt-10" ]
+            [ button
+                [ HA.class "all-scenes-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HE.onClick ScenesOpened
+                ]
+                [ text
+                    (if model.scenes == Just ScenesLoading then
+                        "⏳ 全場面を見る"
+
+                     else
+                        "全場面を見る"
+                    )
+                ]
+            ]
+        , viewChangesModal model
+        , viewScenesModal model
+        ]
+
+
+{-| 描き出しの実況。エンジンが全場面を出力し直している間だけ、
+旅路のカードの下に小さく出す。
+-}
+viewDrawingLine : Model -> Html Msg
+viewDrawingLine model =
+    if model.changesBaking && model.changesAvailable then
+        div [ HA.class "drawing-line mx-auto mt-3 w-full max-w-lg px-4" ]
+            [ div [ HA.class "flex items-center gap-2 text-[11px] text-ink-faint" ]
+                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                , text "エンジンが全場面を描き出しています…"
+                ]
+            ]
+
+    else
+        text ""
+
+
+{-| 見比べモーダル。変わった場面を 1 件ずつ「前」と「今」で並べる。
+見るだけ(承認は無い — 基準はサーバが既に追随させている)。
+-}
+viewChangesModal : Model -> Html Msg
+viewChangesModal model =
+    case model.changesModal of
+        Nothing ->
+            text ""
+
+        Just ChangesLoading ->
+            changesDialog
+                [ div [ HA.class "flex items-center gap-2 text-xs text-ink-soft" ]
+                    [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                    , text "知らせを読み込んでいます…"
+                    ]
+                ]
+                [ button [ HA.class "btn", HE.onClick ChangesModalClosed ] [ text "閉じる" ] ]
+
+        Just (ChangesReady info) ->
+            case info.remaining of
+                [] ->
+                    text ""
+
+                current :: rest ->
+                    let
+                        position =
+                            info.total - List.length info.remaining + 1
+                    in
+                    changesDialog
+                        [ div [ HA.class "mb-3 flex items-center gap-2" ]
+                            [ span [ HA.class "badge bg-accent/20 text-accent" ]
+                                [ text (String.fromInt position ++ " / " ++ String.fromInt info.total) ]
+                            , span [ HA.class "min-w-0 flex-1 truncate font-mono text-[11px] text-ink-soft", HA.title current.name ]
+                                [ text current.name ]
+                            , span [ HA.class "shrink-0 text-[11px] text-ink-faint" ]
+                                [ text ("v" ++ String.fromInt current.ver) ]
+                            ]
+                        , div [ HA.class "flex flex-wrap gap-4" ]
+                            [ changePane "前" (galleryImageUrl model.serverBase "golden/archive" (baseName current.before))
+                            , changePane "今"
+                                (galleryImageUrl model.serverBase "golden" (baseName current.after)
+                                    -- 中身が入れ替わるファイルなので v でキャッシュを避ける
+                                    ++ ("&t=" ++ String.fromInt current.ver)
+                                )
+                            ]
+                        ]
+                        [ if List.isEmpty rest then
+                            button [ HA.class "btn btn-primary", HE.onClick ChangesModalClosed ] [ text "閉じる" ]
+
+                          else
+                            button [ HA.class "btn btn-primary", HE.onClick ChangesNextClicked ] [ text "次へ" ]
+                        ]
+
+
+changesDialog : List (Html Msg) -> List (Html Msg) -> Html Msg
+changesDialog body footer =
+    Html.node "sl-dialog"
+        [ HA.class "changes-dialog"
+        , HA.attribute "label" "見た目が変わりました"
+        , HA.attribute "open" ""
+        , HA.attribute "style" "--width: 56rem"
+        ]
+        (body
+            ++ [ div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ] footer ]
+        )
+
+
+changePane : String -> String -> Html msg
+changePane label url =
+    div [ HA.class "min-w-0 flex-1" ]
+        [ div [ HA.class "mb-1 text-[11px] font-semibold text-ink-faint" ] [ text label ]
+        , img [ HA.class "scene-shot w-full rounded border border-edge bg-well", HA.src url, HA.alt label ] []
+        ]
+
+
+{-| 全場面モーダル。gallery/ の絵を格子で眺めるだけ(操作は無い)。 -}
+viewScenesModal : Model -> Html Msg
+viewScenesModal model =
+    let
+        dialog body =
+            Html.node "sl-dialog"
+                [ HA.class "scenes-dialog"
+                , HA.attribute "label" "全場面"
+                , HA.attribute "open" ""
+                , HA.attribute "style" "--width: 64rem"
+                ]
+                (body
+                    ++ [ div [ HA.attribute "slot" "footer", HA.class "flex justify-end" ]
+                            [ button [ HA.class "btn", HE.onClick ScenesClosed ] [ text "閉じる" ] ]
+                       ]
+                )
+    in
+    case model.scenes of
+        Nothing ->
+            text ""
+
+        Just ScenesLoading ->
+            dialog
+                [ div [ HA.class "flex items-center gap-2 text-xs text-ink-soft" ]
+                    [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                    , text "読み込んでいます…"
+                    ]
+                ]
+
+        Just (ScenesReady names) ->
+            dialog
+                [ if List.isEmpty names then
+                    div [ HA.class "text-xs text-ink-soft" ] [ text "まだ場面がありません。" ]
+
+                  else
+                    div [ HA.class "grid max-h-[70vh] grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3 overflow-y-auto" ]
+                        (names
+                            |> List.map
+                                (\name ->
+                                    div [ HA.class "overflow-hidden rounded border border-edge bg-panel" ]
+                                        [ img
+                                            [ HA.class "scene-shot block w-full bg-well"
+                                            , HA.src (galleryImageUrl model.serverBase "gallery" name)
+                                            , HA.alt name
+                                            , HA.attribute "loading" "lazy"
+                                            ]
+                                            []
+                                        , div [ HA.class "truncate px-2 py-1.5 font-mono text-[10px] text-ink-soft", HA.title name ]
+                                            [ text name ]
+                                        ]
+                                )
+                        )
+                ]
+
+
+{-| 画像の URL。base(接続先サーバ)+ クエリで組む — vite dev(別オリジン)
+でも .app(同一オリジン = base 空)でも同じ式で通すため。
+-}
+galleryImageUrl : String -> String -> String -> String
+galleryImageUrl base dir name =
+    base ++ "/gallery/image?dir=" ++ Url.percentEncode dir ++ "&name=" ++ Url.percentEncode name
 
 
 {-| 候補プロジェクトの dir が、走っているゲームの cwd 一覧のどれかと同じ場所を
@@ -4881,20 +5247,16 @@ viewEditing model =
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
 
-                -- 「つくる」(創作の第一幕)— そうこモードでも最上段に置く。
+                -- 「つくる」(創作の第一幕)— 調整モードでも最上段に置く。
                 -- 候補ゼロならパネルが開いて出迎える(旅路の「つくる」の降り立ち先)
                 , div [ HA.class "shrink-0 px-3 pt-3" ]
                     [ Html.map AtelierMsg (Atelier.viewCreate model.atelier) ]
 
-                -- そうこモード中、候補がある時だけ「候補えらびに戻る」の細い帯
-                , if Atelier.hasCandidates model.atelier then
+                -- 調整モード中、行き先(候補選び / アーカイブ)がある時だけ
+                -- モード切替の細い帯
+                , if Atelier.hasCandidates model.atelier || Atelier.archiveAvailable model.atelier then
                     div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
-                        [ button
-                            [ HA.class "btn btn-ghost btn-mini"
-                            , HE.onClick (AtelierMsg Atelier.OpenPicks)
-                            ]
-                            [ text "🎨 候補えらびに戻る" ]
-                        ]
+                        [ Html.map AtelierMsg (Atelier.viewModeSwitch model.atelier) ]
 
                   else
                     text ""
@@ -6035,10 +6397,10 @@ viewFormPane model =
                 -- 代わりに、いま開いている Doc の絵(アトリエのプレビュー)をその場で見せる
                 viewPreviewCard model
                     ++ [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
-                            [ text "この種類はフォームになりません。ドット絵は アトリエ(候補づくり・装着)で扱うのが正です。ここでは中央のテキスト編集が使えます" ]
+                            [ text "この種類はフォームになりません。ドット絵は アトリエ(候補づくり・切り替え)で扱うのが正です。ここでは中央のテキスト編集が使えます" ]
                        , if info.previewBroken then
                             div [ HA.class "form-note mt-2 text-[11px] text-ink-faint" ]
-                                [ text "プレビュー未焼成(アトリエを開くと自動で焼けます)" ]
+                                [ text "プレビュー準備中(アトリエを開くと自動で描き出されます)" ]
 
                          else
                             img
@@ -8188,10 +8550,10 @@ subscriptions model =
           else
             Sub.none
 
-        -- 焼き(gallery / アトリエのプレビュー — 走者は共用)が走っている間だけ
-        -- ログを追う(止まったら購読ごと消える)
-        , if model.screen == Editing && (Gallery.isPolling model.gallery || Atelier.isBaking model.atelier) then
-            Time.every 1000 (\_ -> RunnerPollTick)
+        -- ホームに居る間、見た目の検査を進めて知らせと描き出しの実況を追う
+        -- (8 秒間隔)。この口を持たないサーバ(404)では回さない
+        , if model.screen == Editing && model.tab == HomeTab && model.changesAvailable then
+            Time.every 8000 (\_ -> ChangesPollTick)
 
           else
             Sub.none
@@ -8200,6 +8562,14 @@ subscriptions model =
         -- baking=false が届いた瞬間に購読ごと消え、その応答が最終形
         , if model.screen == Editing && Atelier.isBaking model.atelier then
             Time.every 2000 (\_ -> AtelierBakePollTick)
+
+          else
+            Sub.none
+
+        -- 描き出し中はアトリエ表示中だけログ末尾も追う(1 秒間隔)。
+        -- 進捗パネル(インジケーター+一言+末尾数行)の材料
+        , if model.screen == Editing && model.tab == AtelierTab && Atelier.isBaking model.atelier then
+            Time.every 1000 (\_ -> RunnerPollTick)
 
           else
             Sub.none

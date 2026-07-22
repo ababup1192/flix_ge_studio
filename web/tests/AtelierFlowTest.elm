@@ -213,6 +213,84 @@ suite =
                     in
                     ( Atelier.showPicks opened, Atelier.showPicks back )
                         |> Expect.equal ( False, True )
+            , test "アーカイバを開くと第 3 モード(候補えらびでも倉庫でもない)" <|
+                \_ ->
+                    let
+                        opened =
+                            begin withCandidates
+                                |> step Atelier.OpenArchiver
+                                |> Tuple.first
+                    in
+                    ( Atelier.showArchiver opened, Atelier.showPicks opened )
+                        |> Expect.equal ( True, False )
+            ]
+        , describe "アーカイバ(何も捨てない置き場)"
+            [ test "🗃 でアーカイブ送りの便りが飛び、飛行中の二度押しは送らない" <|
+                \_ ->
+                    let
+                        first =
+                            begin withCandidates
+                                |> step (Atelier.ArchiveClicked "atelier/villager.a.sprite.json")
+
+                        second =
+                            first |> step (Atelier.ArchiveClicked "atelier/villager.a.sprite.json")
+                    in
+                    ( Tuple.second first, Tuple.second second )
+                        |> Expect.equal
+                            ( Atelier.OutArchive "atelier/villager.a.sprite.json", Atelier.OutNone )
+            , test "「↩ 復活」で restore の便りが飛び、応答(成功も失敗も)で ⏳ が畳まれて次を送れる" <|
+                \_ ->
+                    let
+                        first =
+                            begin withCandidates
+                                |> step (Atelier.RestoreClicked "atelier/archive/villager.b.sprite.json")
+
+                        settled =
+                            Atelier.archiveSettled (Tuple.first first)
+                    in
+                    ( Tuple.second first
+                    , first |> step (Atelier.RestoreClicked "atelier/archive/x.json") |> Tuple.second
+                    , Atelier.update (Atelier.RestoreClicked "atelier/archive/x.json") settled |> Tuple.second
+                    )
+                        |> Expect.equal
+                            ( Atelier.OutRestore "atelier/archive/villager.b.sprite.json"
+                            , Atelier.OutNone
+                            , Atelier.OutRestore "atelier/archive/x.json"
+                            )
+            , test "「この版に戻す」は既存の promote(candidate = 版札、アーカイブの札は消えない約束)" <|
+                \_ ->
+                    begin (stopped withCandidates)
+                        |> step (Atelier.RollbackClicked "assets/block2.sprite.json" "atelier/archive/block2.v3.sprite.json")
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutPromote
+                                { candidate = "atelier/archive/block2.v3.sprite.json"
+                                , slot = "assets/block2.sprite.json"
+                                }
+                            )
+            , test "アーカイバ一覧のデコーダ(JSON→型、null の note は Nothing)" <|
+                \_ ->
+                    D.decodeString Atelier.archiveDecoder
+                        """{"history":[{"file":"atelier/archive/block2.v3.sprite.json","slot":"assets/block2.sprite.json","ver":3,"note":null,"mtime":5}],"candidates":[{"file":"atelier/archive/villager.b.sprite.json","entityId":"villager","note":"丸み","mtime":4}]}"""
+                        |> Expect.equal
+                            (Ok
+                                { history =
+                                    [ { file = "atelier/archive/block2.v3.sprite.json"
+                                      , slot = "assets/block2.sprite.json"
+                                      , ver = 3
+                                      , note = Nothing
+                                      , mtime = 5
+                                      }
+                                    ]
+                                , candidates =
+                                    [ { file = "atelier/archive/villager.b.sprite.json"
+                                      , entityId = Just "villager"
+                                      , note = Just "丸み"
+                                      , mtime = 4
+                                      }
+                                    ]
+                                }
+                            )
             ]
         , describe "ゲーム起動の進み(ポーリングとログ)"
             [ test "起動を押した瞬間からポーリングが回り、二度押しは送らない(ボタン無効の規則)" <|

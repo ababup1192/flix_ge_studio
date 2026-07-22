@@ -1,4 +1,4 @@
-// Gallery — 焼き上がった絵 (gallery/ debug/) とお手本 (golden/) を読むだけの窓口。
+// Gallery — 描き出した絵 (gallery/ debug/) と基準 (golden/) を読むだけの窓口。
 // 一覧・画像・音・差分 (golden とのバイト比較) をエディタ画面へ配る。
 // 書き込みは一切しない。ディレクトリが無くても止めず、空の一覧で返す (fail-open)。
 
@@ -11,7 +11,7 @@ mod Gallery {
     use Util.Json.Json.{JObject, JArray, JString, JNumber}
 
     /// 画像を配ってよいディレクトリの白名前簿。ここに無い dir 指定は断る。
-    pub def imageDirs(): Set[String] = Set#{"gallery", "golden", "debug"}
+    pub def imageDirs(): Set[String] = Set#{"gallery", "golden", "golden/archive", "debug"}
 
     /// ブラウザから来るファイル名の門番。区切りや `..` を含む名前はプロジェクトの
     /// 別の場所を指せてしまうので、名前 1 語だけを通す。
@@ -100,15 +100,7 @@ mod Gallery {
                 (name, diffStatus(inGallery, inGolden, sameBytes))
             })
 
-    /// GET /gallery/diff の本文。
-    pub def diffJson(dir: String): Json \ IO =
-        let items = diffItemsOf(dir) |> List.map(item -> {
-            let (name, status) = item;
-            JObject(Map#{"name" => JString(name), "status" => JString(status)})
-        });
-        JObject(Map#{"items" => JArray(List.toVector(items))})
-
-    /// ディスク上の gallery/ golden/ を見比べる。diff の枚数は Journey も使う。
+    /// ディスク上の gallery/ golden/ を見比べる。Changes の自動追随と Journey が使う。
     pub def diffItemsOf(dir: String): List[(String, String)] \ IO =
         let galleryNames = listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#name);
         let goldenNames = listNamed(suffix = ".png", dir, "golden") |> List.map(entry -> entry#name);

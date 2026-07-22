@@ -250,4 +250,60 @@ suite =
                         |> Expect.equal
                             (Ok { running = False, exitCode = Nothing, lines = [] })
             ]
+        , describe "家族えらび(genesis)"
+            [ test "/genesis/families の橋渡し: 並びはそのまま、id 以外の欠けは空文字に倒す" <|
+                \_ ->
+                    D.decodeString NewGame.familiesDecoder
+                        """{"families":[
+                             {"id":"action","name":"アクション","verb":"走って、跳んで、壊す","includes":"ブロック崩し","controls":"←→ + スペース","starter":"templates/game-starter"},
+                             {"id":"free"}
+                           ]}"""
+                        |> Expect.equal
+                            (Ok
+                                [ { id = "action", name = "アクション", verb = "走って、跳んで、壊す", includes = "ブロック崩し", controls = "←→ + スペース", starter = "templates/game-starter" }
+                                , { id = "free", name = "", verb = "", includes = "", controls = "", starter = "" }
+                                ]
+                            )
+            , test "starter 無しの家族を選ぶと、その場で公式プロンプトを取りに行く" <|
+                \_ ->
+                    begin
+                        |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
+                        |> step (NewGame.FamilyChosen "rpg")
+                        |> Tuple.second
+                        |> Expect.equal
+                            (NewGame.OutFetchGenesisPrompt { family = "rpg", direction = "" })
+            , test "free は言葉(direction)が必須 — 空では飛ばず、書けば飛ぶ" <|
+                \_ ->
+                    let
+                        chosen =
+                            begin
+                                |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
+                                |> step (NewGame.FamilyChosen "free")
+
+                        empty =
+                            chosen
+                                |> step NewGame.FreePromptRequested
+                                |> Tuple.second
+
+                        written =
+                            chosen
+                                |> step (NewGame.FreeDirectionEdited " 猫が屋根を跳びわたる ")
+                                |> step NewGame.FreePromptRequested
+                                |> Tuple.second
+                    in
+                    ( empty, written )
+                        |> Expect.equal
+                            ( NewGame.OutNone
+                            , NewGame.OutFetchGenesisPrompt { family = "free", direction = "猫が屋根を跳びわたる" }
+                            )
+            ]
         ]
+
+
+{-| 家族の札のサンプル(starter 有り / 無し / free)。 -}
+genesisFamilies : List NewGame.Family
+genesisFamilies =
+    [ { id = "action", name = "アクション", verb = "走って、跳んで、壊す", includes = "ブロック崩し", controls = "←→ + スペース", starter = "templates/game-starter" }
+    , { id = "rpg", name = "RPG", verb = "歩いて、話して、強くなる", includes = "剣と探索", controls = "←→↑↓ + 話す", starter = "" }
+    , { id = "free", name = "フリージャンル", verb = "言葉から始める", includes = "ここにない、全部", controls = "あなたが決める", starter = "" }
+    ]

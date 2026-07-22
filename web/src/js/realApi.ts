@@ -32,6 +32,27 @@ export function realApi(base: string): Api {
     if (!res.ok) await raiseHttpError(res, url);
     return res.json();
   };
+  // 400/409 が {ok:false, error:{message:日本語}} の契約の口。理由だけを
+  // " — " の後ろに載せて投げる(Elm 側が理由だけ表示する)
+  const sendJsonReason = async (method: string, url: string, body: unknown) => {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const failed = await res.json();
+        const msg = failed?.error?.message ?? failed?.error;
+        if (typeof msg === "string") detail = " — " + msg;
+      } catch {
+        // JSON でない失敗応答はステータスだけで伝える
+      }
+      throw new Error(`HTTP ${res.status}: ${url}${detail}`);
+    }
+    return res.json();
+  };
 
   return {
     async handle(kind: string, payload: any): Promise<unknown> {
@@ -85,30 +106,18 @@ export function realApi(base: string): Api {
         }
         case "journeyState":
           return getJson(`${base}/journey/state`);
+        case "journeyChanges":
+          // 呼ぶたびに見た目の検査が 1 目盛り進む。404(この口を持たないサーバ)は
+          // Elm 側が実況とモーダルを出さないだけに倒す
+          return getJson(`${base}/journey/changes`);
+        case "journeyChangesSeen":
+          return sendJson("POST", `${base}/journey/changes/seen`, payload);
         case "galleryList":
+          // 「全場面を見る」の一覧(読むだけ)
           return getJson(`${base}/gallery/list`);
-        case "galleryDiff":
-          return getJson(`${base}/gallery/diff`);
-        case "galleryTargets":
-          // プロジェクトが持つ焼きの的。404(旧サーバ)は Elm 側が 3 択に倒す
-          return getJson(`${base}/gallery/targets`);
-        case "bakeStart": {
-          // 409(既に走っている)は失敗ではなく「走っている」の便り。
-          // {busy:true} の ok 応答に均して Elm へ渡す(ログ取得が本当の姿を教える)
-          const url = `${base}/gallery/bake`;
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          if (res.status === 409) return { busy: true };
-          if (!res.ok) await raiseHttpError(res, url);
-          return res.json();
-        }
         case "runnerLog":
+          // プレビューの描き出しのログ(進捗パネルの末尾数行の材料)
           return getJson(`${base}/runner/log`);
-        case "blessFiles":
-          return sendJson("POST", `${base}/gallery/bless`, payload);
         case "atelierCandidates":
           return getJson(`${base}/atelier/candidates`);
         case "promoteCandidate": {
@@ -135,6 +144,14 @@ export function realApi(base: string): Api {
         }
         case "atelierSlots":
           return getJson(`${base}/atelier/slots`);
+        case "atelierArchive":
+          return getJson(`${base}/atelier/archive`);
+        case "atelierArchiveAdd":
+          // 409(同名あり)は日本語の理由が契約
+          return sendJsonReason("POST", `${base}/atelier/archive`, payload);
+        case "atelierRestore":
+          // 409(同じ名前の候補が既にある)は日本語の理由が契約
+          return sendJsonReason("POST", `${base}/atelier/restore`, payload);
         case "promptAtelier": {
           const q = new URLSearchParams({
             slot: String(payload.slot),
@@ -172,6 +189,16 @@ export function realApi(base: string): Api {
             throw new Error(`HTTP ${res.status}: ${url}${detail}`);
           }
           return res.json();
+        }
+        case "genesisFamilies":
+          // ジャンル一覧。404(旧サーバ)は Elm 側がプリセット入力に倒す
+          return getJson(`${base}/genesis/families`);
+        case "promptGenesis": {
+          // 公式プロンプト。free だけ direction 必須(400 は日本語の理由が契約)
+          const q = new URLSearchParams({ family: String(payload.family) });
+          const direction = String(payload.direction ?? "");
+          if (direction !== "") q.set("direction", direction);
+          return getJson(`${base}/prompt/genesis?${q}`);
         }
         case "projectNew":
           // 202 が契約。400/409 は {ok:false, error:日本語} — raiseHttpError が

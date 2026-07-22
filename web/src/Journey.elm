@@ -1,21 +1,25 @@
 module Journey exposing
-    ( Model
+    ( Change
+    , Changes
+    , Model
     , Msg(..)
     , Nav(..)
     , State
+    , changesDecoder
     , failed
     , init
     , loaded
+    , starterFresh
     , stateDecoder
     , suggestionId
     , update
     , view
     )
 
-{-| ホーム(旅路)画面。GET /journey/state の「つぎの一手」1 枚と道しるべを出す。
+{-| ホーム(旅路)画面。GET /journey/state の「次のやること」1 枚と道しるべを出す。
 
 サーバ往復は持たない(封筒の発行・受領は Main の request / handleOk が一元管理)。
-ここは応答の読み取り(stateDecoder)と、読み取った状態の見せ方だけ。
+ここは応答の読み取り(stateDecoder / changesDecoder)と、読み取った状態の見せ方だけ。
 エンドポイント未実装のサーバでも画面を落とさない — 失敗は「準備中」の 1 枚に倒す。
 
 -}
@@ -26,12 +30,12 @@ import Html.Events as HE
 import Json.Decode as D
 
 
-{-| 提案の行き先。サーバの文字列(atelier|gallery|home)を型に起こす —
+{-| 提案の行き先。サーバの文字列(atelier|changes|home)を型に起こす —
 知らない文字列はホーム留まり(押しても壊れない)。
 -}
 type Nav
     = ToAtelier
-    | ToGallery
+    | ToChanges
     | ToHome
 
 
@@ -45,8 +49,10 @@ type alias Suggestion =
 
 type alias Checks =
     { atelierCandidates : Int
-    , staleGallery : Bool
-    , diffCount : Int
+
+    -- 生まれたてのテンプレート(sample.kind.json が残っている)か。
+    -- 「テンプレートのまま」前提の UI(インタビューのチップ等)の出し分けに使う
+    , hasStarterDoc : Bool
     }
 
 
@@ -54,6 +60,12 @@ type alias State =
     { suggestion : Suggestion
     , checks : Checks
     }
+
+
+{-| この状態は「生まれたてのテンプレート」か。Main が Atelier へ渡す(チップの出し分け)。 -}
+starterFresh : State -> Bool
+starterFresh state =
+    state.checks.hasStarterDoc
 
 
 {-| skipped は「今日はこの提案に乗らない」の印。次の応答が来たら新しい提案として
@@ -138,8 +150,8 @@ navFrom raw =
         "atelier" ->
             ToAtelier
 
-        "gallery" ->
-            ToGallery
+        "changes" ->
+            ToChanges
 
         _ ->
             ToHome
@@ -147,10 +159,48 @@ navFrom raw =
 
 checksDecoder : D.Decoder Checks
 checksDecoder =
-    D.map3 Checks
+    D.map2 Checks
         (D.field "atelierCandidates" D.int)
-        (D.field "staleGallery" D.bool)
-        (D.field "diffCount" D.int)
+        -- 無いサーバでは「テンプレートではない」に倒す(fail-open)
+        (D.oneOf [ D.field "hasStarterDoc" D.bool, D.succeed False ])
+
+
+{-| GET /journey/changes — 自動検査の知らせ。baking は描き出しが走っている最中、
+changes は「前と今」を見比べられる場面の列。
+-}
+type alias Changes =
+    { baking : Bool
+    , seen : Bool
+    , changes : List Change
+    }
+
+
+{-| 変わった場面 1 件。before/after はプロジェクト相対パス
+(golden/archive/<場面>.vN.png / golden/<場面>.png)。
+-}
+type alias Change =
+    { name : String
+    , ver : Int
+    , before : String
+    , after : String
+    }
+
+
+changesDecoder : D.Decoder Changes
+changesDecoder =
+    D.map3 Changes
+        (D.field "baking" D.bool)
+        (D.oneOf [ D.field "seen" D.bool, D.succeed True ])
+        (D.oneOf [ D.field "changes" (D.list changeDecoder), D.succeed [] ])
+
+
+changeDecoder : D.Decoder Change
+changeDecoder =
+    D.map4 Change
+        (D.field "name" D.string)
+        (D.field "ver" D.int)
+        (D.field "before" D.string)
+        (D.field "after" D.string)
 
 
 
@@ -162,11 +212,11 @@ view model =
     div [ HA.class "journey mx-auto mt-10 w-full max-w-lg px-4" ]
         (case model of
             Loading ->
-                [ quietCard "読み込み中…" "つぎの一手を考えています。" ]
+                [ quietCard "読み込み中…" "次のやることを考えています。" ]
 
             Failed _ ->
                 -- サーバがまだ /journey/state を持たない段階でも画面は生かす
-                [ quietCard "準備中" "旅路の案内はまだ使えません。アトリエやギャラリーは開けます。" ]
+                [ quietCard "準備中" "旅路の案内はまだ使えません。アトリエは開けます。" ]
 
             Loaded info ->
                 if info.skipped then
@@ -191,7 +241,7 @@ viewSuggestion state =
         [ div [ HA.class "flex items-start gap-3" ]
             [ span [ HA.class "journey-icon text-3xl leading-none" ] [ text (iconFor s.id) ]
             , div [ HA.class "min-w-0 flex-1" ]
-                [ div [ HA.class "text-[11px] text-ink-faint" ] [ text "つぎの一手" ]
+                [ div [ HA.class "text-[11px] text-ink-faint" ] [ text "次のやること" ]
                 , div [ HA.class "mt-0.5 text-sm font-semibold text-ink" ] [ text s.title ]
                 , div [ HA.class "mt-1.5 text-xs leading-relaxed text-ink-soft" ] [ text s.detail ]
                 , viewChecksLine state.checks
@@ -209,31 +259,12 @@ viewSuggestion state =
 {-| 提案の根拠を 1 行で添える(空なら出さない)。数字が見えると提案に納得しやすい。 -}
 viewChecksLine : Checks -> Html msg
 viewChecksLine checks =
-    let
-        parts =
-            List.concat
-                [ if checks.atelierCandidates > 0 then
-                    [ "候補 " ++ String.fromInt checks.atelierCandidates ++ " 件" ]
-
-                  else
-                    []
-                , if checks.diffCount > 0 then
-                    [ "見た目の差分 " ++ String.fromInt checks.diffCount ++ " 件" ]
-
-                  else
-                    []
-                , if checks.staleGallery then
-                    [ "ギャラリーが古くなっています" ]
-
-                  else
-                    []
-                ]
-    in
-    if List.isEmpty parts then
-        text ""
+    if checks.atelierCandidates > 0 then
+        div [ HA.class "mt-1.5 text-[11px] text-ink-faint" ]
+            [ text ("候補 " ++ String.fromInt checks.atelierCandidates ++ " 件") ]
 
     else
-        div [ HA.class "mt-1.5 text-[11px] text-ink-faint" ] [ text (String.join " ・ " parts) ]
+        text ""
 
 
 quietCard : String -> String -> Html msg
@@ -250,17 +281,14 @@ iconFor id =
         "pick" ->
             "🎨"
 
-        "bake" ->
-            "🔥"
-
-        "bless" ->
-            "✨"
+        "changed" ->
+            "🔔"
 
         "create" ->
             "🌱"
 
         "design" ->
-            "🕹"
+            "🕹️"
 
         _ ->
             "🧭"
@@ -272,8 +300,8 @@ goLabel nav =
         ToAtelier ->
             "アトリエへ"
 
-        ToGallery ->
-            "ギャラリーへ"
+        ToChanges ->
+            "見比べる"
 
         ToHome ->
             "はじめる"
@@ -292,18 +320,15 @@ viewTrail sid =
                 "pick" ->
                     Just 0
 
-                "bake" ->
+                "changed" ->
                     Just 2
-
-                "bless" ->
-                    Just 3
 
                 _ ->
                     -- "create" と未知の id: どのステップも点けない
                     Nothing
 
         steps =
-            [ "候補を選ぶ", "装着", "焼いて確認", "祝福", "完了" ]
+            [ "候補を選ぶ", "使う", "変わったら知らせ" ]
 
         done index =
             case current of

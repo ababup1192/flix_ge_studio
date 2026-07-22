@@ -86,7 +86,7 @@ mod Scaffold {
                 "sample" => JObject(Map#{
                     "kind"    => JString("field"),
                     "type"    => JString("float"),
-                    "label"   => JString("見本の値(改名して使う)"),
+                    "label"   => JString("例の値(改名して使う)"),
                     "order"   => JNumber(JsonCodec.intToBd(1)),
                     "min"     => JNumber(JsonCodec.intToBd(0)),
                     "max"     => JNumber(JsonCodec.intToBd(100)),
@@ -95,7 +95,7 @@ mod Scaffold {
             })
         })
 
-    /// データファイルの種。スキーマの見本フィールドの default と同じ値を持って生まれる。
+    /// データファイルの種。スキーマの例のフィールドの default と同じ値を持って生まれる。
     pub def docSeed(title: String): Json =
         JObject(Map#{
             "version" => JNumber(JsonCodec.intToBd(1)),

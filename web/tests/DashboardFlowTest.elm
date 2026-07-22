@@ -220,8 +220,8 @@ booted =
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resourcesBody
         |> ProgramTest.clickButton "アトリエ"
-        -- アトリエは開くたび候補えらび(swap)の材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots" ]
+        -- アトリエは開くたび候補えらび(swap)とアーカイバの材料を取り直す(採番外 id 0)
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
 
 
 {-| ボードを開いて uses 全ファイル(4〜7)が届いた状態。 -}

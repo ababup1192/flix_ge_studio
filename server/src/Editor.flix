@@ -64,13 +64,15 @@ mod Editor {
         let game = Game.make();
         // 新しいゲームづくり (make new-game) 用の走行権。焼き・ゲーム起動と同時でも走れる。
         let scaffold = Runner.make();
+        // 検査と基準の自動追随の記録 (見た目が変わった知らせ)。
+        let changes = Changes.make();
         let webRoot = webRootFromEnv();
         let server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         discard server.createContext("/", new HttpHandler {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, scaffold, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, changes, webRoot, exchange)
                 } catch {
                     case e: Exception => {
                         let message = e.toString();
@@ -98,7 +100,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, scaffold: Runner.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, scaffold: Runner.State, changes: Changes.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -109,6 +111,13 @@ mod Editor {
             case ("GET", "/projects")  => handleProjects(selection, exchange)
             case ("POST", "/project")  => handleSelectProject(selection, readBody(exchange), exchange)
             case ("GET", "/running-games") => handleRunningGames(exchange)
+            // 「新しいゲームをはじめる」の家族一覧と公式プロンプト。
+            // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
+            case ("GET", "/genesis/families") => sendJson(200, Genesis.familiesJson(), exchange)
+            case ("GET", "/prompt/genesis") => {
+                let (status, json) = Genesis.promptJson(params);
+                sendJson(status, json, exchange)
+            }
             // 新しいゲームづくりはプロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("POST", "/projects/new") => {
                 let (status, json) = Scaffold.startNew(scaffold, readBody(exchange));
@@ -147,27 +156,34 @@ mod Editor {
                 handleGalleryImage(dir, params, exchange))
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
-            case ("GET", "/gallery/diff") => withProject(selection, exchange, dir ->
-                sendJson(200, Gallery.diffJson(dir), exchange))
-            case ("GET", "/gallery/targets") => withProject(selection, exchange, dir ->
-                sendJson(200, Runner.targetsJson(dir), exchange))
-            case ("GET", "/journey/state") => withProject(selection, exchange, dir ->
-                sendJson(200, Journey.stateJson(dir), exchange))
-            case ("POST", "/gallery/bake") => withProject(selection, exchange, dir -> {
-                let (status, json) = Runner.startBake(runner, dir, readBody(exchange));
+            // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
+            case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
+                discard Changes.pump(changes, runner, dir);
+                sendJson(200, Journey.stateJson(dir, Changes.unseenCount(changes, dir)), exchange)
+            })
+            case ("GET", "/journey/changes") => withProject(selection, exchange, dir ->
+                sendJson(200, Changes.pump(changes, runner, dir), exchange))
+            case ("POST", "/journey/changes/seen") => withProject(selection, exchange, dir -> {
+                let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
             })
             case ("GET", "/runner/log") => sendJson(200, Runner.logJson(runner), exchange)
-            case ("POST", "/gallery/bless") => withProject(selection, exchange, dir -> {
-                let (status, json) = Runner.bless(dir, readBody(exchange));
-                sendJson(status, json, exchange)
-            })
             case ("GET", "/atelier/candidates") => withProject(selection, exchange, dir ->
                 sendJson(200, Atelier.candidatesJson(runner, dir), exchange))
             case ("GET", "/atelier/preview") => withProject(selection, exchange, dir ->
                 handleAtelierPreview(dir, params, exchange))
             case ("POST", "/atelier/promote") => withProject(selection, exchange, dir -> {
                 let (status, json) = Atelier.promote(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/atelier/archive") => withProject(selection, exchange, dir ->
+                sendJson(200, Atelier.archiveJson(dir), exchange))
+            case ("POST", "/atelier/archive") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.archive(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/atelier/restore") => withProject(selection, exchange, dir -> {
+                let (status, json) = Atelier.restore(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("GET", "/atelier/slots") => withProject(selection, exchange, dir ->

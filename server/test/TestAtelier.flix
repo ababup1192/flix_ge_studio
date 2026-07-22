@@ -19,14 +19,40 @@ mod TestAtelier {
              Atelier.isCompatible(None, "spring.theme.json", None, "villager.sprite.json"),
              Atelier.isCompatible(None, "autumn.theme.json", None, "summer.a.theme.json")))
 
-    /// 退避の名前: "<base>.prev-N.<kind>.json"。多段の base も kind の手前で切る。
+    /// バージョンの名前: "<base>.vN.<kind>.json"。多段の base も kind の手前で切る。
+    /// 名前からスロット名へも戻せる (アーカイブの「vN に戻す」の宛先)。
     @Test
-    def testRetiredName(): Unit \ Assert =
+    def testArchivedName(): Unit \ Assert =
         Assert.assertEq(
-            expected = ("prologue.prev-1.sprite.json", "water.prev-3.shader.json", "plain.prev-2.json"),
-            (Atelier.retiredName("prologue.sprite.json", 1),
-             Atelier.retiredName("water.shader.json", Atelier.prevKeep()),
-             Atelier.retiredName("plain.json", 2)))
+            expected = ("prologue.v1.sprite.json", "water.v12.shader.json", "plain.v2.json",
+                        "prologue.sprite.json"),
+            (Atelier.archivedName("prologue.sprite.json", 1),
+             Atelier.archivedName("water.shader.json", 12),
+             Atelier.archivedName("plain.json", 2),
+             Atelier.slotNameOfVersion("prologue.v3.sprite.json")))
+
+    /// バージョン番号: 自分のスロットの最大 + 1。他スロットの物・候補名は数えない。
+    /// 無ければ v1 から。歯抜け (v1, v3) でも最大基準で v4。
+    @Test
+    def testNextVer(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (1, 4, 2),
+            (Atelier.nextVerFrom(Nil, "prologue.sprite.json"),
+             Atelier.nextVerFrom("prologue.v1.sprite.json" :: "prologue.v3.sprite.json"
+                 :: "water.v9.shader.json" :: "villager.a.sprite.json" :: Nil,
+                 "prologue.sprite.json"),
+             Atelier.nextVerFrom("water.v1.shader.json" :: Nil, "water.shader.json")))
+
+    /// バージョンの見分け: v数字 の節がある名前だけ (候補名 villager.a や v だけの節は違う)。
+    @Test
+    def testIsVersionName(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, true, false, false, false),
+            (Atelier.isVersionName("prologue.v1.sprite.json"),
+             Atelier.isVersionName("plain.v12.json"),
+             Atelier.isVersionName("villager.a.sprite.json"),
+             Atelier.isVersionName("prologue.sprite.json"),
+             Atelier.isVersionName("x.v.json")))
 
     /// 退避ファイルの見分け: prev-数字 の節だけが退避 (似た名前・数字なしは違う)。
     @Test

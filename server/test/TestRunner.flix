@@ -1,4 +1,4 @@
-// TestRunner — 焼き係のルールだけ固定する: 走らせてよい対象・祝福してよい名前・ログの刈り込み。
+// TestRunner — 焼き係のルールだけ固定する: 走らせてよい対象・ログの刈り込み。
 // プロセス起動や HTTP は curl での通し確認に任せ、ここは判定だけを見る。
 
 mod TestRunner {
@@ -26,16 +26,6 @@ mod TestRunner {
              Runner.targetsFromMakefileText("bake:\n\t@echo hi\n# gallery-prologue:\n\tgallery-prologue: x\ngallery-sounds:\n"),
              Runner.targetsFromMakefileText("bake:\nrebake: bake\nbakery:\n"),
              Runner.targetsFromMakefileText("")))
-
-    /// 祝福の名前は「安全な 1 語」かつ .png のみ。経路またぎ・別拡張子は弾く。
-    @Test
-    def testIsBlessName(): Unit \ Assert =
-        Assert.assertEq(
-            expected = (true, false, false, false),
-            (Runner.isBlessName("villagers.png"),
-             Runner.isBlessName("../villagers.png"),
-             Runner.isBlessName("villagers.wav"),
-             Runner.isBlessName("")))
 
     /// ログは尻尾 cap 行だけ残す。cap 以内なら丸ごと残る。
     @Test

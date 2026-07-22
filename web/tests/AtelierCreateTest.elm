@@ -21,11 +21,20 @@ slots =
     ]
 
 
-{-| スロットが届いた素の状態(候補なし)。 -}
+{-| スロットが届いた素の状態(候補なし)。育ったゲーム扱い(starterFresh = False)。 -}
 fresh : Atelier.Model
 fresh =
     Atelier.init
         |> Atelier.gotSlots slots
+
+
+{-| 生まれたての見本プロジェクト(journey の hasStarterDoc が真)。
+インタビューの「見本のまま」チップはこの時だけ意味を持つ。
+-}
+starterborn : Atelier.Model
+starterborn =
+    fresh
+        |> Atelier.setStarterFresh True
 
 
 {-| 候補が 1 件ある状態(えらぶが主役になる側)。 -}
@@ -113,22 +122,50 @@ suite =
                         |> Expect.equal Atelier.OutNone
             ]
         , describe "あそびを作らせる(ゲームのプロンプト)"
-            [ test "空のまま押すと送らず、理由がその場に出る" <|
+            [ test "生まれたての見本: 何も触らなくても、2問の答え(見本のまま)が direction に載って飛ぶ" <|
                 \_ ->
-                    let
-                        ( model, out ) =
-                            begin fresh
-                                |> step Atelier.MakeGamePromptClicked
-                    in
-                    ( out, Atelier.gamePromptErrorShown model /= Nothing )
-                        |> Expect.equal ( Atelier.OutNone, True )
-            , test "「プロンプトを作る」で方向性(trim 済み)が飛ぶ" <|
+                    begin starterborn
+                        |> step Atelier.MakeGamePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutFetchGamePrompt
+                                "動かすもの: パドルのまま/終わり方: ぜんぶ壊したら勝ち"
+                            )
+            , test "インタビューの答え(選択肢・言葉で・エッセンス)と自由記述が 1 本に合成される" <|
                 \_ ->
-                    begin fresh
+                    begin starterborn
+                        |> step (Atelier.GameMoverPicked "猫(しっぽで打ち返す)")
+                        |> step (Atelier.GameEndEdited " 3回落としたら終わり ")
+                        |> step (Atelier.GameEssenceEdited "夜だけの世界")
                         |> step (Atelier.GameDirectionEdited " 星をバケツで受け止める ")
                         |> step Atelier.MakeGamePromptClicked
                         |> Tuple.second
-                        |> Expect.equal (Atelier.OutFetchGamePrompt "星をバケツで受け止める")
+                        |> Expect.equal
+                            (Atelier.OutFetchGamePrompt
+                                "星をバケツで受け止める/動かすもの: 猫(しっぽで打ち返す)/終わり方: 3回落としたら終わり/エッセンス: 夜だけの世界"
+                            )
+            , test "「言葉で」を消すと選択肢の答えに戻る" <|
+                \_ ->
+                    begin starterborn
+                        |> step (Atelier.GameMoverEdited "傘をさしたおじいさん")
+                        |> step (Atelier.GameMoverEdited "")
+                        |> step Atelier.MakeGamePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutFetchGamePrompt
+                                "動かすもの: パドルのまま/終わり方: ぜんぶ壊したら勝ち"
+                            )
+            , test "育ったゲーム: 見本の 2 問は載らない(エッセンスと自由記述だけが答え)" <|
+                \_ ->
+                    begin fresh
+                        |> step (Atelier.GameEssenceEdited "夜だけの世界")
+                        |> step (Atelier.GameDirectionEdited "冬の行商人を足す")
+                        |> step Atelier.MakeGamePromptClicked
+                        |> Tuple.second
+                        |> Expect.equal
+                            (Atelier.OutFetchGamePrompt
+                                "冬の行商人を足す/エッセンス: 夜だけの世界"
+                            )
             , test "届いたプロンプトが箱に映り、コピーで中身が飛ぶ" <|
                 \_ ->
                     let

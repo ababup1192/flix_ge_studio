@@ -1,5 +1,5 @@
-// Runner — Studio から「焼く (make)」と「祝福 (gallery→golden の個別コピー)」を安全に行う係。
-// 走らせられる make 対象は白名前簿の 3 つだけ。同時に走るのは 1 本 (重ね焼きは 409 で断る)。
+// Runner — Studio から make を安全に走らせる係。
+// 走らせられる make 対象は白名前簿の中だけ。同時に走るのは 1 本 (重ねては 409 で断る)。
 // ログは最新の 1 回ぶんを尻尾 500 行まで覚え、GET /runner/log で配る。
 // 対象の検分・名前の門番・ログの刈り込みは純粋な関数に分けてある (そこだけテストする)。
 
@@ -50,43 +50,12 @@ mod Runner {
                 List.exists(line -> String.startsWith(prefix = "${target}:", line), lines))
         }
 
-    /// GET /gallery/targets の本文。選択中プロジェクトの Makefile に実在する焼き対象を配る。
-    pub def targetsJson(dir: String): Json \ IO =
-        let file = new JFile("${dir}/Makefile");
-        let text = if (file.isFile()) new JavaString(Files.readAllBytes(file.toPath()), "UTF-8") else "";
-        JObject(Map#{
-            "targets" => JArray(targetsFromMakefileText(text)
-                |> List.map(target -> JString(target))
-                |> List.toVector)
-        })
-
-    /// 祝福してよい名前か: 経路をまたがない 1 語 (Gallery と同じ門番) で .png のみ。
-    pub def isBlessName(name: String): Bool =
-        Gallery.isSafeName(name) and String.endsWith(suffix = ".png", name)
-
     /// ログの尻尾 cap 行だけ残す (頭から溢れたぶんを捨てる)。
     pub def keepTail(cap: Int32, lines: List[String]): List[String] =
         List.drop(List.length(lines) - cap, lines)
 
     /// ログで覚える行数の上限。
     def logCap(): Int32 = 500
-
-    // ── 焼く (POST /gallery/bake) ─────────────────────────
-
-    /// 応答 (status, body)。対象を検分し、走っていなければ焼き係スレッドを起こして 202 を返す。
-    pub def startBake(state: State, dir: String, bodyText: String): (Int32, Json) \ IO =
-        let targetOpt = JsonCompat.parse(bodyText)
-            |> Option.flatMap(JsonCodec.expectObject)
-            |> Option.flatMap(obj -> Map.get("target", obj))
-            |> Option.flatMap(JsonCodec.expectString);
-        match targetOpt {
-            case None => (400, failJson("body must be a JSON object {target}"))
-            case Some(target) =>
-                if (not isAllowedTarget(target))
-                    (400, failJson("unknown target: ${target}"))
-                else
-                    launchTarget(state, dir, target, busy = "焼いている最中です")
-        }
 
     /// 走行権を取れたら起動する。putIfAbsent が入れ物ごと排他になるので、
     /// 同時に来た 2 本のうち 1 本だけが通る。Game (make debug) も別の器でこれを使う。
@@ -206,52 +175,6 @@ mod Runner {
                     |> Option.getWithDefault(JNull),
             "lines"    => JArray(lines |> List.map(line -> JString(line)) |> List.toVector)
         })
-
-    // ── 祝福 (POST /gallery/bless) ────────────────────────
-
-    /// 応答 (status, body)。confirm:true が無い・名前が空・門番落ち・gallery/ に無い、は 400。
-    /// 全部の検分に通ってからコピーする (途中まで祝福して止まる事故を避ける)。
-    pub def bless(dir: String, bodyText: String): (Int32, Json) \ IO =
-        match JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject) {
-            case None => (400, failJson("body must be a JSON object {names, confirm}"))
-            case Some(obj) =>
-                let confirmed = Map.get("confirm", obj)
-                    |> Option.flatMap(JsonCodec.expectBool)
-                    |> Option.getWithDefault(false);
-                let namesOpt = Map.get("names", obj)
-                    |> Option.flatMap(JsonCodec.decodeList(JsonCodec.expectString));
-                if (not confirmed)
-                    (400, failJson("confirm:true を付けてください (祝福は golden を書き換えます)"))
-                else match namesOpt {
-                    case None       => (400, failJson("names は文字列の配列で指定してください"))
-                    case Some(Nil)  => (400, failJson("names が空です"))
-                    case Some(names) => blessValidated(dir, names)
-                }
-        }
-
-    /// 名前を全部検分してからコピーする。
-    def blessValidated(dir: String, names: List[String]): (Int32, Json) \ IO =
-        match List.find(name -> not isBlessName(name), names) {
-            case Some(bad) => (400, failJson("不正な名前です: ${bad}"))
-            case None => match List.find(name -> not new JFile("${dir}/gallery/${name}").isFile(), names) {
-                case Some(missing) => (400, failJson("gallery/ にありません: ${missing}"))
-                case None => {
-                    discard new JFile("${dir}/golden").mkdirs();
-                    foreach (name <- names) copyFile("${dir}/gallery/${name}", "${dir}/golden/${name}");
-                    (200, JObject(Map#{
-                        "ok"      => JBool(true),
-                        "blessed" => JArray(names |> List.map(name -> JString(name)) |> List.toVector)
-                    }))
-                }
-            }
-        }
-
-    /// バイトそのままのコピー (bench のバイト比較がそのまま ok になる形)。
-    def copyFile(src: String, dst: String): Unit \ IO =
-        let bytes = Files.readAllBytes(new JFile(src).toPath());
-        let out = new FileOutputStream(dst);
-        out.write(bytes);
-        out.close()
 
     /// 失敗応答の本文。error を {message} の形にするのは noProjectJson・preview 系と同じ読み方。
     def failJson(message: String): Json =

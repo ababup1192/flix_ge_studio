@@ -313,8 +313,8 @@ bootedWith resources =
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
-        -- アトリエは開くたび候補えらび(swap)の材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots" ]
+        -- アトリエは開くたび候補えらび(swap)とアーカイバの材料を取り直す(採番外 id 0)
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
 
 
 {-| kind = ui の宣言(プラグイン・スキーマ無し)。エンジン焼き(/preview/ui)の対象。 -}
@@ -564,43 +564,60 @@ suite =
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
                     |> expectKinds [ "files", "resources", "journeyState" ]
-        , test "ナビ: ギャラリーを開くと galleryList と galleryDiff を要求する" <|
-            \() ->
-                booted
-                    |> ProgramTest.clickButton "ギャラリー"
-                    |> expectKinds [ "galleryList", "galleryDiff", "galleryTargets" ]
-        , test "ホーム: 提案の主ボタンで行き先のタブへ移り、その中身を要求する" <|
+        , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで旅路を取り直す" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState" ]
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondOk 0
                         "journeyState"
                         (E.object
                             [ ( "suggestion"
                               , E.object
-                                    [ ( "id", E.string "bake" )
-                                    , ( "title", E.string "焼いて確かめよう" )
-                                    , ( "detail", E.string "候補を装着したら、絵にして見比べます。" )
-                                    , ( "nav", E.string "gallery" )
+                                    [ ( "id", E.string "changed" )
+                                    , ( "title", E.string "見た目が変わりました(1場面)" )
+                                    , ( "detail", E.string "心当たりがなければ、前と今を見比べてください。" )
+                                    , ( "nav", E.string "changes" )
                                     ]
                               )
                             , ( "checks"
                               , E.object
-                                    [ ( "atelierCandidates", E.int 2 )
-                                    , ( "staleGallery", E.bool True )
-                                    , ( "diffCount", E.int 0 )
+                                    [ ( "atelierCandidates", E.int 0 ) ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.clickButton "見比べる"
+                    |> ensureKinds [ "journeyChanges" ]
+                    |> respondOk 0
+                        "journeyChanges"
+                        (E.object
+                            [ ( "baking", E.bool False )
+                            , ( "seen", E.bool False )
+                            , ( "changes"
+                              , E.list identity
+                                    [ E.object
+                                        [ ( "name", E.string "title.png" )
+                                        , ( "ver", E.int 3 )
+                                        , ( "before", E.string "golden/archive/title.v3.png" )
+                                        , ( "after", E.string "golden/title.png" )
+                                        ]
                                     ]
                               )
                             ]
                         )
-                    |> ProgramTest.clickButton "ギャラリーへ"
-                    |> expectKinds [ "galleryList", "galleryDiff", "galleryTargets" ]
+                    -- モーダルに 1 場面目(1 / 1・v3)と「前」「今」の 2 枚が出る
+                    |> ProgramTest.ensureViewHas [ text "1 / 1" ]
+                    |> ProgramTest.ensureViewHas [ text "v3" ]
+                    |> ProgramTest.ensureViewHas [ class "changes-dialog" ]
+                    |> ProgramTest.clickButton "閉じる"
+                    |> ensureKinds [ "journeyChangesSeen" ]
+                    |> respondOk 0 "journeyChangesSeen" (E.object [ ( "ok", E.bool True ) ])
+                    |> expectKinds [ "journeyState" ]
         , test "ホーム: create(新しい一巡)は済み(✓)も現在地も点けず、始まりの一言を出す" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState" ]
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondOk 0
                         "journeyState"
                         (E.object
@@ -628,7 +645,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState" ]
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondOk 0
                         "journeyState"
                         (E.object
@@ -658,7 +675,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState" ]
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondErr 0 "journeyState" "HTTP 404"
                     |> ProgramTest.expectViewHas [ text "準備中" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|

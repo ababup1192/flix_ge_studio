@@ -123,7 +123,7 @@
     @apply rounded-lg border border-edge bg-panel p-1.5 shadow-[0_2px_8px_rgb(0_0_0/0.35)];
   }
 
-  /* 上部ナビ(ホーム / アトリエ / ギャラリー)。タブは押し物なので btn より静かに */
+  /* 上部ナビ(ホーム / アトリエ)。タブは押し物なので btn より静かに */
   .nav-tab {
     @apply inline-flex h-6 cursor-pointer items-center rounded px-2.5 text-[11px] leading-none text-ink-soft select-none hover:bg-white/5 hover:text-ink;
   }
@@ -132,22 +132,9 @@
     @apply bg-accent/15 font-semibold text-accent hover:bg-accent/15 hover:text-accent;
   }
 
-  /* ギャラリーの絵はドット絵なのでぼかさない */
-  .gallery-shot {
+  /* 場面の絵はドット絵なのでぼかさない */
+  .scene-shot {
     image-rendering: pixelated;
-  }
-
-  /* 焼きの的(3 択)。外枠は Elm 側(.gallery-segs)が持ち、ここは 1 コマの姿 */
-  .gallery-seg {
-    @apply inline-flex h-6 cursor-pointer items-center bg-transparent px-2.5 text-[11px] leading-none text-ink-soft select-none hover:bg-white/5 hover:text-ink disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent;
-  }
-
-  .gallery-seg + .gallery-seg {
-    @apply border-l border-edge;
-  }
-
-  .gallery-seg-active {
-    @apply bg-accent/15 font-semibold text-accent hover:bg-accent/15 hover:text-accent;
   }
 
   /* 進捗ミニパネルの動くしるし。prefers-reduced-motion では回さず静かな輪で示す */

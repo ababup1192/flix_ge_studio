@@ -1,7 +1,7 @@
 // Atelier — 試作 (atelier/*.json) と本番スロット (assets/*.json) の橋渡し係。
-// 候補一覧はスロットごとに束ね、昇格 (promote) はスロットの中身を退避 (prev-N) してから
-// 候補の中身をスロットへ書く。走っているゲームは watchFile で保存即反映を拾う。
-// 互換判定・prev の名前づけ・経路の門番は純粋な関数に分けてある (そこだけテストする)。
+// 候補一覧はスロットごとに束ね、採用 (promote) はスロットの中身を atelier/archive/ の
+// バージョン (vN) へ退避してから、候補の中身をスロットへ書く。走っているゲームは
+// watchFile で保存即反映を拾う。互換判定・名前づけ・経路の門番は純粋な関数に分けてある。
 
 mod Atelier {
     import java.io.{File => JFile}
@@ -22,6 +22,10 @@ mod Atelier {
     /// スロットの経路の門番: `assets/` 直下の安全な 1 語のみ。
     pub def isSlotPath(path: String): Bool =
         isUnder(prefix = "assets/", path)
+
+    /// アーカイブ札の経路の門番: `atelier/archive/` 直下の安全な 1 語のみ。
+    pub def isArchivedPath(path: String): Bool =
+        isUnder(prefix = "atelier/archive/", path)
 
     /// prefix 直下の JSON 1 語か。名前 1 語の判定は Gallery と同じ門番を通す。
     def isUnder(prefix: {prefix = String}, path: String): Bool =
@@ -69,19 +73,60 @@ mod Atelier {
                     and String.dropLeft(5, part) != ""
                     and String.forAll(Char.isDigit, String.dropLeft(5, part)))
 
-    /// スロット名から n 番目の退避ファイル名を作る:
-    /// "prologue.sprite.json" と 1 → "prologue.prev-1.sprite.json"。
-    pub def retiredName(slotName: String, n: Int32): String =
+    /// スロット名を (base, ".<kind>.json") に割る。kind が無い 1 語 JSON は ".json" に落とす。
+    def slotParts(slotName: String): (String, String) =
         match kindSuffix(slotName) {
-            case Some(suffix) =>
-                let base = String.dropRight(String.length(suffix), slotName);
-                "${base}.prev-${n}${suffix}"
-            case None =>
-                "${String.dropRight(5, slotName)}.prev-${n}.json"
+            case Some(suffix) => (String.dropRight(String.length(suffix), slotName), suffix)
+            case None         => (String.dropRight(5, slotName), ".json")
         }
 
-    /// 退避は 3 世代まで。
-    pub def prevKeep(): Int32 = 3
+    /// スロット名から n 番目のバージョンのファイル名を作る:
+    /// "prologue.sprite.json" と 3 → "prologue.v3.sprite.json"。
+    /// バージョンは atelier/archive/ に積まれ、何も捨てない。
+    pub def archivedName(slotName: String, n: Int32): String =
+        let (base, suffix) = slotParts(slotName);
+        "${base}.v${n}${suffix}"
+
+    /// 名前の中のバージョン番号 ("v<数字>" の節)。バージョンの名前でなければ 0。
+    pub def verNumberOf(name: String): Int32 =
+        String.splitOn(substr = ".", name)
+            |> List.filterMap(part ->
+                if (String.startsWith(prefix = "v", part)
+                    and String.dropLeft(1, part) != ""
+                    and String.forAll(Char.isDigit, String.dropLeft(1, part)))
+                    Int32.fromString(String.dropLeft(1, part))
+                else None)
+            |> List.head
+            |> Option.getWithDefault(0)
+
+    /// バージョン ("<base>.vN.<kind>.json") の名前か。
+    pub def isVersionName(name: String): Bool =
+        verNumberOf(name) > 0
+
+    /// バージョンの名前からスロット名へ戻す: "prologue.v3.sprite.json" → "prologue.sprite.json"。
+    pub def slotNameOfVersion(name: String): String =
+        String.splitOn(substr = ".", name)
+            |> List.filter(part -> not (String.startsWith(prefix = "v", part)
+                and String.dropLeft(1, part) != ""
+                and String.forAll(Char.isDigit, String.dropLeft(1, part))))
+            |> List.join(".")
+
+    /// name が slotName のバージョンなら、その番号。別スロットの物・候補名は None。
+    pub def verIfArchived(name: String, slotName: String): Option[Int32] =
+        let (base, suffix) = slotParts(slotName);
+        let prefixText = "${base}.v";
+        if (String.startsWith(prefix = prefixText, name) and String.endsWith(suffix = suffix, name)) {
+            let middle = String.dropRight(String.length(suffix),
+                String.dropLeft(String.length(prefixText), name));
+            if (middle != "" and String.forAll(Char.isDigit, middle))
+                Int32.fromString(middle)
+            else None
+        } else None
+
+    /// 次のバージョン番号: このスロットの最大 + 1 (無ければ 1)。
+    pub def nextVerFrom(names: List[String], slotName: String): Int32 =
+        (names |> List.filterMap(name -> verIfArchived(name, slotName))
+               |> List.foldLeft(Int32.max, 0)) + 1
 
     /// プレビュー PNG の置き場 (プロジェクト相対)。候補 "atelier/<名前>.json" は
     /// "debug/atelier/<名前>.png"、スロット "assets/<名前>.json" は
@@ -130,7 +175,7 @@ mod Atelier {
         String.unlines(
             "/atelier-draft を実行してください。"
             :: "対象プロジェクト: ${projectDir}"
-            :: "スロット: ${slot} (entityId: ${entityText}, スキーマ: ${schemaPath})"
+            :: "素材スロット: ${slot} (entityId: ${entityText}, スキーマ: ${schemaPath})"
             :: "案数: ${clampCount(count)} / 方向性: ${directionText}"
             :: "候補は atelier/ に置き、make atelier-preview まで済ませてください。assets/ には書かないこと。"
             :: Nil)
@@ -152,7 +197,9 @@ mod Atelier {
             :: "対象プロジェクト: ${projectDir}"
             :: "どんな遊びか: ${direction}"
             :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、調整する数値や配置は Doc(スキーマは sections 方言、/scaffold で増やせる)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
+            :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
             :: "仕上げ: make check / make test を緑にし、Bake.all の場面を遊びが伝わる絵に育て、make bake まで済ませる。素材の候補が要るなら atelier/ に置き atelier-preview まで(assets/ 直書き禁止)。"
+            :: "報告の前に /critique-code で自己批評し(抽象度・Doc 境界・テスト方針・読みやすさ)、指摘を潰してから報告する。"
             :: Nil)
 
     /// スキーマの description から一行の手引きを作る (純粋): 最初の「。」までで切り、
@@ -213,9 +260,9 @@ mod Atelier {
             case None => (400, failJson("slot を指定してください"))
             case Some(slot) =>
                 if (not isSlotPath(slot))
-                    (400, failJson("不正なスロットの経路です (assets/ 直下のみ): ${slot}"))
+                    (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
                 else match ResourceDecl.materialDeclFor(resourceDecls(dir), slot) {
-                    case None => (400, failJson("素材 (role=material) のスロットではありません: ${slot}"))
+                    case None => (400, failJson("素材スロット (role=material) ではありません: ${slot}"))
                     case Some(decl) =>
                         let entityId = fieldString("entityId", topFields(readText("${dir}/${slot}")));
                         let schemaPath = decl#schemaPath
@@ -262,18 +309,18 @@ mod Atelier {
 
     def copyChecked(dir: String, slot: String, name: String): (Int32, Json) \ IO =
         if (not isSlotPath(slot))
-            (400, failJson("不正なスロットの経路です (assets/ 直下のみ): ${slot}"))
+            (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
         else if (not isCopyBaseName(name))
             (400, failJson("不正な名前です (英数・_ - と途中の . のみ): ${name}"))
         else if (not new JFile("${dir}/${slot}").isFile())
-            (400, failJson("スロットがありません: ${slot}"))
+            (400, failJson("素材スロットがありません: ${slot}"))
         else {
             let slotName = String.dropLeft(String.length("assets/"), slot);
             let target = "atelier/${copyTargetName(slotName, name)}";
             if (new JFile("${dir}/${target}").isFile())
                 (409, failJson("すでにあります: ${target}"))
             else match JsonCompat.parse(readText("${dir}/${slot}")) |> Option.flatMap(JsonCodec.expectObject) {
-                case None => (400, failJson("スロットの JSON が読めません: ${slot}"))
+                case None => (400, failJson("素材スロットの JSON が読めません: ${slot}"))
                 case Some(obj) => {
                     let stamped = Map.insert("note", JString("自作 (元: ${slot})"), obj);
                     discard new JFile("${dir}/atelier").mkdirs();
@@ -318,7 +365,7 @@ mod Atelier {
                 isCompatible(slot#entityId, slot#name, cand#entityId, cand#name), slots))
             |> List.map(cand -> JObject(Map#{
                 "file"   => JString("atelier/${cand#name}"),
-                "reason" => JString("互換するスロットが見つかりません")
+                "reason" => JString("互換する素材スロットが見つかりません")
             }));
         let baking = maybeAutoBake(runner, dir, candidates, bundles |> List.map(fst));
         JObject(Map#{
@@ -401,9 +448,9 @@ mod Atelier {
     // ── 昇格 (POST /atelier/promote) ──────────────────────
 
     /// 応答 (status, body)。経路の門番 → 実在 → 互換、の順に全部検分してから初めて書く。
-    /// 手順: 候補の中身を読む → スロットの中身を prev-1 へ退避 (prev は 3 世代で玉突き) →
-    /// 候補の中身をスロットへ書く → 候補ファイルを消す (退避ファイルの昇格 = 巻き戻しのときは
-    /// 玉突きが名前を持っていくので消さない)。
+    /// 手順: 候補の中身を読む → スロットの中身を atelier/archive/ のバージョン (vN) へ退避 →
+    /// 候補の中身をスロットへ書く → atelier/ 直下の候補は消す (名前ごとスロットへ移った =
+    /// 採用)。アーカイブの札からの昇格 (復元) は履歴なので消さない — 何も捨てない。
     pub def promote(dir: String, bodyText: String): (Int32, Json) \ IO =
         let fields = JsonCompat.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
@@ -414,49 +461,129 @@ mod Atelier {
         }
 
     def promoteChecked(dir: String, candidate: String, slot: String): (Int32, Json) \ IO =
-        if (not isCandidatePath(candidate))
-            (400, failJson("不正な候補の経路です (atelier/ 直下のみ): ${candidate}"))
+        if (not (isCandidatePath(candidate) or isArchivedPath(candidate)))
+            (400, failJson("不正な候補の経路です (atelier/ か atelier/archive/ 直下のみ): ${candidate}"))
         else if (not isSlotPath(slot))
-            (400, failJson("不正なスロットの経路です (assets/ 直下のみ): ${slot}"))
+            (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
         else if (not new JFile("${dir}/${candidate}").isFile())
             (400, failJson("候補がありません: ${candidate}"))
         else if (not new JFile("${dir}/${slot}").isFile())
-            (400, failJson("スロットがありません: ${slot}"))
+            (400, failJson("素材スロットがありません: ${slot}"))
         else {
             let slotName = String.dropLeft(String.length("assets/"), slot);
-            let candName = String.dropLeft(String.length("atelier/"), candidate);
+            let candName = String.splitOn(substr = "/", candidate)
+                |> List.last |> Option.getWithDefault(candidate);
             let slotEntity = fieldString("entityId", topFields(readText("${dir}/${slot}")));
             let candEntity = fieldString("entityId", topFields(readText("${dir}/${candidate}")));
             if (not isCompatible(slotEntity, slotName, candEntity, candName))
-                (400, failJson("候補とスロットの entityId が合いません (互換性がありません)"))
+                (400, failJson("候補と素材スロットの entityId が合いません (互換性がありません)"))
             else
-                swap(dir, candidate, slot, slotName, candName)
+                swap(dir, candidate, slot, slotName)
         }
 
-    /// 検分済みの入れ替え本体。候補の中身は玉突きの前に読んでおく
-    /// (巻き戻しでは玉突きが候補ファイル自身を改名するため)。
-    def swap(dir: String, candidate: String, slot: String, slotName: String, candName: String): (Int32, Json) \ IO =
+    /// 検分済みの入れ替え本体。候補の中身は退避の前に読んでおく。
+    def swap(dir: String, candidate: String, slot: String, slotName: String): (Int32, Json) \ IO =
         let candBytes = Files.readAllBytes(new JFile("${dir}/${candidate}").toPath());
-        discard new JFile("${dir}/atelier").mkdirs();
-        rotate(dir, slotName);
-        copyFile("${dir}/${slot}", "${dir}/atelier/${retiredName(slotName, 1)}");
+        discard new JFile("${dir}/atelier/archive").mkdirs();
+        let retired = "atelier/archive/${archivedName(slotName, nextVer(dir, slotName))}";
+        copyFile("${dir}/${slot}", "${dir}/${retired}");
         writeBytes("${dir}/${slot}", candBytes);
-        if (not isPrevName(candName))
+        // atelier/ 直下の候補は名前ごとスロットへ移った (= 採用) ので消す。
+        // アーカイブの札からの復元は履歴なので消さない — 何も捨てない。
+        if (isCandidatePath(candidate))
             discard new JFile("${dir}/${candidate}").delete()
         else ();
         (200, JObject(Map#{
             "ok"      => JBool(true),
-            "retired" => JString("atelier/${retiredName(slotName, 1)}")
+            "retired" => JString(retired)
         }))
 
-    /// 退避の玉突き: prev-3 を捨て、prev-2 → prev-3、prev-1 → prev-2 と繰り上げる。
-    def rotate(dir: String, slotName: String): Unit \ IO =
-        discard new JFile("${dir}/atelier/${retiredName(slotName, prevKeep())}").delete();
-        foreach (n <- List.range(1, prevKeep()) |> List.reverse) {
-            let src = new JFile("${dir}/atelier/${retiredName(slotName, n)}");
-            if (src.isFile())
-                discard src.renameTo(new JFile("${dir}/atelier/${retiredName(slotName, n + 1)}"))
-            else ()
+    /// 次の版番号 (このスロットの札の最大 + 1)。archive/ が無ければ 1。
+    def nextVer(dir: String, slotName: String): Int32 \ IO =
+        let entries = new JFile("${dir}/atelier/archive").listFiles();
+        let names = if (Object.isNull(entries)) Nil
+            else Array.toList(entries)
+                |> List.filter(file -> file.isFile())
+                |> List.map(file -> file.getName());
+        nextVerFrom(names, slotName)
+
+    // ── アーカイブ (何も捨てない置き場) ────────────────────
+
+    /// GET /atelier/archive — history = 切り替えで積まれたバージョン (vN、スロット別に
+    /// 戻し先つき)、candidates = 手でアーカイブした候補 (候補に戻せる)。
+    pub def archiveJson(dir: String): Json \ IO =
+        let all = listEntries(dir, "atelier/archive");
+        let (history, cands) = List.partition(entry -> isVersionName(entry#name), all);
+        JObject(Map#{
+            "history"    => JArray(history |> List.map(historyJson) |> List.toVector),
+            "candidates" => JArray(cands |> List.map(archivedJson) |> List.toVector)
+        })
+
+    def historyJson(entry: Entry): Json =
+        JObject(Map#{
+            "file"  => JString("atelier/archive/${entry#name}"),
+            "slot"  => JString("assets/${slotNameOfVersion(entry#name)}"),
+            "ver"   => JNumber(JBigDecimal.valueOf(Int32.toInt64(verNumberOf(entry#name)))),
+            "note"  => optString(entry#note),
+            "mtime" => JNumber(JBigDecimal.valueOf(entry#mtime))
+        })
+
+    def archivedJson(entry: Entry): Json =
+        JObject(Map#{
+            "file"     => JString("atelier/archive/${entry#name}"),
+            "entityId" => optString(entry#entityId),
+            "note"     => optString(entry#note),
+            "mtime"    => JNumber(JBigDecimal.valueOf(entry#mtime))
+        })
+
+    /// POST /atelier/archive (body: {candidate}) — 候補をアーカイブへ送る。
+    /// アトリエをきれいに保つための移動で、消さない (候補に戻すのは /atelier/restore)。
+    pub def archive(dir: String, bodyText: String): (Int32, Json) \ IO =
+        match fieldString("candidate", topFields(bodyText)) {
+            case None => (400, failJson("body は {candidate} の JSON で指定してください"))
+            case Some(candidate) =>
+                if (not isCandidatePath(candidate))
+                    (400, failJson("不正な候補の経路です (atelier/ 直下のみ): ${candidate}"))
+                else if (not new JFile("${dir}/${candidate}").isFile())
+                    (400, failJson("候補がありません: ${candidate}"))
+                else {
+                    let name = String.dropLeft(String.length("atelier/"), candidate);
+                    let dst = new JFile("${dir}/atelier/archive/${name}");
+                    if (dst.isFile())
+                        (409, failJson("同じ名前が既にアーカイブにあります: ${name}"))
+                    else {
+                        discard new JFile("${dir}/atelier/archive").mkdirs();
+                        discard new JFile("${dir}/${candidate}").renameTo(dst);
+                        (200, JObject(Map#{
+                            "ok"       => JBool(true),
+                            "archived" => JString("atelier/archive/${name}")
+                        }))
+                    }
+                }
+        }
+
+    /// POST /atelier/restore (body: {file}) — アーカイブの札を候補の列へ戻す。
+    pub def restore(dir: String, bodyText: String): (Int32, Json) \ IO =
+        match fieldString("file", topFields(bodyText)) {
+            case None => (400, failJson("body は {file} の JSON で指定してください"))
+            case Some(file) =>
+                if (not isArchivedPath(file))
+                    (400, failJson("不正なアーカイブの経路です (atelier/archive/ 直下のみ): ${file}"))
+                else if (not new JFile("${dir}/${file}").isFile())
+                    (400, failJson("アーカイブにありません: ${file}"))
+                else {
+                    let name = String.dropLeft(String.length("atelier/archive/"), file);
+                    let dst = new JFile("${dir}/atelier/${name}");
+                    if (dst.isFile())
+                        (409, failJson("同じ名前の候補が既にあります: ${name}"))
+                    else {
+                        discard new JFile("${dir}/${file}").renameTo(dst);
+                        (200, JObject(Map#{
+                            "ok"       => JBool(true),
+                            "restored" => JString("atelier/${name}")
+                        }))
+                    }
+                }
         }
 
     // ── ファイルの読み書き (バイトそのまま) ───────────────
