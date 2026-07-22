@@ -72,7 +72,7 @@ mod Genesis {
             includes = "事件を追う推理もの・分岐するノベル",
             controls = "選ぶだけ",
             skeleton = "文章を読む → 選ぶ → 分岐する / 分岐と結末は Doc の rows。終わり: 結末のどれかへ",
-            starter = "" }
+            starter = "templates/novel-starter" }
        :: { id = "free",    name = "フリージャンル",
             verb = "言葉から始める",
             includes = "ここにない、全部",
