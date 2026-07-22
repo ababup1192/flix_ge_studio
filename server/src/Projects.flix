@@ -102,6 +102,11 @@ mod Projects {
     pub def pushRecent(dir: String, recent: List[String]): List[String] =
         (dir :: List.filter(other -> other != dir, recent)) |> List.take(recentLimit())
 
+    /// 開けなくなった dir を履歴から除く (純関数)。一覧に見せるのは、いま開けるものだけ —
+    /// 消えた・移動したプロジェクトは候補に出さない。
+    pub def pruneRecent(exists: String -> Bool \ ef, recent: List[String]): List[String] \ ef =
+        List.filter(exists, recent)
+
     /// 最近開いた順の履歴を読む。ファイルが無い・壊れているは空扱い (履歴が無くても本体は困らない)。
     pub def loadRecent(): List[String] \ IO =
         let readResult = run { Fs.ReadFile.read(recentFile()) }

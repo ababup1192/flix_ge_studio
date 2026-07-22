@@ -243,7 +243,11 @@ mod Editor {
     /// project.json 持ちディレクトリ。
     def handleProjects(selection: Projects.Selection, exchange: HttpExchange): Unit \ IO =
         let current = Projects.currentDir(selection);
-        let recent = Projects.loadRecent() |> List.map(dir -> projectEntryJson(dir));
+        // 消えた・移動したプロジェクトは候補に出さない。減っていたら履歴ファイルも掃除する
+        let stored = Projects.loadRecent();
+        let alive = Projects.pruneRecent(dir -> Projects.hasProjectJson(dir), stored);
+        if (List.length(alive) != List.length(stored)) Projects.saveRecent(alive) else ();
+        let recent = alive |> List.map(dir -> projectEntryJson(dir));
         let found = Projects.findProjects(Projects.scanRootsFromEnv()) |> List.map(dir -> projectEntryJson(dir));
         sendJson(200, JObject(Map#{
             "current" => current |> Option.map(dir -> JString(dir)) |> Option.getWithDefault(JNull),
@@ -266,9 +270,9 @@ mod Editor {
             case None      => sendJson(400, errorJson("body must be a JSON object {dir}"), exchange)
             case Some(dir) =>
                 if (not new JFile(dir).isDirectory())
-                    sendJson(400, errorJson("no such directory: ${dir}"), exchange)
+                    sendJson(400, errorJson("プロジェクトが見つかりません(削除または移動されています): ${dir}"), exchange)
                 else if (not Projects.hasProjectJson(dir))
-                    sendJson(400, errorJson("project.json not found in: ${dir}"), exchange)
+                    sendJson(400, errorJson("この場所は開けません(project.json がありません): ${dir}"), exchange)
                 else
                     // 履歴・current が同じプロジェクトの別表記 (末尾スラッシュ等) で
                     // 二重登録されないよう、正規化した絶対パスに揃えてから選択する。

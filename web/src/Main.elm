@@ -4564,9 +4564,11 @@ handleErrByKind env message model =
             ( { model | picker = updatePicker (\p -> { p | error = Just message }) model }, Effect.none )
 
         "selectProject" ->
-            ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
-            , Effect.none
-            )
+            -- エラーを見せたうえで候補を取り直す — 消えたプロジェクトはサーバが
+            -- 一覧から外すので、開けなかった項目はその場で候補から消える
+            request "projects"
+                (E.object [])
+                { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
 
         "genesisFamilies" ->
             -- 旧サーバ(404 等)。従来のプリセット入力に倒す(fail-open)

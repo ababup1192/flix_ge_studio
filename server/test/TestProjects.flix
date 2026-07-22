@@ -24,6 +24,14 @@ mod TestProjects {
             expected = (10, Some("/new"), false),
             (List.length(pushed), List.head(pushed), List.memberOf("/p9", pushed)))
 
+    /// 開けなくなった dir は履歴から外れる。順序は保たれ、全滅なら空。
+    @Test
+    def testPruneRecent(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("/a" :: "/c" :: Nil, Nil),
+            (Projects.pruneRecent(dir -> dir != "/b", "/a" :: "/b" :: "/c" :: Nil),
+             Projects.pruneRecent(_ -> false, "/a" :: "/b" :: Nil)))
+
     // ========================================================================
     // 探索起点 (EDITOR_SCAN_ROOTS) の分解
     // ========================================================================

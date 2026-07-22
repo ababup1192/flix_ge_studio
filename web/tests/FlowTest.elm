@@ -267,6 +267,20 @@ projectsBody =
         ]
 
 
+{-| GET /projects の応答(取り直し後)。消えたダンジョンは外れ、found は「べつ」だけ。 -}
+projectsBodyPruned : E.Value
+projectsBodyPruned =
+    E.object
+        [ ( "current", E.null )
+        , ( "recent", E.list identity [] )
+        , ( "found"
+          , E.list identity
+                [ E.object [ ( "dir", E.string "/Users/me/Desktop/flix_ge_other" ), ( "title", E.string "べつ" ) ]
+                ]
+          )
+        ]
+
+
 {-| Tauri list_running_games 応答。games に {pid, cwd} 配列。 -}
 runningGamesBody : List String -> E.Value
 runningGamesBody cwds =
@@ -747,6 +761,17 @@ suite =
                 pickerBooted
                     |> respondOk 3 "runningGames" (runningGamesBody [])
                     |> ProgramTest.expectViewHasNot [ text "● 起動中" ]
+        , test "プロジェクト選択に失敗するとエラーを見せ、候補一覧を取り直す(消えた項目は候補から外れる)" <|
+            \() ->
+                pickerBooted
+                    |> respondOk 3 "runningGames" (runningGamesBody [])
+                    |> ProgramTest.clickButton "ダンジョン"
+                    |> ensureKinds [ "selectProject" ]
+                    |> respondErr 4 "selectProject" "プロジェクトが見つかりません(削除または移動されています): /Users/me/Desktop/flix_ge_dungeon"
+                    |> ensureKinds [ "projects" ]
+                    |> respondOk 5 "projects" projectsBodyPruned
+                    |> ProgramTest.ensureViewHas [ text "プロジェクトが見つかりません(削除または移動されています): /Users/me/Desktop/flix_ge_dungeon" ]
+                    |> ProgramTest.expectViewHasNot [ text "ダンジョン" ]
         , test "level.json を開くと本文とスキーマの getFile が飛び、本文が届くと previewItems が飛ぶ" <|
             \() ->
                 booted
