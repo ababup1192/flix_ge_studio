@@ -119,6 +119,10 @@ mod Genesis {
                 }
         }
 
+    /// path が登録済みの公式テンプレートか (new-game の複製元の白名簿)。
+    pub def isStarter(path: String): Bool =
+        path != "" and (families() |> List.exists(f -> f#starter == path))
+
     /// GET /genesis/title?family=… — ジャンルカードの絵。公式テンプレートの
     /// golden/title.png のバイト列。テンプレート無し・絵無し・engine 不在は None
     /// (呼び手が 404 = 絵なしカードに倒す)。

@@ -1043,6 +1043,9 @@ update msg model =
                             , ( "title", E.string info.title )
                             , ( "w", E.int info.w )
                             , ( "h", E.int info.h )
+
+                            -- 選んだジャンルの公式テンプレート(空 = 既定の複製元)
+                            , ( "starter", E.string info.starter )
                             ]
                         )
                         m1

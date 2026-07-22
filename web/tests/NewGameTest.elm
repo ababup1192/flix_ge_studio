@@ -108,7 +108,7 @@ suite =
                         |> Tuple.second
                         |> Expect.equal
                             (NewGame.OutCreate
-                                { name = "block_breaker2", title = "くずしブロック2", w = 240, h = 320 }
+                                { name = "block_breaker2", title = "くずしブロック2", w = 240, h = 320, starter = "" }
                             )
             ]
         , describe "ポーリングの始まりと止まり"

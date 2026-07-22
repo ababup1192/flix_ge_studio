@@ -167,7 +167,7 @@ type Msg
 {-| サーバへ送りたい事(封筒の発行は Main)。 -}
 type Out
     = OutNone
-    | OutCreate { name : String, title : String, w : Int, h : Int }
+    | OutCreate { name : String, title : String, w : Int, h : Int, starter : String }
     | OutFetchFamilies
     | OutFetchGenesisPrompt { family : String, direction : String }
     | OutCopyPrompt String
@@ -295,11 +295,19 @@ submit model =
                 ( { model | error = Just reason }, OutNone )
 
             Nothing ->
-                case size of
-                    Nothing ->
+                let
+                    -- 選んだジャンルの公式テンプレート(空 = 既定の複製元)。
+                    -- テンプレートがある時、サイズはテンプレートが決めるので聞かない
+                    starter =
+                        selectedFamily model
+                            |> Maybe.map .starter
+                            |> Maybe.withDefault ""
+                in
+                case ( starter, size ) of
+                    ( "", Nothing ) ->
                         ( { model | error = Just "画面サイズは正の数で入れてください" }, OutNone )
 
-                    Just ( w, h ) ->
+                    _ ->
                         ( { model | phase = Creating { lines = [] }, dir = Nothing, logExpanded = False, error = Nothing }
                         , OutCreate
                             { name = name
@@ -311,8 +319,9 @@ submit model =
 
                                     title ->
                                         title
-                            , w = w
-                            , h = h
+                            , w = size |> Maybe.map Tuple.first |> Maybe.withDefault 0
+                            , h = size |> Maybe.map Tuple.second |> Maybe.withDefault 0
+                            , starter = starter
                             }
                         )
 

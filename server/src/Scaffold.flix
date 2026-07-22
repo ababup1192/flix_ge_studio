@@ -130,18 +130,25 @@ mod Scaffold {
                 let title = Map.get("title", fields) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("");
                 let w = JsonCodec.intOr("w", 0, fields);
                 let h = JsonCodec.intOr("h", 0, fields);
+                // starter = 複製元の公式テンプレート (空 = 既定の game-starter)。
+                // 白名簿 (Genesis の登録) の外は通さない。サイズはテンプレートが決める。
+                let starter = Map.get("starter", fields)
+                    |> Option.flatMap(JsonCodec.expectString)
+                    |> Option.getWithDefault("");
                 if (not isName(name))
                     (400, failJson("不正な名前です (小文字始まり・小文字/数字/_ のみ): ${name}"))
                 else if (String.trim(title) == "")
                     (400, failJson("title を入れてください"))
-                else if (not (sizeOk(w) and sizeOk(h)))
+                else if (starter != "" and not Genesis.isStarter(starter))
+                    (400, failJson("知らないテンプレートです: ${starter}"))
+                else if (starter == "" and not (sizeOk(w) and sizeOk(h)))
                     (400, failJson("w / h は 64〜1024 で指定してください (w=${w}, h=${h})"))
                 else
-                    startNewChecked(state, parentOf(fields), name, title, w, h)
+                    startNewChecked(state, parentOf(fields), name, title, w, h, starter)
         }
 
     /// 名前・大きさの検分が済んだ後の、置き場所と engine の検分 → 起動。
-    def startNewChecked(state: Runner.State, parent: String, name: String, title: String, w: Int32, h: Int32): (Int32, Json) \ IO =
+    def startNewChecked(state: Runner.State, parent: String, name: String, title: String, w: Int32, h: Int32, starter: String): (Int32, Json) \ IO =
         let gameDir = "${parent}/${name}";
         let engine = engineDir();
         if (not new JFile(parent).isDirectory())
@@ -151,8 +158,14 @@ mod Scaffold {
         else if (not new JFile("${engine}/Makefile").isFile())
             (500, failJson("engine が見つかりません (Makefile 無し): ${engine} — EDITOR_ENGINE で場所を教えてください"))
         else {
-            let (status, json) = Runner.launchMake(state, engine, "new-game",
-                "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}" :: "W=${w}" :: "H=${h}" :: Nil,
+            // テンプレート指定時は W/H を渡さない (サイズと Doc はテンプレートが持つ)。
+            let args =
+                if (starter == "")
+                    "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}" :: "W=${w}" :: "H=${h}" :: Nil
+                else
+                    "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}"
+                        :: "TEMPLATE=${String.dropLeft(String.length("templates/"), starter)}" :: Nil;
+            let (status, json) = Runner.launchMake(state, engine, "new-game", args,
                 busy = "新しいゲームを作っている最中です");
             // 産まれる場所を web に教える — 完了後の「開く」はこの dir を使う
             // (ログの target は make のターゲット名であってパスではない)。
