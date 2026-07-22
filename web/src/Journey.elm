@@ -215,11 +215,12 @@ view model =
                 [ quietCard "読み込み中…" "次のやることを考えています。" ]
 
             Failed _ ->
-                -- 提案が読めない時も行き止まりにしない — 素直にアトリエへ誘う
+                -- 提案が読めない時も行き止まりにしない。して欲しいことを言う:
+                -- 何かひとつ変えて、保存した瞬間にゲームが変わるのを見てもらう
                 [ div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5" ]
-                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "アトリエへどうぞ" ]
+                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "ひとつ、変えてみましょう" ]
                     , div [ HA.class "mt-1.5 text-xs text-ink-soft" ]
-                        [ text "素材と数値は、ぜんぶアトリエにあります。" ]
+                        [ text "色でも数値でもいい。保存した瞬間、走っているゲームに映ります。" ]
                     , div [ HA.class "mt-4" ]
                         [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked ToAtelier) ]
                             [ text "アトリエへ" ]
