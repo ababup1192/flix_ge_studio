@@ -81,4 +81,28 @@ suite =
                 in
                 ( after.miniPin, after.miniScenes, after.miniChanges )
                     |> Expect.equal ( Nothing, [], [] )
+        , test "保存応答の baking:true でその場でスピナー状態になる(ポーリングを待たない)" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    saved =
+                        E.object
+                            [ ( "id", E.int 6 )
+                            , ( "kind", E.string "putFile" )
+                            , ( "ok", E.bool True )
+                            , ( "body"
+                              , E.object
+                                    [ ( "ok", E.bool True )
+                                    , ( "mtime", E.int 999 )
+                                    , ( "baking", E.bool True )
+                                    ]
+                              )
+                            ]
+
+                    ( after, _ ) =
+                        Main.update (Main.GotApiResponse saved) { m0 | putReq = Just 6 }
+                in
+                after.changesBaking |> Expect.equal True
         ]

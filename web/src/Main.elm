@@ -4325,6 +4325,12 @@ handleOkByKind env model =
 
                                             Nothing ->
                                                 model.mtime
+
+                                    -- サーバが保存の瞬間に検査を蹴った知らせ。その場でスピナーを
+                                    -- 出し、知らせのポーリングも 2 秒間隔へ(次の 8 秒を待たない)。
+                                    -- 旧サーバ(baking 無し=False)は従来どおり。誤検知は
+                                    -- /journey/changes の baking:false が通常どおり倒す
+                                    , changesBaking = model.changesBaking || result.baking
                                 }
                         in
                         if model.lastSaveWasAuto then
@@ -5284,10 +5290,10 @@ viewMiniStatus model =
         , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
             [ text
                 (if running then
-                    "動きの確認はゲームの窓で"
+                    "保存はゲームの画面にすぐ反映されます(ここは焼き上がりの記録)"
 
                  else
-                    "絵は起動していなくても映ります"
+                    "▶ 起動すると、保存が実際のゲームにすぐ反映されます"
                 )
             ]
         ]

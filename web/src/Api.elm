@@ -71,9 +71,11 @@ type alias FileContent =
 
 {-| PUT /file の結果。409(競合)も {ok:false, currentMtime} の JSON が契約なので、
 成功・競合・その他失敗を 1 つのデコーダで受ける(/health と同じ流儀)。
+baking はサーバが保存の瞬間に検査(焼き)を蹴れたかの知らせ —
+無い(旧サーバ)は False に倒す(従来どおりポーリング任せ)。
 -}
 type PutFileResult
-    = PutOk { mtime : Maybe Int }
+    = PutOk { mtime : Maybe Int, baking : Bool }
     | PutConflict { currentMtime : Int }
     | PutErr String
 
@@ -310,7 +312,9 @@ putFileResultDecoder =
         |> D.andThen
             (\ok ->
                 if ok then
-                    D.map (\mtime -> PutOk { mtime = mtime }) (opt "mtime" D.int)
+                    D.map2 (\mtime baking -> PutOk { mtime = mtime, baking = baking })
+                        (opt "mtime" D.int)
+                        (withDefault False (D.field "baking" D.bool))
 
                 else
                     D.oneOf

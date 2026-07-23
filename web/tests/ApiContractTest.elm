@@ -258,10 +258,10 @@ suite =
                     D.decodeString Api.fileContentDecoder fileFixture
                         |> Expect.equal
                             (Ok { path = "assets/characters.json", content = "{}", mtime = Just 1784274206557 })
-            , test "PUT 200 — 新しい mtime が読める" <|
+            , test "PUT 200 — 新しい mtime が読める(baking 無しの旧サーバは False に倒す)" <|
                 \_ ->
                     D.decodeString Api.putFileResultDecoder putOkFixture
-                        |> Expect.equal (Ok (Api.PutOk { mtime = Just 1784517940797 }))
+                        |> Expect.equal (Ok (Api.PutOk { mtime = Just 1784517940797, baking = False }))
             , test "PUT 409 — 競合(今ディスクに居る版の mtime)として読める" <|
                 \_ ->
                     D.decodeString Api.putFileResultDecoder putConflictFixture
