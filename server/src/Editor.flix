@@ -128,10 +128,6 @@ mod Editor {
                 sendJson(status, json, exchange)
             }
             case ("GET", "/projects/new/log") => sendJson(200, Runner.logJson(scaffold), exchange)
-            case ("POST", "/scaffold/doc") => withProject(selection, exchange, dir -> {
-                let (status, json) = Scaffold.doc(dir, readBody(exchange));
-                sendJson(status, json, exchange)
-            })
             case ("GET", "/health")    => withProject(selection, exchange, dir -> handleHealth(dir, exchange))
             case ("GET", "/files")     => withProject(selection, exchange, dir -> handleFiles(dir, exchange))
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
@@ -198,10 +194,6 @@ mod Editor {
             })
             case ("GET", "/prompt/wire") => withProject(selection, exchange, dir -> {
                 let (status, json) = Atelier.promptWireJson(dir, params);
-                sendJson(status, json, exchange)
-            })
-            case ("GET", "/prompt/game") => withProject(selection, exchange, dir -> {
-                let (status, json) = Atelier.promptGameJson(dir, params);
                 sendJson(status, json, exchange)
             })
             case ("GET", "/prompt/extend") => withProject(selection, exchange, dir -> {

@@ -111,19 +111,6 @@ mod TestAtelier {
              String.contains(substr = "方向性: おまかせ", fallback),
              String.contains(substr = "/wire-doc", Atelier.wirePrompt("/proj", "assets/x.kind.json"))))
 
-    /// 遊びのプロンプト: プロジェクトと方向性が本文に載り、規約 (AGENTS.md と skills) と
-    /// 仕上げ (make bake まで) を参照する形になっている。
-    @Test
-    def testGamePrompt(): Unit \ Assert =
-        let prompt = Atelier.gamePrompt("/proj", "星をあつめる採集ゲーム");
-        Assert.assertEq(
-            expected = (true, true, true, true, true),
-            (String.startsWith(prefix = "このゲームに遊びを実装してください。", prompt),
-             String.contains(substr = "対象プロジェクト: /proj", prompt),
-             String.contains(substr = "どんな遊びか: 星をあつめる採集ゲーム", prompt),
-             String.contains(substr = "AGENTS.md と .claude/skills", prompt),
-             String.contains(substr = "make bake", prompt)))
-
     /// 自作コピーの名前づけ: スロットの種類の尻尾を受け継ぐ。名前の門番は
     /// 英数・_ - と途中の . だけを通す (区切り・.. ・端の . は弾く)。
     @Test

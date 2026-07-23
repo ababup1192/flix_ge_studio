@@ -189,19 +189,6 @@ mod Atelier {
             :: "橋渡しテストは3本まで。make check / make test で確認してください。"
             :: Nil)
 
-    /// 「あそびを作らせる」の日本語プロンプト (純粋)。長い規約はゲーム側の
-    /// AGENTS.md と .claude/skills に置いてあり、ここは参照するだけ。
-    pub def gamePrompt(projectDir: String, direction: String): String =
-        String.unlines(
-            "このゲームに遊びを実装してください。"
-            :: "対象プロジェクト: ${projectDir}"
-            :: "どんな遊びか: ${direction}"
-            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、調整する数値や配置は Doc(スキーマは sections 方言、/scaffold で増やせる)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
-            :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
-            :: "仕上げ: make check / make test を緑にし、Bake.all の場面を遊びが伝わる絵に育て、make bake まで済ませる。素材の候補が要るなら atelier/ に置き atelier-preview まで(assets/ 直書き禁止)。"
-            :: "報告の前に /critique-code で自己批評し(抽象度・Doc 境界・テスト方針・読みやすさ)、指摘を潰してから報告する。"
-            :: Nil)
-
     /// スキーマの description から一行の手引きを作る (純粋): 最初の「。」までで切り、
     /// 80 文字に収める。「。」無しはそのまま (切りようがない)。
     pub def hintOf(description: String): String =
@@ -285,15 +272,6 @@ mod Atelier {
                 (200, JObject(Map#{"prompt" => JString(wirePrompt(dir, doc))}))
             case Some(doc) => (400, failJson("不正な Doc の経路です (assets/ 直下のみ): ${doc}"))
             case None      => (400, failJson("doc を指定してください"))
-        }
-
-    /// GET /prompt/game?direction=… の応答 (status, body)。どんな遊びかは必須
-    /// (空のままではプロンプトにならないので 400 で聞き返す)。
-    pub def promptGameJson(dir: String, params: Map[String, String]): (Int32, Json) =
-        match Map.get("direction", params) |> Option.filter(text -> text != "") {
-            case Some(direction) =>
-                (200, JObject(Map#{"prompt" => JString(gamePrompt(dir, direction))}))
-            case None => (400, failJson("direction を指定してください (どんな遊びかを言葉で)"))
         }
 
     /// POST /atelier/copy (body: {slot, name}) — スロットの写しを atelier/ に置く自作の出発点。
