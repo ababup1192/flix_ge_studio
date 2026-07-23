@@ -9163,10 +9163,19 @@ subscriptions model =
             Sub.none
 
         -- ホームとアトリエに居る間、見た目の検査を進めて知らせ・実況・
-        -- ミニプレイヤーの追従を養う(8 秒間隔)。この口を持たないサーバ
-        -- (404)では回さない
+        -- ミニプレイヤーの追従を養う。平時は 8 秒間隔(サーバ負荷を無闇に
+        -- 上げない)だが、エンジンが描き直している間だけ 2 秒間隔 —
+        -- 焼き上がり(絵の差し替わり)への気づきを待たせないため。
+        -- この口を持たないサーバ(404)では回さない
         , if model.screen == Editing && (model.tab == HomeTab || model.tab == AtelierTab) && model.changesAvailable then
-            Time.every 8000 (\_ -> ChangesPollTick)
+            Time.every
+                (if model.changesBaking then
+                    2000
+
+                 else
+                    8000
+                )
+                (\_ -> ChangesPollTick)
 
           else
             Sub.none
