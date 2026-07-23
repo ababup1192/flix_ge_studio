@@ -1,4 +1,4 @@
-port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, init, main, miniShownScene, update, view)
+port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, galleryImageUrl, init, main, miniShownScene, update, view)
 
 {-| リソース(スキーマ付き JSON)エディタ。
 
@@ -4091,6 +4091,16 @@ handleOkByKind env model =
                                     , changesAvailable = True
                                     , changesModal = Nothing
                                     , scenes = Nothing
+
+                                    -- ミニプレイヤーは前のプロジェクトの残骸を持ち越さない —
+                                    -- 場面一覧・ピン・知らせ・目盛り・拡大が残ると、次の取得までの間
+                                    -- 前のゲームの場面名で描いてしまう(混線)
+                                    , miniPin = Nothing
+                                    , miniScenes = []
+                                    , miniChanges = []
+                                    , miniRefresh = 0
+                                    , miniSwapNotice = False
+                                    , miniZoom = Nothing
                                     , atelier = Atelier.init
                                     , title = result.title
                                     , root = result.dir
@@ -4133,6 +4143,19 @@ handleOkByKind env model =
                                     , portraitReqs = Dict.empty
                                     , crossRename = Nothing
                                     , crossRun = Nothing
+
+                                    -- 前のプロジェクト宛ての往復・保存の残骸も無効化 —
+                                    -- 特に loadReq が残ると、遅れて届く前プロジェクトの
+                                    -- getFile 応答を本文として受けてしまう
+                                    , mtime = Nothing
+                                    , loadReq = Nothing
+                                    , putReq = Nothing
+                                    , savingText = Nothing
+                                    , conflict = Nothing
+                                    , wizard = Nothing
+                                    , resourceWarnings = []
+                                    , activeDocs = Dict.empty
+                                    , activeReq = Nothing
                                 }
 
                         ( m2, c2 ) =
@@ -5051,7 +5074,7 @@ view model =
                             viewShell model (Html.map AtelierMsg (Atelier.viewExtend model.atelier))
 
                         else if Atelier.showPicks model.atelier then
-                            viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))
+                            viewShell model (Html.map AtelierMsg (Atelier.view { base = model.serverBase, project = Api.projectKey model.root } model.atelier))
 
                         else
                             viewEditing model
@@ -5313,7 +5336,7 @@ miniImageUrl model name =
                 |> Maybe.map .ver
                 |> Maybe.withDefault 0
     in
-    galleryImageUrl model.serverBase "golden" name
+    galleryImageUrl model.serverBase model.root "golden" name
         ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt model.miniRefresh)
 
 
@@ -5453,9 +5476,9 @@ viewChangesModal model =
                                 [ text ("v" ++ String.fromInt current.ver) ]
                             ]
                         , div [ HA.class "flex flex-wrap gap-4" ]
-                            [ changePane "前" (galleryImageUrl model.serverBase "golden/archive" (baseName current.before))
+                            [ changePane "前" (galleryImageUrl model.serverBase model.root "golden/archive" (baseName current.before))
                             , changePane "今"
-                                (galleryImageUrl model.serverBase "golden" (baseName current.after)
+                                (galleryImageUrl model.serverBase model.root "golden" (baseName current.after)
                                     -- 中身が入れ替わるファイルなので v でキャッシュを避ける
                                     ++ ("&t=" ++ String.fromInt current.ver)
                                 )
@@ -5532,7 +5555,7 @@ viewScenesModal model =
                                     div [ HA.class "overflow-hidden rounded border border-edge bg-panel" ]
                                         [ img
                                             [ HA.class "scene-shot block w-full bg-well"
-                                            , HA.src (galleryImageUrl model.serverBase "gallery" name)
+                                            , HA.src (galleryImageUrl model.serverBase model.root "gallery" name)
                                             , HA.alt name
                                             , HA.attribute "loading" "lazy"
                                             ]
@@ -5547,10 +5570,19 @@ viewScenesModal model =
 
 {-| 画像の URL。base(接続先サーバ)+ クエリで組む — vite dev(別オリジン)
 でも .app(同一オリジン = base 空)でも同じ式で通すため。
+p= はプロジェクトの識別子(root 由来)— title.png 等の定番名はプロジェクト間で
+同名になるので、URL に混ぜないと前のプロジェクトの絵がブラウザキャッシュから
+出てしまう。サーバは未知のクエリを無視する(変更不要)。
 -}
-galleryImageUrl : String -> String -> String -> String
-galleryImageUrl base dir name =
-    base ++ "/gallery/image?dir=" ++ Url.percentEncode dir ++ "&name=" ++ Url.percentEncode name
+galleryImageUrl : String -> String -> String -> String -> String
+galleryImageUrl base root dir name =
+    base
+        ++ "/gallery/image?p="
+        ++ Api.projectKey root
+        ++ "&dir="
+        ++ Url.percentEncode dir
+        ++ "&name="
+        ++ Url.percentEncode name
 
 
 {-| 候補プロジェクトの dir が、走っているゲームの cwd 一覧のどれかと同じ場所を
@@ -6967,7 +6999,7 @@ viewFormPane model =
 
                          else
                             img
-                                [ HA.src (model.serverBase ++ "/atelier/preview?file=" ++ Url.percentEncode path)
+                                [ HA.src (model.serverBase ++ "/atelier/preview?file=" ++ Url.percentEncode path ++ "&p=" ++ Api.projectKey model.root)
                                 , HA.alt ""
                                 , HA.class "mt-2 w-full rounded border border-edge bg-black/50"
                                 , HA.style "image-rendering" "pixelated"

@@ -1,6 +1,7 @@
 module MiniPlayerTest exposing (suite)
 
-{-| ミニプレイヤーの「どの場面を映すか」の規則(純関数)。
+{-| ミニプレイヤーの「どの場面を映すか」の規則(純関数)と、
+プロジェクトをまたぐ混線の防ぎ(URL の区別・切り替え時の初期化)。
 
 チップの並びやオーバーレイ等の見た目は検査しない — 演出は目視の仕事。
 サーバ(Changes)は新しい変化を列の末尾へ積む契約なので、自動は末尾を追う。
@@ -9,6 +10,7 @@ module MiniPlayerTest exposing (suite)
 
 import Expect
 import Journey
+import Json.Encode as E
 import Main
 import Test exposing (Test, describe, test)
 
@@ -41,4 +43,42 @@ suite =
                     , scenes = [ "forest.png", "title.png", "cave.png" ]
                     }
                     |> Expect.equal (Just "cave.png")
+        , test "絵の URL はプロジェクトごとに異なる(定番名 title.png でもキャッシュが混ざらない)" <|
+            \() ->
+                Main.galleryImageUrl "" "/Users/me/Desktop/flix_ge_village" "golden" "title.png"
+                    |> Expect.notEqual
+                        (Main.galleryImageUrl "" "/Users/me/Desktop/flix_ge_dungeon" "golden" "title.png")
+        , test "プロジェクト切り替えでピン・場面一覧・知らせが初期化される" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    before =
+                        { m0
+                            | miniPin = Just "title.png"
+                            , miniScenes = [ "title.png", "forest.png" ]
+                            , miniChanges = [ change "title.png" 3 ]
+                        }
+
+                    switched =
+                        E.object
+                            [ ( "id", E.int 9 )
+                            , ( "kind", E.string "selectProject" )
+                            , ( "ok", E.bool True )
+                            , ( "body"
+                              , E.object
+                                    [ ( "ok", E.bool True )
+                                    , ( "dir", E.string "/Users/me/Desktop/flix_ge_dungeon" )
+                                    , ( "title", E.string "ダンジョン" )
+                                    , ( "design", E.object [ ( "w", E.float 320 ), ( "h", E.float 240 ) ] )
+                                    ]
+                              )
+                            ]
+
+                    ( after, _ ) =
+                        Main.update (Main.GotApiResponse switched) before
+                in
+                ( after.miniPin, after.miniScenes, after.miniChanges )
+                    |> Expect.equal ( Nothing, [], [] )
         ]

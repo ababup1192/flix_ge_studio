@@ -23,6 +23,7 @@ module Api exposing
     , filesDecoder
     , healthResultDecoder
     , previewResultDecoder
+    , projectKey
     , projectSwitchDecoder
     , projectsDecoder
     , putFileResultDecoder
@@ -350,6 +351,20 @@ runningGamesDecoder : D.Decoder (List String)
 runningGamesDecoder =
     D.field "games" (D.list (D.field "cwd" D.string))
         |> D.map (List.filter (\cwd -> cwd /= ""))
+
+
+{-| プロジェクト root(絶対パス)から短い識別子(数字だけ)を作る。
+golden/ や atelier/ のファイル名(title.png 等)はプロジェクト間で同名に
+なり得るので、絵の URL にこれを混ぜてブラウザキャッシュの混線
+(前のプロジェクトの絵が映る)を断つ。サーバは未知のクエリを無視するので
+サーバ側の変更は要らない。root をそのまま使わないのは長い・記号が混ざるため
+(djb2 の畳み込み。root が違えばまず違う値になれば足りる)。
+-}
+projectKey : String -> String
+projectKey root =
+    root
+        |> String.foldl (\c acc -> modBy 16777213 (acc * 33 + Char.toCode c)) 5381
+        |> String.fromInt
 
 
 projectSwitchDecoder : D.Decoder ProjectSwitch

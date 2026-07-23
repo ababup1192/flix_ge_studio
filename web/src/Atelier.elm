@@ -1665,8 +1665,8 @@ Doc エディタもそのタブ群もここには出ない)。1 行 = 1 素材�
 行はカードで、押すと開いて候補づくりのパネルがその中に出る
 (最上段の常設バーは置かない)。
 -}
-view : String -> Model -> Html Msg
-view base model =
+view : ImgSrc -> Model -> Html Msg
+view src model =
     div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
@@ -1677,7 +1677,7 @@ view base model =
 
                     _ ->
                         []
-                , List.map (viewPickRow base model) (pickRows model)
+                , List.map (viewPickRow src model) (pickRows model)
                 , case model.data of
                     Ready candidates ->
                         viewComboTrial candidates.slots ++ viewLoose candidates.loose
@@ -1694,7 +1694,7 @@ view base model =
                 text ""
         , case model.lightbox of
             Just lightbox ->
-                viewLightbox base model.bust lightbox
+                viewLightbox src model.bust lightbox
 
             Nothing ->
                 text ""
@@ -2169,8 +2169,8 @@ anyPreviewMissing candidates =
 閉じる(パネル内の「閉じる」でも閉じる)。採用・アーカイブ送りの操作は
 従来のまま候補カードの中。
 -}
-viewPickRow : String -> Model -> PickRow -> Html Msg
-viewPickRow base model row =
+viewPickRow : ImgSrc -> Model -> PickRow -> Html Msg
+viewPickRow src model row =
     let
         isOpen =
             createAnchoredTo model row.file
@@ -2222,8 +2222,8 @@ viewPickRow base model row =
                 [ case row.slot of
                     Just slot ->
                         div [ HA.class "mt-3 flex flex-wrap gap-2" ]
-                            (viewCurrentCard base model (isBaking model) slot
-                                :: List.map (viewCard base model (isBaking model) slot.slot) slot.candidates
+                            (viewCurrentCard src model (isBaking model) slot
+                                :: List.map (viewCard src model (isBaking model) slot.slot) slot.candidates
                             )
                             :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
                                (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
@@ -2289,10 +2289,10 @@ viewPickRow base model row =
 {-| 「いまの見た目」の参照カード — 採用中の姿を並べて見比べるための参照。
 押せない(候補ではない)ので、枠も落ち着かせる。
 -}
-viewCurrentCard : String -> Model -> Bool -> Slot -> Html Msg
-viewCurrentCard base model baking slot =
+viewCurrentCard : ImgSrc -> Model -> Bool -> Slot -> Html Msg
+viewCurrentCard src model baking slot =
     div [ HA.class "atelier-card atelier-card-current w-56 rounded-lg border border-edge/60 bg-panel p-3 opacity-80" ]
-        [ viewPreview base
+        [ viewPreview src
             model.bust
             { file = slot.slot, note = Nothing, compareWith = Nothing, isPrev = False }
             (previewState { ready = slot.currentPreviewReady, baking = baking })
@@ -2326,8 +2326,8 @@ viewCurrentCard base model baking slot =
 伝播は止める。note はカードの説明文、compareWith は「いまの見た目」の
 プレビューキー(候補カードだけ Just — 拡大の中で A/B に切り替える)。
 -}
-viewPreview : String -> Int -> { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool } -> PreviewState -> Html Msg
-viewPreview base bust info state =
+viewPreview : ImgSrc -> Int -> { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool } -> PreviewState -> Html Msg
+viewPreview src bust info state =
     div
         (HA.class "atelier-preview relative flex h-[180px] w-full items-center justify-center overflow-hidden rounded bg-black/50"
             :: (case state of
@@ -2341,7 +2341,7 @@ viewPreview base bust info state =
         (case state of
             PreviewImage ->
                 [ Html.img
-                    [ HA.src (previewUrl base bust info.file)
+                    [ HA.src (previewUrl src bust info.file)
                     , HA.alt ""
                     , HA.class "max-h-full max-w-full object-contain"
                     , HA.style "image-rendering" "pixelated"
@@ -2374,13 +2374,28 @@ viewPreview base bust info state =
         )
 
 
-previewUrl : String -> Int -> String -> String
-previewUrl base bust file =
-    base ++ "/atelier/preview?file=" ++ Url.percentEncode file ++ "&t=" ++ String.fromInt bust
+{-| 絵の URL の材料。base は接続先サーバ(vite dev では別オリジン、.app では "")。
+project はプロジェクトの識別子(Main が root から作る)— 候補のファイル名は
+プロジェクト間で同名になり得るので、URL に混ぜてブラウザキャッシュの混線
+(前のプロジェクトの絵が映る)を断つ。サーバは未知のクエリを無視する。
+-}
+type alias ImgSrc =
+    { base : String, project : String }
 
 
-viewCard : String -> Model -> Bool -> String -> Candidate -> Html Msg
-viewCard base model baking slotName candidate =
+previewUrl : ImgSrc -> Int -> String -> String
+previewUrl src bust file =
+    src.base
+        ++ "/atelier/preview?file="
+        ++ Url.percentEncode file
+        ++ "&p="
+        ++ src.project
+        ++ "&t="
+        ++ String.fromInt bust
+
+
+viewCard : ImgSrc -> Model -> Bool -> String -> Candidate -> Html Msg
+viewCard src model baking slotName candidate =
     let
         selected =
             model.selected == Just { slot = slotName, file = candidate.file }
@@ -2394,7 +2409,7 @@ viewCard base model baking slotName candidate =
             ]
         , HE.onClick (CandidateClicked slotName candidate.file)
         ]
-        [ viewPreview base
+        [ viewPreview src
             model.bust
             { file = candidate.file, note = candidate.note, compareWith = Just slotName, isPrev = candidate.isPrev }
             (previewState { ready = candidate.previewReady, baking = baking })
@@ -2695,8 +2710,8 @@ viewOverlay overlay =
 (Esc の購読は Main)。候補には「いまの見た目と見比べる」トグル —
 同じ場所で絵だけが入れ替わるのが一番比べやすい。
 -}
-viewLightbox : String -> Int -> Lightbox -> Html Msg
-viewLightbox base bust lightbox =
+viewLightbox : ImgSrc -> Int -> Lightbox -> Html Msg
+viewLightbox src bust lightbox =
     let
         shownFile =
             if lightbox.showingCurrent then
@@ -2710,7 +2725,7 @@ viewLightbox base bust lightbox =
         , HE.onClick LightboxClosed
         ]
         [ Html.img
-            [ HA.src (previewUrl base bust shownFile)
+            [ HA.src (previewUrl src bust shownFile)
             , HA.alt ""
             , HA.class "max-h-[85vh] max-w-[90vw] object-contain"
             , HA.style "image-rendering" "pixelated"
