@@ -617,17 +617,24 @@ mod Editor {
                     case Err(message) => sendJson(400, errorJson(message), exchange)
                     case Ok(_)        => {
                         // fail-open: 検査の起動失敗は保存の失敗ではない — 応答は保存成功のまま返す。
-                        if (Changes.kicksPumpOnSave(relPath))
-                            try {
-                                discard Changes.pump(changes, runner, dir)
-                            } catch {
-                                case e: Exception =>
-                                    println("[studio] 保存後の検査の起動に失敗 (保存は成功): ${e.toString()}")
-                            }
-                        else ();
+                        // baking は「検査を蹴れたか」— web はこれを見てスピナーを即出す
+                        // (次のポーリングを待つ8秒の気づき遅れをなくす)。
+                        let baking =
+                            if (Changes.kicksPumpOnSave(relPath))
+                                try {
+                                    discard Changes.pump(changes, runner, dir);
+                                    true
+                                } catch {
+                                    case e: Exception => {
+                                        println("[studio] 保存後の検査の起動に失敗 (保存は成功): ${e.toString()}");
+                                        false
+                                    }
+                                }
+                            else false;
                         sendJson(200, JObject(Map#{
-                            "ok"    => JBool(true),
-                            "mtime" => JNumber(mtimeToBd(mtimeOf(dir, relPath)))
+                            "ok"     => JBool(true),
+                            "mtime"  => JNumber(mtimeToBd(mtimeOf(dir, relPath))),
+                            "baking" => JBool(baking)
                         }), exchange)
                     }
                 }
