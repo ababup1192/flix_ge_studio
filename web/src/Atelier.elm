@@ -374,7 +374,7 @@ type alias Create =
     , path : Maybe CreatePath
 
     -- スロット行の「✨ 候補を作る」から開いたか。True の間はパネルを
-    -- 選択中スロットの行の直下に描く(最上段の常設バーは畳んで見せない)
+    -- 選択中スロットの行の直下に描く(パネルが画面に出るのはこの時だけ)
     , anchored : Bool
     }
 
@@ -908,7 +908,7 @@ update msg model =
                     ( model, OutNone )
 
         CreateToggled ->
-            -- 開閉バーからの操作は常設パネルの流儀に戻す(行への繋留を解く)
+            -- パネル上部の開閉バー(とじる)— 閉じて行への繋留も解く
             ( mapCreate (\c -> { c | open = Just (not (createOpen model)), anchored = False }) model
             , OutNone
             )
@@ -1834,7 +1834,9 @@ createAnchoredTo model file =
     createOpen model && model.create.anchored && model.create.slot == Just file
 
 
-{-| パネルがどこかの行に繋留されているか(その間、最上段の常設パネルは出さない)。 -}
+{-| パネルがどこかの行に繋留されているか(開いたパネルは必ずどこかの行の直下に出る、
+の覗き窓 — 最上段に常設バーは置かない)。
+-}
 createAnchored : Model -> Bool
 createAnchored model =
     createOpen model && model.create.anchored && model.create.slot /= Nothing
@@ -2088,7 +2090,9 @@ cardAction model info =
 {-| 素材セクションの画面(Main が showPicks の時だけこれを主役に描く —
 Doc エディタもそのタブ群もここには出ない)。1 行 = 1 素材スロット
 (role:material の宣言全部)で、候補はスロット別にその行へ付く。
-候補が届く前(Loading 等)でも、つくるバーと行は出す(空の画面で待たせない)。
+候補が届く前(Loading 等)でも行は出す(空の画面で待たせない)。
+候補づくりのパネルは各行の「✨ 候補を作る」からその行の直下に開く
+(最上段の常設バーは置かない)。
 -}
 view : String -> Model -> Html Msg
 view base model =
@@ -2096,12 +2100,6 @@ view base model =
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
                 [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を切り替える" ] ]
-                , if createAnchored model then
-                    -- 行に繋留中は最上段には出さない(パネルの実体は行の直下に 1 つ)
-                    []
-
-                  else
-                    [ viewCreate model ]
                 , case model.data of
                     Ready candidates ->
                         viewBakePanel model candidates
@@ -3166,11 +3164,10 @@ viewLightbox base bust lightbox =
 -- つくる(創作の第一幕)
 
 
-{-| 「つくる」の畳めるセクション。畳んでいる時は 1 行の帯だけ
-(候補がある時の既定 — えらぶが主役のまま)。開くと「なにをつくる?」の
+{-| 「つくる」の畳めるセクション。開くと「なにをつくる?」の
 選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
-実体は 1 つで、普段は素材の最上段に、スロット行から開いた時(anchored)は
-その行の直下に描かれる。
+実体は 1 つで、スロット行の「✨ 候補を作る」から開いた時(anchored)にだけ
+その行の直下に描かれる(最上段の常設バーは置かない)。
 -}
 viewCreate : Model -> Html Msg
 viewCreate model =

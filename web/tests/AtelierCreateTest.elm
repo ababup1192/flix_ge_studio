@@ -77,14 +77,7 @@ suite =
                 \_ ->
                     Atelier.createOpen withCandidates
                         |> Expect.equal False
-            , test "手で開けば候補があっても開いたまま" <|
-                \_ ->
-                    begin withCandidates
-                        |> step Atelier.CreateToggled
-                        |> Tuple.first
-                        |> Atelier.createOpen
-                        |> Expect.equal True
-            , test "行の「✨ 候補を作る」で開くと押した行にだけ繋留され、最上段には出さない" <|
+            , test "行の「✨ 候補を作る」で開くと押した行にだけ繋留される(候補があっても開いたまま)" <|
                 \_ ->
                     let
                         opened =
@@ -97,7 +90,7 @@ suite =
                     , Atelier.createAnchored opened
                     )
                         |> Expect.equal ( True, False, True )
-            , test "開閉バーの操作で繋留が解ける(閉じた後は常設パネルの流儀に戻る)" <|
+            , test "パネルの開閉バー(とじる)で閉じ、行への繋留も解ける" <|
                 \_ ->
                     begin withCandidates
                         |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
@@ -214,7 +207,7 @@ suite =
                     let
                         closed =
                             begin fresh
-                                |> step Atelier.CreateToggled
+                                |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
                                 |> step (Atelier.GameDirectionEdited "星をバケツで")
                                 |> step Atelier.MakeGamePromptClicked
                                 |> Tuple.first

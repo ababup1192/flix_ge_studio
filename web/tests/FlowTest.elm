@@ -291,6 +291,23 @@ runningGamesBody cwds =
         ]
 
 
+{-| GET /atelier/slots の応答(素材スロット 1 件)。行の「✨ 候補を作る」は
+スロット行にしか無いので、素材セクションの検査はこれを流してから行う。
+-}
+atelierSlotsBody : E.Value
+atelierSlotsBody =
+    E.object
+        [ ( "slots"
+          , E.list identity
+                [ E.object
+                    [ ( "file", E.string "assets/villager.sprite.json" )
+                    , ( "title", E.string "村人の見た目" )
+                    ]
+                ]
+          )
+        ]
+
+
 {-| GET /journey/state の応答。id と nav だけが仕様(文言は見ない)。 -}
 journeyBody : String -> String -> E.Value
 journeyBody id nav =
@@ -730,6 +747,7 @@ suite =
                 landingWith resourcesBody
                     |> ProgramTest.ensureViewHas [ class "atelier-landing" ]
                     |> ProgramTest.ensureViewHas [ text "パラメータを変える" ]
+                    |> respondOk 0 "atelierSlots" atelierSlotsBody
                     |> ProgramTest.clickButton "素材を切り替える"
                     |> ProgramTest.ensureViewHas [ text "✨ 候補を作る" ]
                     |> ProgramTest.clickButton "← アトリエ"
@@ -786,6 +804,7 @@ suite =
                     |> respondOk 0 "journeyState" (journeyBody "pick" "atelier")
                     |> ProgramTest.clickButton "アトリエへ"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+                    |> respondOk 0 "atelierSlots" atelierSlotsBody
                     |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
                     |> ProgramTest.expectViewHas [ text "✨ 候補を作る" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
