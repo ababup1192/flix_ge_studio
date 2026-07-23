@@ -62,6 +62,9 @@ mod Editor {
         let caches = Caches.make();
         let runner = Runner.make();
         let game = Game.make();
+        // 起動したゲームの命令口 (dir → DEBUG_HTTP_PORT) の覚え書き。自動検査の焼きを
+        // 走行中のゲームに頼むのに使う。
+        let gamePorts = Game.makePorts();
         // 新しいゲームづくり (make new-game) 用の走行権。焼き・ゲーム起動と同時でも走れる。
         let scaffold = Runner.make();
         // 検査と基準の自動追随の記録 (見た目が変わった知らせ)。
@@ -72,7 +75,7 @@ mod Editor {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, scaffold, changes, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, webRoot, exchange)
                 } catch {
                     case e: Exception => {
                         let message = e.toString();
@@ -100,7 +103,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, scaffold: Runner.State, changes: Changes.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -133,7 +136,7 @@ mod Editor {
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
             case ("GET", "/resources") => withProject(selection, exchange, dir -> handleResources(dir, exchange))
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
-            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, readBody(exchange), exchange))
+            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, gamePorts, readBody(exchange), exchange))
             case ("POST", "/preview/ui") => withProject(selection, exchange, dir -> {
                 let (status, json) = PreviewUi.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)
@@ -158,11 +161,11 @@ mod Editor {
                 handleGallerySound(dir, params, exchange))
             // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
             case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
-                discard Changes.pump(changes, runner, dir);
+                discard Changes.pump(changes, runner, gamePorts, dir);
                 sendJson(200, Journey.stateJson(dir, Changes.unseenCount(changes, dir)), exchange)
             })
             case ("GET", "/journey/changes") => withProject(selection, exchange, dir ->
-                sendJson(200, Changes.pump(changes, runner, dir), exchange))
+                sendJson(200, Changes.pump(changes, runner, gamePorts, dir), exchange))
             case ("POST", "/journey/changes/seen") => withProject(selection, exchange, dir -> {
                 let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
@@ -207,7 +210,7 @@ mod Editor {
             case ("GET", "/game/status") => withProject(selection, exchange, dir ->
                 sendJson(200, Game.statusJson(dir), exchange))
             case ("POST", "/game/start") => withProject(selection, exchange, dir -> {
-                let (status, json) = Game.start(game, dir);
+                let (status, json) = Game.start(game, gamePorts, dir);
                 sendJson(status, json, exchange)
             })
             case ("GET", "/game/log") => sendJson(200, Runner.logJson(game), exchange)
@@ -589,7 +592,7 @@ mod Editor {
     /// 見た目に効き得る素材の保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
     /// この応答が焼きの完了を待つことはない。
-    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, bodyText: String, exchange: HttpExchange): Unit \ IO =
+    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, gamePorts: Game.Ports, bodyText: String, exchange: HttpExchange): Unit \ IO =
         let parsed = JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
         let fields = parsed
             |> Option.flatMap(obj -> forM (
@@ -622,7 +625,7 @@ mod Editor {
                         let baking =
                             if (Changes.kicksPumpOnSave(relPath))
                                 try {
-                                    discard Changes.pump(changes, runner, dir);
+                                    discard Changes.pump(changes, runner, gamePorts, dir);
                                     true
                                 } catch {
                                     case e: Exception => {

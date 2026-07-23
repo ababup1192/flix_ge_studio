@@ -35,4 +35,24 @@ mod TestRunner {
             (Runner.keepTail(2, "a" :: "b" :: "c" :: Nil),
              Runner.keepTail(5, "a" :: Nil),
              Runner.keepTail(3, (Nil: List[String]))))
+
+    /// ゲームの命令口の /bake 応答の 1 行目の解釈: "ok baked=…" だけが成功。
+    /// "error: …" (未対応・ループ無応答) や空は失敗 = make bake へのフォールバック。
+    @Test
+    def testRemoteBakeOk(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false, false),
+            (Runner.remoteBakeOk("ok baked=3 ms=250\n[baked]\ngallery/title.png"),
+             Runner.remoteBakeOk("error: bake not supported (App.onBakeRequest 未登録)"),
+             Runner.remoteBakeOk("error: game loop did not answer within 10s"),
+             Runner.remoteBakeOk("")))
+
+    /// 生の HTTP 応答から本文を取り出す: 最初の空行 (CRLF 2 連) の後ろ全部。
+    /// 空行が無い壊れた応答は空文字 = 「焼けていない」に倒す。
+    @Test
+    def testBodyOfHttpText(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("ok baked=1 ms=200\n[baked]\ngallery/title.png", ""),
+            (Runner.bodyOfHttpText("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok baked=1 ms=200\n[baked]\ngallery/title.png"),
+             Runner.bodyOfHttpText("HTTP/1.1 200 OK\r\nContent-Type: text/plain")))
 }

@@ -2,7 +2,9 @@
 // 変わったら知らせる・見たければ前と今を見比べる・戻すのは素材のバージョン(アーカイブ)。
 //
 // pump が 1 目盛り進める (journey/state と GET /changes が呼ぶ):
-//   1. 素材が絵より新しい (stale) → 走行権が空いていれば make bake を裏で起こす
+//   1. 素材が絵より新しい (stale) → 走行権が空いていれば焼きを裏で起こす。
+//      このプロジェクトのゲームが走っていて命令口 (DEBUG_HTTP_PORT) を覚えていれば
+//      走行中のゲームに頼み (速い)、それ以外は従来の make bake
 //   2. 焼きたてで基準 (golden) と違う絵がある → 旧基準を golden/archive/ の vN へ退避し、
 //      新しい絵を基準にする (自動追随)。変わった場面を記録し、未読の知らせにする
 //   3. 初めての場面 (基準が無い) は黙って基準になる (知らせない)
@@ -25,7 +27,7 @@ mod Changes {
     pub def make(): State \ IO = new JMap()
 
     /// 1 目盛り進めて、いまの様子を返す。冪等 — 何度呼んでも安全。
-    pub def pump(state: State, runner: Runner.State, dir: String): Json \ IO =
+    pub def pump(state: State, runner: Runner.State, ports: Game.Ports, dir: String): Json \ IO =
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingGolden") |> List.map(fst);
@@ -33,8 +35,7 @@ mod Changes {
         let stale = Journey.staleGalleryOf(dir);
         let baking =
             if (stale and not running) {
-                let (status, _) = Runner.launchTarget(runner, dir, "bake",
-                    busy = "ほかの作業が走っています");
+                let (status, _) = launchBake(runner, ports, dir);
                 status == 202
             } else
                 running;
@@ -52,6 +53,21 @@ mod Changes {
             }
         } else ();
         statusJson(state, dir, baking)
+
+    /// 焼きを裏で起こす。ゲームの命令口を覚えていれば走行中のゲームに頼む
+    /// (生死の確認と POST は焼き係スレッドの中 — PUT /file の応答経路から呼ばれても
+    /// ここでは待たない)。覚えていなければ従来の make bake。頼めなかったときの
+    /// make bake への切り替えと、古い覚え書きの掃除は Runner.launchRemoteBake の中。
+    def launchBake(runner: Runner.State, ports: Game.Ports, dir: String): (Int32, Json) \ IO =
+        match Game.portOf(ports, dir) {
+            case Some(port) =>
+                Runner.launchRemoteBake(runner, dir, port,
+                    alive = () -> Game.isRunning(dir),
+                    forget = () -> Game.forgetPort(ports, dir),
+                    busy = "ほかの作業が走っています")
+            case None =>
+                Runner.launchTarget(runner, dir, "bake", busy = "ほかの作業が走っています")
+        }
 
     /// POST /changes/seen — 知らせを既読にする。
     pub def markSeen(state: State, dir: String): (Int32, Json) \ IO =
