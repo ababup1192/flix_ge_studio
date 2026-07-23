@@ -32,6 +32,24 @@ mod Projects {
     pub def switchTo(dir: String, selection: Selection): Unit \ IO =
         discard selection.put("dir", dir)
 
+    /// 選択の関所 (純関数): 開けるプロジェクトを指しているときだけ選択を保つ。
+    /// 消えた・移動した (exists が false) 選択は未選択 (None) に倒す — 幽霊を指したまま
+    /// 全 API が黙って空振りし続けるより、選び直しの画面へ戻す (fail-open)。
+    /// 起動時の EDITOR_DIR と、リクエスト毎の現在選択の両方がこの関所を通る。
+    pub def keepIfAlive(exists: String -> Bool \ ef, current: Option[String]): Option[String] \ ef =
+        Option.filter(exists, current)
+
+    /// 選択を未選択へ戻す。
+    pub def clearSelection(selection: Selection): Unit \ IO =
+        discard selection.remove("dir")
+
+    /// いまの選択 (関所つき)。選択中でも project.json が消えていれば未選択へ戻して None。
+    pub def currentLiveDir(selection: Selection): Option[String] \ IO =
+        match keepIfAlive(dir -> hasProjectJson(dir), currentDir(selection)) {
+            case Some(dir) => Some(dir)
+            case None      => { clearSelection(selection); None }
+        }
+
     // ════════════════════════════════════════════════════════
     // 切替候補の探索
     // ════════════════════════════════════════════════════════

@@ -32,6 +32,16 @@ mod TestProjects {
             (Projects.pruneRecent(dir -> dir != "/b", "/a" :: "/b" :: "/c" :: Nil),
              Projects.pruneRecent(_ -> false, "/a" :: "/b" :: Nil)))
 
+    /// 選択の関所: 開けない (exists が false) 選択は未選択 (None) に倒し、
+    /// 開ける選択と未選択はそのまま。起動時 EDITOR_DIR とリクエスト毎の現在選択の共通ルール。
+    @Test
+    def testKeepIfAlive(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (None, Some("/alive"), None),
+            (Projects.keepIfAlive(_ -> false, Some("/gone")),
+             Projects.keepIfAlive(_ -> true, Some("/alive")),
+             Projects.keepIfAlive(_ -> true, (None: Option[String]))))
+
     // ========================================================================
     // 探索起点 (EDITOR_SCAN_ROOTS) の分解
     // ========================================================================

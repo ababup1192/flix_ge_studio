@@ -10,6 +10,7 @@ mod Editor {
     import java.lang.System
     import java.lang.Thread
     import java.lang.Exception
+    import java.lang.Throwable
     import java.lang.ProcessBuilder
     import java.util.ArrayList
     import java.io.{File => JFile}
@@ -77,7 +78,10 @@ mod Editor {
                 try {
                     dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, webRoot, exchange)
                 } catch {
-                    case e: Exception => {
+                    // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
+                    // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
+                    // 空のまま切れて、画面には何も出ない (無言の故障) になる。
+                    case e: Throwable => {
                         let message = e.toString();
                         sendJson(500, errorJson("internal error: ${message}"), exchange)
                     }
@@ -221,8 +225,10 @@ mod Editor {
 
     /// 選択中プロジェクトが要るエンドポイントの門番。未選択は 200 の ok:false で理由を返す
     /// (エディタ画面はこれを見てプロジェクト選択へ誘導する)。
+    // 選択は関所つきで見る — 編集中にプロジェクトが消えた・移動したら、幽霊を指したまま
+    // IoError や空応答で黙って壊れ続けるより、「未選択」に戻して選び直しへ倒す (fail-open)。
     def withProject(selection: Projects.Selection, exchange: HttpExchange, respond: String -> Unit \ IO): Unit \ IO =
-        match Projects.currentDir(selection) {
+        match Projects.currentLiveDir(selection) {
             case None      => sendJson(200, noProjectJson(), exchange)
             case Some(dir) => respond(dir)
         }
@@ -241,7 +247,8 @@ mod Editor {
     /// found は探索起点 (EDITOR_SCAN_ROOTS、既定 $HOME/Desktop) の深さ 2 までで見つけた
     /// project.json 持ちディレクトリ。
     def handleProjects(selection: Projects.Selection, exchange: HttpExchange): Unit \ IO =
-        let current = Projects.currentDir(selection);
+        // current も関所つき — 消えたプロジェクトを「選択中」と見せない
+        let current = Projects.currentLiveDir(selection);
         // 消えた・移動したプロジェクトは候補に出さない。減っていたら履歴ファイルも掃除する
         let stored = Projects.loadRecent();
         let alive = Projects.pruneRecent(dir -> Projects.hasProjectJson(dir), stored);
