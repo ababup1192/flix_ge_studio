@@ -36,6 +36,7 @@ JAR       := $(ROOT)/server/artifact/server.jar
 WEB_DIST  := $(ROOT)/web/dist
 JRE_DIR   := $(ROOT)/app/runtime/jre
 RESOURCES := $(ROOT)/app/src-tauri/resources
+APP_BUNDLE := $(ROOT)/app/src-tauri/target/release/bundle/macos/Flix GE Studio.app
 
 all: app
 
@@ -81,8 +82,12 @@ app: jar web jre
 	cp -R $(JRE_DIR) $(RESOURCES)/jre
 	@echo "==> [app] cargo tauri build (bundle=app)"
 	cd app/src-tauri && env -u DEVELOPER_DIR -u SDKROOT cargo tauri build --bundles app
-	@echo "==> [app] 完了。生成 .app:"
-	@find app/src-tauri/target -name "Flix GE Studio.app" -maxdepth 4 2>/dev/null | head -1
+	# Tauri の署名後にリソース (jre 等) が注入されて署名が壊れるので、
+	# バンドル完成後にアドホックで丸ごと署名し直し、検証まで通す。
+	@echo "==> [app] アドホック再署名 + 検証"
+	codesign --force --deep -s - "$(APP_BUNDLE)"
+	codesign --verify --deep --strict "$(APP_BUNDLE)"
+	@echo "==> [app] 完了。生成 .app: $(APP_BUNDLE)"
 
 # --- dev: 開発起動 ---
 # server を web/dist 配信で起動 (ブラウザ / .app なしでの動作確認用)。
