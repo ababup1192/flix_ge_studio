@@ -157,7 +157,7 @@ mod Genesis {
             :: "土台: templates/game-starter を変形(ゼロから書かない)"
             :: "ジャンル: ${f#name}"
             :: "骨格: ${f#skeleton}"
-            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
+            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。プレイヤーの目に入る文言は必ず Doc に置く(既定値はコード側。コード直書きの表示文字列は違反)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
             :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
             :: "完了条件: make check / make test を緑に、golden を作って make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
             :: ""
@@ -175,7 +175,7 @@ mod Genesis {
             :: "土台: いちばん近いジャンルのテンプレート(templates/)を選んで変形。ゼロから書かない"
             :: "どんなゲーム?: ${direction}"
             :: "決めること: 操作・動かせるもの・終わり方(私の言葉から補って)"
-            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
+            :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。プレイヤーの目に入る文言は必ず Doc に置く(既定値はコード側。コード直書きの表示文字列は違反)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
             :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
             :: "完了条件: make check / make test を緑に、土台の golden を引き継いで make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
             :: Nil)
