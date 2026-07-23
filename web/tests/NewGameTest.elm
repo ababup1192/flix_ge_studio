@@ -231,7 +231,7 @@ suite =
                         |> Expect.equal
                             (Ok { running = False, exitCode = Nothing, lines = [] })
             ]
-        , describe "家族えらび(genesis)"
+        , describe "ジャンルえらび(genesis)"
             [ test "/genesis/families の橋渡し: 並びはそのまま、id 以外の欠けは空文字に倒す" <|
                 \_ ->
                     D.decodeString NewGame.familiesDecoder
@@ -245,7 +245,7 @@ suite =
                                 , { id = "free", name = "", verb = "", includes = "", controls = "", starter = "" }
                                 ]
                             )
-            , test "starter 無しの家族を選ぶと、その場で公式プロンプトを取りに行く" <|
+            , test "starter 無しのジャンルを選ぶと、その場で公式プロンプトを取りに行く" <|
                 \_ ->
                     begin
                         |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)

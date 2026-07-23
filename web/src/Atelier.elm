@@ -2678,7 +2678,7 @@ viewOverlay overlay =
                 , case overlay.retired of
                     Just retired ->
                         div [ HA.class "text-[11px] text-ink-faint" ]
-                            [ text ("前のバージョンは " ++ retired ++ " に退避しました。いつでも戻せます") ]
+                            [ text (retiredLine retired) ]
 
                     Nothing ->
                         text ""
@@ -2915,7 +2915,9 @@ baseName path =
         |> Maybe.withDefault path
 
 
-{-| 過去バージョン(prev)の札のラベル。ファイル名の "prev-N" から N を拾う。 -}
+{-| 過去バージョン(prev)の札のラベル。ファイル名の "prev-N" から N を拾い、
+アーカイブの札と同じ「vN」で呼ぶ。N が読めない名前は「前のバージョン」。
+-}
 prevTag : String -> String
 prevTag file =
     case String.indexes "prev-" file of
@@ -2928,13 +2930,48 @@ prevTag file =
                         |> String.fromList
             in
             if digits == "" then
-                "退避"
+                "前のバージョン"
 
             else
-                "退避 " ++ digits
+                "v" ++ digits
 
         [] ->
-            "退避"
+            "前のバージョン"
+
+
+{-| 切り替え成功オーバーレイの一行。retired はアーカイブ先のパス
+(atelier/archive/<base>.vN.<kind>.json)だが、パスより vN の方が
+ユーザーの語彙 — vN が読めない名前でも同じ意味を伝える(fail-open)。
+-}
+retiredLine : String -> String
+retiredLine retired =
+    case versionTag retired of
+        Just v ->
+            "前の素材は " ++ v ++ " として残りました(アーカイブからいつでも戻せます)"
+
+        Nothing ->
+            "前の素材はアーカイブに残りました(いつでも戻せます)"
+
+
+{-| ファイル名のドット区切りから "v<数字>" の節を拾う(サーバの命名
+<base>.vN.<kind>.json と対)。
+-}
+versionTag : String -> Maybe String
+versionTag file =
+    baseName file
+        |> String.split "."
+        |> List.filter isVersionPart
+        |> List.head
+
+
+isVersionPart : String -> Bool
+isVersionPart part =
+    case String.uncons part of
+        Just ( 'v', rest ) ->
+            rest /= "" && String.all Char.isDigit rest
+
+        _ ->
+            False
 
 
 takeWhileDigit : List Char -> List Char

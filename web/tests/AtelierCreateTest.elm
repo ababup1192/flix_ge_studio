@@ -190,7 +190,7 @@ suite =
                         |> Expect.equal ( False, Just "描いてください" )
             ]
         , describe "手直し(えらぶ側から入る)"
-            [ test "候補カードの「手直し」でそのファイルを開く便りが飛び、そうこ側へ切り替わる" <|
+            [ test "候補カードの「手直し」でそのファイルを開く便りが飛び、調整側へ切り替わる" <|
                 \_ ->
                     let
                         ( model, out ) =
@@ -211,7 +211,7 @@ suite =
                     Atelier.autoCopyName "assets/prologue.sprite.json"
                         [ "atelier/prologue.a.sprite.json", "atelier/prologue.b.sprite.json" ]
                         |> Expect.equal "prologue.c"
-            , test "409(衝突)は次の空き番でもう一度、成功でそうこ側へ切り替わる" <|
+            , test "409(衝突)は次の空き番でもう一度、成功で調整側へ切り替わる" <|
                 \_ ->
                     let
                         sent =

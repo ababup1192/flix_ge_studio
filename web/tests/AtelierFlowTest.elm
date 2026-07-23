@@ -85,15 +85,15 @@ prevPreview =
 
 suite : Test
 suite =
-    describe "アトリエの装着(swap)"
-        [ describe "選びと装着ボタン"
-            [ test "選ばずに装着を押しても何も送らない" <|
+    describe "アトリエの切り替え(swap)"
+        [ describe "選びと切り替えボタン"
+            [ test "選ばずに切り替えを押しても何も送らない" <|
                 \_ ->
                     begin (running withCandidates)
                         |> step Atelier.SwapClicked
                         |> Tuple.second
                         |> Expect.equal Atelier.OutNone
-            , test "選んで装着(ゲーム起動中)で promote が送られる" <|
+            , test "選んで切り替え(ゲーム起動中)で promote が送られる" <|
                 \_ ->
                     begin (running withCandidates)
                         |> select
@@ -140,7 +140,7 @@ suite =
                         |> Expect.equal (Just "スロットが見つかりません")
             ]
         , describe "巻き戻し(rollback)"
-            [ test "戻すも同じ promote(candidate = 退避ファイル)で、選択も案内も挟まない" <|
+            [ test "戻すも同じ promote(candidate = 前のバージョンのファイル)で、選択も案内も挟まない" <|
                 \_ ->
                     begin (stopped withCandidates)
                         |> step (Atelier.RollbackClicked "assets/prologue.sprite.json" "atelier/prev-1.villager.sprite.json")
@@ -152,8 +152,8 @@ suite =
                                 }
                             )
             ]
-        , describe "ゲームが起きていない時の装着"
-            [ test "装着を押すと案内が開き、まだ promote は送らない" <|
+        , describe "ゲームが起きていない時の切り替え"
+            [ test "切り替えを押すと案内が開き、まだ promote は送らない" <|
                 \_ ->
                     let
                         ( model, out ) =
@@ -171,7 +171,7 @@ suite =
                         |> step Atelier.StartGameClicked
                         |> Tuple.second
                         |> Expect.equal Atelier.OutStartGame
-            , test "「そのまま装着」で promote が送られる" <|
+            , test "「そのまま切り替える」で promote が送られる" <|
                 \_ ->
                     begin (stopped withCandidates)
                         |> select
@@ -428,7 +428,7 @@ suite =
                         |> Tuple.first
                         |> (\m -> ( Atelier.lightboxOpen m, Atelier.lightboxShownFile m ))
                         |> Expect.equal ( True, Just "atelier/villager.a.sprite.json" )
-            , test "プレビューを押してもカードの選択は変わらない(未選択のまま装着は送れない)" <|
+            , test "プレビューを押してもカードの選択は変わらない(未選択のまま切り替えは送れない)" <|
                 \_ ->
                     begin (running withCandidates)
                         |> step (Atelier.PreviewClicked candidatePreview)
@@ -472,7 +472,7 @@ suite =
                         |> Tuple.first
                         |> Atelier.lightboxShownFile
                         |> Expect.equal (Just "assets/prologue.sprite.json")
-            , test "候補のライトボックスから装着 — 拡大が畳まれ、既存フローで promote が送られる" <|
+            , test "候補のライトボックスから切り替え — 拡大が畳まれ、既存フローで promote が送られる" <|
                 \_ ->
                     let
                         ( model, out ) =
@@ -488,7 +488,7 @@ suite =
                                 , slot = "assets/prologue.sprite.json"
                                 }
                             )
-            , test "候補のライトボックスから装着(ゲーム未起動)— 既存の案内(gate)がそのまま効く" <|
+            , test "候補のライトボックスから切り替え(ゲーム未起動)— 既存の案内(gate)がそのまま効く" <|
                 \_ ->
                     let
                         ( model, out ) =
@@ -515,7 +515,7 @@ suite =
                                 }
                             )
             ]
-        , describe "カード内の装着導線(選んだカードにだけ決めボタン)"
+        , describe "カード内の切り替え導線(選んだカードにだけ決めボタン)"
             [ test "未選択のカードには何も出ない" <|
                 \_ ->
                     Atelier.cardAction withCandidates
@@ -524,7 +524,7 @@ suite =
                         , isPrev = False
                         }
                         |> Expect.equal Nothing
-            , test "選んだカードにだけ「装着」が出る(隣のカードには出ない)" <|
+            , test "選んだカードにだけ「切り替え」が出る(隣のカードには出ない)" <|
                 \_ ->
                     let
                         model =
@@ -542,7 +542,7 @@ suite =
                         }
                     )
                         |> Expect.equal ( Just Atelier.Swap, Nothing )
-            , test "退避(prev)版を選ぶとボタンは「戻す」になる" <|
+            , test "前のバージョン(prev)を選ぶとボタンは「戻す」になる" <|
                 \_ ->
                     begin withCandidates
                         |> step (Atelier.CandidateClicked "assets/prologue.sprite.json" "atelier/prev-1.villager.sprite.json")
