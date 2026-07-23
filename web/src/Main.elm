@@ -1791,13 +1791,22 @@ update msg model =
                 ( model, Effect.none )
 
         ActivePollTick ->
+            -- 起動状態も同じ拍で問い直す(止まった・起きたにバッジを追従させる)。
+            -- activeDocs は走っている間だけ読む — 止まったゲームの
+            -- debug/active-docs.json は消されず残るので、読み直しても真実にならない。
             -- 前の往復が残っていれば見送る(次の周期でまた来る)
-            if model.activeReq == Nothing && model.screen == Editing then
-                let
-                    ( m1, cmd ) =
-                        request "activeDocs" (E.object []) model
-                in
-                ( { m1 | activeReq = Just m1.reqCounter }, cmd )
+            if model.screen == Editing then
+                if projectGameRunning model && model.activeReq == Nothing then
+                    let
+                        ( m1, cmd ) =
+                            request "activeDocs" (E.object []) model
+                    in
+                    ( { m1 | activeReq = Just m1.reqCounter }
+                    , Effect.batch [ cmd, requestInfo "gameStatus" ]
+                    )
+
+                else
+                    ( model, requestInfo "gameStatus" )
 
             else
                 ( model, Effect.none )
@@ -5209,7 +5218,7 @@ viewMiniStatus : Model -> Html Msg
 viewMiniStatus model =
     let
         running =
-            Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
+            projectGameRunning model
     in
     div []
         [ div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
@@ -5892,32 +5901,50 @@ currentGroup model =
             )
 
 
-{-| いまゲームの画面に出ているパスの集まり(グループを問わない平集合)。 -}
+{-| このプロジェクトのゲームがいま走っているか(ミニプレイヤーの状態行と同じ判定)。 -}
+projectGameRunning : Model -> Bool
+projectGameRunning model =
+    Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
+
+
+{-| いまゲームの画面に出ているパスの集まり(グループを問わない平集合)。
+走っていない時は中身に関わらず空 — 止まったゲームの active-docs.json は
+残るので、信じると「表示中」バッジが付きっぱなしになる。
+-}
 activePaths : Model -> List String
 activePaths model =
-    Dict.values model.activeDocs |> List.concat
+    if projectGameRunning model then
+        Dict.values model.activeDocs |> List.concat
+
+    else
+        []
 
 
 {-| 開いているファイルの kind でゲームが別のファイルを表示中なら、その名前
 (複数ならカンマ継ぎ)。active-docs が無い/kind に情報が無い時は言わない。
+走っていない時も言わない(activePaths と同じ理由 — 残り香で騒がない)。
 -}
 activeMismatch : Model -> Maybe String
 activeMismatch model =
-    case ( model.current, currentGroup model ) of
-        ( Just path, Just group ) ->
-            case Dict.get group.id model.activeDocs of
-                Just (first :: rest) ->
-                    if List.member path (first :: rest) then
+    if not (projectGameRunning model) then
+        Nothing
+
+    else
+        case ( model.current, currentGroup model ) of
+            ( Just path, Just group ) ->
+                case Dict.get group.id model.activeDocs of
+                    Just (first :: rest) ->
+                        if List.member path (first :: rest) then
+                            Nothing
+
+                        else
+                            Just (String.join ", " (List.map baseName (first :: rest)))
+
+                    _ ->
                         Nothing
 
-                    else
-                        Just (String.join ", " (List.map baseName (first :: rest)))
-
-                _ ->
-                    Nothing
-
-        _ ->
-            Nothing
+            _ ->
+                Nothing
 
 
 baseName : String -> String

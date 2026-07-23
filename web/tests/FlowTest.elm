@@ -1379,21 +1379,41 @@ suite =
         , test "active-docs: いま画面に出ているファイルに 🎮 マークが付く" <|
             \() ->
                 bootedWith dungeonResourcesBody
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
                     |> ProgramTest.update Main.ActivePollTick
-                    |> ensureKinds [ "activeDocs" ]
+                    |> ensureKinds [ "activeDocs", "gameStatus" ]
                     |> respondOk 4
                         "activeDocs"
                         (fileBody "debug/active-docs.json" """{"active": {"dungeon": "assets/b1.dungeon.json"}}""")
                     |> ProgramTest.ensureViewHas [ text "assets/b1.dungeon.json" ]
                     |> ProgramTest.expectViewHas [ text "🎮 表示中" ]
+        , test "active-docs: ゲームが止まるとバッジは消え、また起動すれば戻る" <|
+            \() ->
+                bootedWith dungeonResourcesBody
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
+                    |> ProgramTest.update Main.ActivePollTick
+                    |> ensureKinds [ "activeDocs", "gameStatus" ]
+                    |> respondOk 4
+                        "activeDocs"
+                        (fileBody "debug/active-docs.json" """{"active": {"dungeon": "assets/b1.dungeon.json"}}""")
+                    |> ProgramTest.ensureViewHas [ text "🎮 表示中" ]
+                    -- 停止が伝わった瞬間、active-docs の中身に関わらず引っ込める
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool False ) ])
+                    |> ProgramTest.ensureViewHasNot [ text "🎮 表示中" ]
+                    -- 止まっている間は activeDocs を読み直さない(状態だけ問う)
+                    |> ProgramTest.update Main.ActivePollTick
+                    |> ensureKinds [ "gameStatus" ]
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
+                    |> ProgramTest.expectViewHas [ text "🎮 表示中" ]
         , test "active-docs: 開いているファイルが表示中でないとヘッダに注意が出る" <|
             \() ->
                 bootedWith dungeonResourcesBody
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
                     |> ProgramTest.clickButton "assets/b1.dungeon.json"
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" "{ }")
                     |> ProgramTest.update Main.ActivePollTick
-                    |> ensureKinds [ "activeDocs" ]
+                    |> ensureKinds [ "activeDocs", "gameStatus" ]
                     |> respondOk 5
                         "activeDocs"
                         (fileBody "debug/active-docs.json" """{"active": {"dungeon": "assets/b2.dungeon.json"}}""")
@@ -1402,12 +1422,13 @@ suite =
         , test "active-docs: 404 や形違いは何も出さない(fail-open)" <|
             \() ->
                 bootedWith dungeonResourcesBody
+                    |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
                     |> ProgramTest.update Main.ActivePollTick
-                    |> ensureKinds [ "activeDocs" ]
+                    |> ensureKinds [ "activeDocs", "gameStatus" ]
                     |> respondErr 4 "activeDocs" "HTTP 404: /file — read failed"
                     |> ProgramTest.ensureViewHasNot [ text "🎮" ]
                     |> ProgramTest.update Main.ActivePollTick
-                    |> ensureKinds [ "activeDocs" ]
+                    |> ensureKinds [ "activeDocs", "gameStatus" ]
                     |> respondOk 5 "activeDocs" (fileBody "debug/active-docs.json" "{ \"noActive\": 1 }")
                     |> ProgramTest.expectViewHasNot [ text "🎮" ]
         , test "enabledWhen: 条件を満たさないフィールドはフォームに出ず、shape 切替で現れる" <|

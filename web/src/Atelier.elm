@@ -1068,6 +1068,12 @@ gotGameStatus running model =
                 ( LaunchStarting _, True ) ->
                     LaunchRunning
 
+                ( LaunchRunning, False ) ->
+                    -- 止まった現実が届いたら起動前へ戻す。戻さないと
+                    -- 「▶ 起動する」が二度押しの守り(LaunchRunning は黙る)に
+                    -- 食われ、止まったゲームを二度と起こせなくなる
+                    LaunchIdle
+
                 ( launch, _ ) ->
                     launch
     }
