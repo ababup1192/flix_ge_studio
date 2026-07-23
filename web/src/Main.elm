@@ -903,14 +903,9 @@ update msg model =
             in
             case nav of
                 Just Journey.ToAtelier ->
-                    -- 提案(候補選び・試作)からは入口を挟まず素材セクションへ直行
-                    let
-                        ( m2, fx ) =
-                            gotoTab AtelierTab m1
-                    in
-                    ( { m2 | atelier = Atelier.update Atelier.OpenPicks m2.atelier |> Tuple.first }
-                    , fx
-                    )
+                    -- アトリエ入口(3枚のカード)へ。提案からでもセクション直行は
+                    -- しない — ホーム発の着地は入口に統一する
+                    gotoTab AtelierTab m1
 
                 Just Journey.ToLaunch ->
                     -- ホームに居たまま起動する(アトリエの起動と同じ経路に委譲 —

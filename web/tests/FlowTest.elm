@@ -857,7 +857,7 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "🗂 すべてのファイル" ]
                     |> ProgramTest.clickButton "宣言された素材だけに戻す"
                     |> ProgramTest.expectViewHas [ text "⚙️ パラメータを変える" ]
-        , test "ホーム: pick(候補を比べて選ぼう)は入口を挟まず素材セクションへ直行する" <|
+        , test "ホーム: pick(候補を比べて選ぼう)もアトリエ入口(3枚のカード)に着地する" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
@@ -866,8 +866,8 @@ suite =
                     |> ProgramTest.clickButton "アトリエへ"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
-                    |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
-                    |> ProgramTest.expectViewHas [ class "atelier-slot" ]
+                    |> ProgramTest.ensureViewHasNot [ class "atelier-slot" ]
+                    |> ProgramTest.expectViewHas [ class "atelier-landing" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted
