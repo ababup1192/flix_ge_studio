@@ -148,6 +148,44 @@ suite =
                         ( Just [ '#', ',', '.' ]
                         , Just [ ( '#', "石垣", True ), ( ',', "畑", False ) ]
                         )
+        , test "レイヤー — パレットは選択中レイヤーの中身だけ(地形は文字、配置は JSON キー)" <|
+            \_ ->
+                case mapDoc of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        ( MapEditor.paletteChips MapEditor.TerrainLayer doc
+                        , MapEditor.paletteChips MapEditor.PlaceLayer doc
+                        )
+                            |> Expect.equal
+                                ( doc.terrain |> List.map (.ch >> String.fromChar)
+                                , [ "start", "villagers", "door", "herbs" ]
+                                )
+        , test "レイヤー — 淡さは 選択中=1・非選択=0.45・👁 オフ=0(オフのレイヤーは描かない)" <|
+            \_ ->
+                case mapDoc of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        let
+                            -- 配置を選択(→ 地形は非選択)、地形の 👁 をオフにする
+                            ( selected, _ ) =
+                                MapEditor.update doc (MapEditor.LayerChosen MapEditor.PlaceLayer) MapEditor.init
+
+                            ( m, _ ) =
+                                MapEditor.update doc (MapEditor.LayerToggled MapEditor.TerrainLayer) selected
+                        in
+                        Expect.all
+                            [ \_ -> MapEditor.layerAlpha MapEditor.PlaceLayer m |> Expect.within (Expect.Absolute 0.001) 1
+                            , \_ -> MapEditor.layerAlpha MapEditor.TerrainLayer m |> Expect.within (Expect.Absolute 0.001) 0
+
+                            -- 👁 を戻すと非選択の淡さ
+                            , \_ ->
+                                MapEditor.layerAlpha MapEditor.TerrainLayer selected |> Expect.within (Expect.Absolute 0.001) 0.45
+                            ]
+                            ()
         , test "地形パレット — 仮色は並び順から色相を離して導く(少数の候補どうしが必ず見分けられる)。'.' は無彩色の暗色" <|
             \_ ->
                 let

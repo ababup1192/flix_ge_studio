@@ -2,6 +2,7 @@ module MapEditor exposing
     ( Doc
     , Edit(..)
     , GroupKind(..)
+    , Layer(..)
     , Model
     , Msg(..)
     , Out(..)
@@ -10,6 +11,8 @@ module MapEditor exposing
     , defaultChar
     , fromDoc
     , init
+    , layerAlpha
+    , paletteChips
     , release
     , strokeActive
     , update
@@ -18,19 +21,23 @@ module MapEditor exposing
 
 {-| マップ(\*.map.json)の手直し。骨格はピクセルエディタと同じ:
 左に道具(ペン・消しゴム・バケツ・スポイト・戻す/やり直す)、中央にセルの
-グリッド、右にパレット。
+グリッド、右にレイヤー+パレット。
 
 エディタ内はベタ塗り — セルは地形 1 文字 = 1 色で塗るだけで、角の丸みなど
 本物の見た目は再現しない(本物はミニプレイヤーが映す)。
 
-パレットは 2 グループ:
+文書は 2 レイヤーに見る(データ形式は不変 — 表示と編集対象の切り替えだけ):
 
+  - 配置(手前)… map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
+    オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
   - 地形 … rows に塗る文字。terrain Doc(entries[].{char,name,fill})が
     読めればそこから、無ければ rows に実際に出る文字+'.' を候補にする
     (fail-open)。色は #rrggbb ならそのまま、それ以外はパレット内の並び順から
     導く仮色('.' だけは無彩色寄りの暗色)。
-  - 配置 … map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
-    オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
+
+選択中のレイヤーだけが編集対象で、パレットもそのレイヤーの中身だけを見せる。
+非選択レイヤーはキャンバスで淡く、👁 を消すと描かない。👁 と選択は
+セッション内だけの状態(Doc には保存しない)。
 
 文書の正本はここに置かない — 描画は毎回親から渡される Doc から導き、
 一筆の途中だけ rows の作業コピー(working)が表示に勝つ。確定は 1 操作 =
@@ -311,7 +318,16 @@ type Tool
     | Dropper
 
 
+{-| 編集対象のレイヤー。配置(手前)か地形か。表示と編集対象の切り替えだけで、
+文書のデータ形式は変わらない。
+-}
+type Layer
+    = PlaceLayer
+    | TerrainLayer
+
+
 {-| いま塗る/置く物。地形(rows の文字)か配置(グループのキー)か。
+選択中のレイヤーと、そのレイヤーが覚えているチップから解ける。
 -}
 type Brush
     = Terrain Char
@@ -344,8 +360,16 @@ type Step
 type alias Model =
     { tool : Tool
 
-    -- Nothing は「まだ選んでいない」= 地形の先頭
-    , brush : Maybe Brush
+    -- いま編集中のレイヤー(パレットの中身・淡さ・バケツの可否を決める)
+    , layer : Layer
+
+    -- キャンバスに描くか(👁)。セッション内だけ・Doc には保存しない
+    , shown : { terrain : Bool, place : Bool }
+
+    -- 各レイヤーが覚えているチップ。Nothing は「まだ選んでいない」=
+    -- そのレイヤーの先頭(地形の先頭スワッチ・配置の先頭グループ)
+    , terrainCh : Maybe Char
+    , placeKey : Maybe String
 
     -- 配列グループで選択中の 1 個(次のクリックで動かす対象)
     , picked : Maybe ( String, Int )
@@ -366,7 +390,10 @@ type alias Model =
 init : Model
 init =
     { tool = Pen
-    , brush = Nothing
+    , layer = TerrainLayer
+    , shown = { terrain = True, place = True }
+    , terrainCh = Nothing
+    , placeKey = Nothing
     , picked = Nothing
     , cellPx = baseCellPx
     , hover = Nothing
@@ -399,6 +426,8 @@ release model =
 
 type Msg
     = ToolChosen Tool
+    | LayerChosen Layer
+    | LayerToggled Layer
     | TerrainChosen Char
     | PlaceChosen String
     | ZoomStepped Int
@@ -439,17 +468,37 @@ update doc msg model =
             ( model, Silent )
 
         ToolChosen tool ->
-            -- 配置を選んでいる間はバケツ無効(ボタンも押せないが、ショートカットもここで塞ぐ)
-            if tool == Bucket && isPlaceBrush model then
+            -- 配置レイヤーの間はバケツ無効(ボタンも押せないが、ショートカットもここで塞ぐ)
+            if tool == Bucket && model.layer == PlaceLayer then
                 ( model, Silent )
 
             else
                 ( { model | tool = tool }, Silent )
 
+        LayerChosen layer ->
+            -- レイヤーを切り替えると編集対象が変わる。移動途中の選択は持ち越さない。
+            -- 配置レイヤーへ移った時、バケツのままなら押せない道具なのでペンへ倒す。
+            ( { model
+                | layer = layer
+                , picked = Nothing
+                , tool =
+                    if layer == PlaceLayer && model.tool == Bucket then
+                        Pen
+
+                    else
+                        model.tool
+              }
+            , Silent
+            )
+
+        LayerToggled layer ->
+            ( { model | shown = toggleShown layer model.shown }, Silent )
+
         TerrainChosen ch ->
             -- 消しゴム・スポイト中の色選びは「その色で塗りたい」なのでペンへ
             ( { model
-                | brush = Just (Terrain ch)
+                | terrainCh = Just ch
+                , layer = TerrainLayer
                 , picked = Nothing
                 , tool =
                     if model.tool == Eraser || model.tool == Dropper then
@@ -463,7 +512,7 @@ update doc msg model =
 
         PlaceChosen key ->
             -- 配置に効く道具はペンだけ(バケツ等は残しても迷うだけ)
-            ( { model | brush = Just (Place key), picked = Nothing, tool = Pen }, Silent )
+            ( { model | placeKey = Just key, layer = PlaceLayer, picked = Nothing, tool = Pen }, Silent )
 
         ZoomStepped dir ->
             ( { model | cellPx = zoomStep dir model.cellPx }, Silent )
@@ -553,7 +602,7 @@ press doc cell buttonId model =
             Dropper ->
                 case pickAt cell (shownRows doc model) of
                     Just ch ->
-                        ( { model | brush = Just (Terrain ch), tool = Pen, picked = Nothing }, Silent )
+                        ( { model | terrainCh = Just ch, tool = Pen, picked = Nothing }, Silent )
 
                     Nothing ->
                         ( model, Silent )
@@ -911,38 +960,87 @@ shownRows doc model =
     Maybe.withDefault doc.rows model.working
 
 
-{-| いまのブラシ。選んだ物が文書から消えていたら地形の先頭へ倒す。
+{-| 選択中レイヤーで塗る/置く物。覚えているチップが文書から消えていたら
+そのレイヤーの先頭へ倒す(fail-open)。配置に候補が無ければ地形の先頭へ。
 -}
 activeBrush : Doc -> Model -> Brush
 activeBrush doc model =
-    let
-        valid brush =
-            case brush of
-                Terrain ch ->
-                    List.any (\sw -> sw.ch == ch) doc.terrain
+    case model.layer of
+        TerrainLayer ->
+            case model.terrainCh |> Maybe.andThen (\ch -> ifTrue (List.any (\sw -> sw.ch == ch) doc.terrain) ch) of
+                Just ch ->
+                    Terrain ch
 
-                Place key ->
-                    List.any (\g -> g.key == key) doc.groups
-    in
-    case model.brush |> Maybe.andThen (\b -> ifTrue (valid b) b) of
-        Just brush ->
-            brush
+                Nothing ->
+                    firstTerrain doc
 
-        Nothing ->
-            doc.terrain
-                |> List.head
-                |> Maybe.map (.ch >> Terrain)
-                |> Maybe.withDefault (Terrain defaultChar)
+        PlaceLayer ->
+            case model.placeKey |> Maybe.andThen (\key -> ifTrue (List.any (\g -> g.key == key) doc.groups) key) of
+                Just key ->
+                    Place key
+
+                Nothing ->
+                    doc.groups
+                        |> List.head
+                        |> Maybe.map (.key >> Place)
+                        |> Maybe.withDefault (firstTerrain doc)
 
 
-isPlaceBrush : Model -> Bool
-isPlaceBrush model =
-    case model.brush of
-        Just (Place _) ->
-            True
+firstTerrain : Doc -> Brush
+firstTerrain doc =
+    doc.terrain
+        |> List.head
+        |> Maybe.map (.ch >> Terrain)
+        |> Maybe.withDefault (Terrain defaultChar)
 
-        _ ->
-            False
+
+{-| 👁 の反転。レイヤー 1 枚ぶん。
+-}
+toggleShown : Layer -> { terrain : Bool, place : Bool } -> { terrain : Bool, place : Bool }
+toggleShown layer shown =
+    case layer of
+        TerrainLayer ->
+            { shown | terrain = not shown.terrain }
+
+        PlaceLayer ->
+            { shown | place = not shown.place }
+
+
+{-| レイヤーの淡さ。0 = 隠す(👁 オフ)、1 = 選択中、0.45 = 非選択(淡く)。
+-}
+layerAlpha : Layer -> Model -> Float
+layerAlpha layer model =
+    if not (isShown layer model) then
+        0
+
+    else if model.layer == layer then
+        1
+
+    else
+        0.45
+
+
+isShown : Layer -> Model -> Bool
+isShown layer model =
+    case layer of
+        TerrainLayer ->
+            model.shown.terrain
+
+        PlaceLayer ->
+            model.shown.place
+
+
+{-| パレットに並ぶチップの見出し(そのレイヤーの中身だけ)。地形は 1 文字、
+配置は JSON キー。パレットの表示と、レイヤー↔中身の対応の検査に使う。
+-}
+paletteChips : Layer -> Doc -> List String
+paletteChips layer doc =
+    case layer of
+        TerrainLayer ->
+            doc.terrain |> List.map (.ch >> String.fromChar)
+
+        PlaceLayer ->
+            doc.groups |> List.map .key
 
 
 groupKind : Doc -> String -> Maybe GroupKind
@@ -1062,19 +1160,107 @@ zoomStep dir current =
 
 view : Doc -> Model -> Html Msg
 view doc model =
-    div [ HA.class "map-editor relative flex min-w-0 flex-1 bg-app" ]
-        ([ viewTools doc model
-         , viewCenter doc model
-         , viewPalette doc model
-         ]
-            ++ (case model.confirm of
-                    Just confirm ->
-                        [ viewConfirm confirm ]
+    div [ HA.class "map-editor relative flex min-w-0 flex-1 flex-col bg-app" ]
+        [ viewTopStatus doc model
+        , div [ HA.class "relative flex min-h-0 min-w-0 flex-1" ]
+            ([ viewTools doc model
+             , viewCenter doc model
+             , viewSide doc model
+             ]
+                ++ (case model.confirm of
+                        Just confirm ->
+                            [ viewConfirm confirm ]
+
+                        Nothing ->
+                            []
+                   )
+            )
+        ]
+
+
+{-| 上部ステータス行: 選択中レイヤー名・えらび中のチップ名・道具・座標。
+-}
+viewTopStatus : Doc -> Model -> Html Msg
+viewTopStatus doc model =
+    div [ HA.class "map-topstatus flex h-8 shrink-0 items-center gap-3.5 border-b border-edge bg-panel px-3 text-[12px]" ]
+        [ statusField "レイヤー" (layerName model.layer) True
+        , statusSep
+        , statusField "えらび中" (brushName doc model) False
+        , statusSep
+        , statusField "道具" (toolName model.tool) False
+        , span [ HA.class "ml-auto font-mono text-ink-faint tabular-nums" ]
+            [ text
+                (case model.hover of
+                    Just ( x, y ) ->
+                        "x " ++ String.fromInt x ++ " , y " ++ String.fromInt y
 
                     Nothing ->
-                        []
-               )
-        )
+                        ""
+                )
+            ]
+        ]
+
+
+statusField : String -> String -> Bool -> Html Msg
+statusField key value accent =
+    span []
+        [ span [ HA.class "text-ink-faint" ] [ text (key ++ " ") ]
+        , span
+            [ HA.classList
+                [ ( "font-semibold", True )
+                , ( "text-accent", accent )
+                , ( "text-ink", not accent )
+                ]
+            ]
+            [ text value ]
+        ]
+
+
+statusSep : Html Msg
+statusSep =
+    span [ HA.class "text-edge" ] [ text "|" ]
+
+
+layerName : Layer -> String
+layerName layer =
+    case layer of
+        TerrainLayer ->
+            "地形"
+
+        PlaceLayer ->
+            "配置"
+
+
+toolName : Tool -> String
+toolName tool =
+    case tool of
+        Pen ->
+            "ペン"
+
+        Eraser ->
+            "消しゴム"
+
+        Bucket ->
+            "バケツ"
+
+        Dropper ->
+            "スポイト"
+
+
+{-| えらび中のチップ名(地形は Doc の name、配置は JSON キー)。
+-}
+brushName : Doc -> Model -> String
+brushName doc model =
+    case activeBrush doc model of
+        Terrain ch ->
+            doc.terrain
+                |> List.filter (\sw -> sw.ch == ch)
+                |> List.head
+                |> Maybe.map .name
+                |> Maybe.withDefault (String.fromChar ch)
+
+        Place key ->
+            key
 
 
 viewTools : Doc -> Model -> Html Msg
@@ -1082,7 +1268,7 @@ viewTools doc model =
     div [ HA.class "map-tools flex w-14 shrink-0 flex-col items-center gap-1.5 border-r border-edge bg-panel py-2" ]
         [ toolButton model Pen False "ペン(P)" iconPen
         , toolButton model Eraser False "消しゴム(E)" iconEraser
-        , toolButton model Bucket (isPlaceBrush model) "バケツ(B)" iconBucket
+        , toolButton model Bucket (model.layer == PlaceLayer) "バケツ(B)" iconBucket
         , toolButton model Dropper False "スポイト(I)" iconDropper
         , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
         , historyButton "戻す(⌘Z / Ctrl+Z)" UndoPressed (List.isEmpty model.undo) iconUndo
@@ -1145,33 +1331,54 @@ viewCenter doc model =
         ]
 
 
-{-| グリッド+配置の印。印は座標から重ねるだけ(クリックはセル側が受ける)。
+{-| グリッド+配置の印。地形の色と配置の印はそれぞれのレイヤーの淡さで描く
+(👁 オフのレイヤーは描かない)。クリックを受けるセルは常に敷いておく —
+淡くしたり隠したりしても、別レイヤーを触るための当たり判定は残す。
 -}
 viewGridWithMarks : Doc -> Model -> List String -> Html Msg
 viewGridWithMarks doc model rows =
     let
+        terrainA =
+            layerAlpha TerrainLayer model
+
         colors =
-            doc.terrain
-                |> List.map (\sw -> ( sw.ch, sw.css ))
-                |> Dict.fromList
+            if terrainA <= 0 then
+                Dict.empty
+
+            else
+                doc.terrain
+                    |> List.map (\sw -> ( sw.ch, sw.css ))
+                    |> Dict.fromList
+
+        marks =
+            if layerAlpha PlaceLayer model <= 0 then
+                []
+
+            else
+                [ div
+                    [ HA.class "pointer-events-none absolute inset-0"
+                    , HA.style "opacity" (String.fromFloat (layerAlpha PlaceLayer model))
+                    ]
+                    (List.concatMap (viewGroupMarks model) doc.groups)
+                ]
     in
     div
         [ HA.class "map-grid relative border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]"
         , HE.onMouseLeave GridLeft
         ]
-        ((rows |> List.indexedMap (viewGridRow colors model.cellPx))
-            ++ List.concatMap (viewGroupMarks model) doc.groups
+        ((rows |> List.indexedMap (viewGridRow colors terrainA model.cellPx))
+            ++ marks
         )
 
 
-viewGridRow : Dict.Dict Char String -> Int -> Int -> String -> Html Msg
-viewGridRow colors cellPx y row =
+viewGridRow : Dict.Dict Char String -> Float -> Int -> Int -> String -> Html Msg
+viewGridRow colors terrainA cellPx y row =
     div [ HA.class "flex" ]
-        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors cellPx x y ch))
+        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors terrainA cellPx x y ch))
 
 
-viewCell : Dict.Dict Char String -> Int -> Int -> Int -> Char -> Html Msg
-viewCell colors cellPx x y ch =
+viewCell : Dict.Dict Char String -> Float -> Int -> Int -> Int -> Char -> Html Msg
+viewCell colors terrainA cellPx x y ch =
     div
         ([ HA.class "map-cell shrink-0"
          , HA.style "width" (String.fromInt cellPx ++ "px")
@@ -1184,7 +1391,9 @@ viewCell colors cellPx x y ch =
          ]
             ++ (case Dict.get ch colors of
                     Just css ->
-                        [ HA.style "background-color" css ]
+                        [ HA.style "background-color" css
+                        , HA.style "opacity" (String.fromFloat terrainA)
+                        ]
 
                     Nothing ->
                         [ HA.class "px-checker" ]
@@ -1316,22 +1525,85 @@ viewStatus model rows =
         ]
 
 
+{-| 右: レイヤーパネル(上=配置・手前、下=地形)+ 選択中レイヤーのパレット。
+-}
+viewSide : Doc -> Model -> Html Msg
+viewSide doc model =
+    div [ HA.class "map-side flex w-56 shrink-0 flex-col border-l border-edge bg-panel" ]
+        [ div [ HA.class "border-b border-edge pb-2" ]
+            [ paneTitle "レイヤー"
+            , viewLayerRow model PlaceLayer
+            , viewLayerRow model TerrainLayer
+            ]
+        , paneTitle (layerName model.layer)
+        , div [ HA.class "map-palette flex-1 overflow-y-auto px-2 pb-3" ]
+            [ viewPalette doc model ]
+        ]
+
+
+paneTitle : String -> Html Msg
+paneTitle label =
+    div [ HA.class "px-3 pt-2 pb-1.5 text-[11px] tracking-wider text-ink-faint" ] [ text label ]
+
+
+{-| レイヤー 1 行。👁 表示切替と選択。選択中は行をハイライト。
+-}
+viewLayerRow : Model -> Layer -> Html Msg
+viewLayerRow model layer =
+    let
+        selected =
+            model.layer == layer
+
+        shown =
+            isShown layer model
+    in
+    div
+        [ HA.classList
+            [ ( "map-layer mx-1.5 flex cursor-pointer items-center gap-2 rounded border-l-2 px-2 py-1.5", True )
+            , ( "border-accent bg-white/5", selected )
+            , ( "border-transparent hover:bg-white/5", not selected )
+            ]
+        , HE.onClick (LayerChosen layer)
+        ]
+        [ button
+            [ HA.classList
+                [ ( "flex h-6 w-6 shrink-0 items-center justify-center rounded text-sm hover:bg-white/10", True )
+                , ( "opacity-30", not shown )
+                ]
+            , HA.title
+                (if shown then
+                    "隠す"
+
+                 else
+                    "見せる"
+                )
+            , HE.custom "click"
+                (D.succeed { message = LayerToggled layer, stopPropagation = True, preventDefault = False })
+            ]
+            [ text "👁" ]
+        , span
+            [ HA.classList
+                [ ( "flex-1", True )
+                , ( "font-semibold text-ink", selected )
+                , ( "text-ink-soft", not selected )
+                ]
+            ]
+            [ text (layerName layer) ]
+        ]
+
+
+{-| パレットは選択中レイヤーの中身だけ。
+-}
 viewPalette : Doc -> Model -> Html Msg
 viewPalette doc model =
-    div [ HA.class "map-palette w-56 shrink-0 overflow-y-auto border-l border-edge bg-panel p-3" ]
-        [ div [ HA.class "mb-1.5 text-[11px] text-ink-faint" ] [ text "地形" ]
-        , div [ HA.class "flex flex-wrap gap-1.5" ]
-            (doc.terrain |> List.map (viewSwatch doc model))
-        , if List.isEmpty doc.groups then
-            text ""
+    case model.layer of
+        TerrainLayer ->
+            div [ HA.class "flex flex-wrap gap-1.5 px-1" ]
+                (doc.terrain |> List.map (viewSwatch doc model))
 
-          else
-            div []
-                [ div [ HA.class "mt-4 mb-1.5 text-[11px] text-ink-faint" ] [ text "配置" ]
-                , div [ HA.class "flex flex-col gap-1" ]
-                    (doc.groups |> List.map (viewPlaceEntry doc model))
-                ]
-        ]
+        PlaceLayer ->
+            div [ HA.class "flex flex-col gap-1 px-1" ]
+                (doc.groups |> List.map (viewPlaceEntry doc model))
 
 
 viewSwatch : Doc -> Model -> Swatch -> Html Msg
