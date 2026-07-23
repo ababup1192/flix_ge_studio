@@ -708,7 +708,7 @@ suite =
                     |> respondOk 4 "gameStart" (E.object [ ( "ok", E.bool True ) ])
                     |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
                     |> expectKinds [ "journeyState" ]
-        , test "ホーム: arrange(アレンジ)はアトリエの調整モードへ直行する" <|
+        , test "ホーム: arrange(アレンジ)はアトリエ入口に着く" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
@@ -716,8 +716,8 @@ suite =
                     |> respondOk 0 "journeyState" (journeyBody "arrange" "arrange")
                     |> ProgramTest.clickButton "アレンジする"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
-                    -- 候補選びでなく、Doc エディタ(調整)が出ている
-                    |> ProgramTest.expectViewHas [ text "assets/level.json" ]
+                    -- 入口(3枚のカード)から選んでもらう
+                    |> ProgramTest.expectViewHas [ class "atelier-landing" ]
         , test "ホーム: /journey/state が無いサーバでも落ちず、アレンジの一手に倒れる" <|
             \() ->
                 bootedWith resourcesBody

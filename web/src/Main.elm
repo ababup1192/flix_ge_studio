@@ -885,14 +885,8 @@ update msg model =
                             ( m2, Effect.none )
 
                 Just Journey.ToArrange ->
-                    -- アトリエの調整セクションへ直行(入口も候補選びも挟まない)
-                    let
-                        ( m2, fx ) =
-                            gotoTab AtelierTab m1
-                    in
-                    ( { m2 | atelier = Atelier.update Atelier.OpenStorehouse m2.atelier |> Tuple.first }
-                    , fx
-                    )
+                    -- アトリエ入口へ。3枚のカードから自分でやることを選んでもらう
+                    gotoTab AtelierTab m1
 
                 Just Journey.ToChanges ->
                     -- 押した足でモーダル(読み込み中)を出し、知らせを取りに行く
