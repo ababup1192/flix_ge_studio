@@ -346,7 +346,7 @@ type alias Model =
     , section : Section
 
     -- 調整の左の一覧に宣言外のファイルまで全部出すか。既定は「宣言された資源だけ」—
-    -- 入口・広げるの小リンク「🗂 すべてのファイル」だけが真で入る
+    -- 広げるの小リンク「🗂 すべてのファイル」だけが真で入る
     , allFiles : Bool
 
     -- 「ゲームを広げる」の下書きと、仕上げに足すあなたの言葉
@@ -1706,8 +1706,9 @@ viewSectionTop place =
 
 {-| アトリエの入口。行き先の大きなカード 2 枚(初期表示で両方見える大きさ)と、
 下段に横長で控えめな「ゲームを広げる」(構造が変わる依頼 — 上 2 枚と同格に
-並べない)、その下に小さなリンク 2 つ(アーカイブ / すべてのファイル)。
-生まれたてはパラメータ側を推す。
+並べない)、その下に小さなリンク(アーカイブ)。全ファイル一覧への入口は
+①調整の一覧下トグルと③広げるの扉に任せる(入口からだと「パラメータ調整に
+飛ばされた」体験になる)。生まれたてはパラメータ側を推す。
 -}
 viewLanding : Model -> Html Msg
 viewLanding model =
@@ -1760,11 +1761,6 @@ viewLanding model =
 
               else
                 text ""
-            , button
-                [ HA.class "atelier-landing-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                , HE.onClick OpenAllFiles
-                ]
-                [ text "🗂 すべてのファイル" ]
             ]
         ]
 
