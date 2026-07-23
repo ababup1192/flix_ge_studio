@@ -32,6 +32,7 @@ import Json.Decode as D
 import Json.Encode as E
 import Lint
 import NewGame
+import PixelEditor
 import Plugins
 import Progress
 import Refs
@@ -562,6 +563,10 @@ type alias Model =
     -- docEdit を出さない — 焼き直しは mouseup 後の反映 1 回に任せる
     , drag : Maybe DragState
 
+    -- ドット絵の手直し(*.sprite.json のビジュアル編集)。文書の正本は持たず、
+    -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
+    , pixel : PixelEditor.Model
+
     -- 「+ 新しいファイル」ウィザード(Just = 3 ペインの代わりに表示中)
     , wizard : Maybe WizardState
 
@@ -714,6 +719,7 @@ init _ =
         , previewReq = Nothing
         , previewStale = False
         , drag = Nothing
+        , pixel = PixelEditor.init
         , wizard = Nothing
         , usagesOpenFor = Nothing
         , rename = Nothing
@@ -781,6 +787,7 @@ type Msg
     | ProblemClicked Lint.Problem
     | FieldEdited EditPayload
     | EditsQueued (List EditPayload)
+    | PixelMsg PixelEditor.Msg
     | WeightsAddOpened (List Seg)
     | WeightsAddTyped String
     | WeightsAddCommitted
@@ -1294,8 +1301,9 @@ update msg model =
             sendPut (model.conflict |> Maybe.andThen .currentMtime) { model | conflict = Nothing }
 
         ModeChosen mode ->
-            -- 打ちかけは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)
-            ( { model | viewMode = mode, activeDraft = Nothing }, Effect.none )
+            -- 打ちかけは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)。
+            -- ドット絵の作業コピーも手放す — テキスト側で文書が動き得るため
+            ( { model | viewMode = mode, activeDraft = Nothing, pixel = PixelEditor.release model.pixel }, Effect.none )
 
         SectionClicked key ->
             -- 並べ替え・絞り込みは列の意味ごとセクションに紐づくので持ち越さない
@@ -1379,6 +1387,29 @@ update msg model =
 
         EditsQueued payloads ->
             queueEdits payloads model
+
+        PixelMsg pmsg ->
+            case spriteDocCurrent model of
+                Just pdoc ->
+                    let
+                        ( pixel, out ) =
+                            PixelEditor.update pdoc pmsg model.pixel
+
+                        m1 =
+                            { model | pixel = pixel }
+                    in
+                    case out of
+                        PixelEditor.Silent ->
+                            ( m1, Effect.none )
+
+                        PixelEditor.Edited edit ->
+                            queueEdit (pixelPayload edit) m1
+
+                        PixelEditor.Noticed message ->
+                            showToast message m1
+
+                Nothing ->
+                    ( model, Effect.none )
 
         WeightsAddOpened path ->
             ( { model | weightsAdd = Just { path = path, text = "", error = Nothing } }, Effect.none )
@@ -2972,6 +3003,38 @@ currentPlugin model =
         |> Maybe.andThen (Plugins.forPath model.groups)
 
 
+{-| 開いているファイルがドット絵(パスが .sprite.json で終わる)なら、その
+読み取り結果。legend が読めない・絵が残らない文書は Nothing — 従来のフォーム/
+コード表示へ静かに倒れる(壊さない)。モデルに覚えず毎回引くのは currentPlugin
+と同じ理由(文書が進むたびの陳腐化を構造で防ぐ)。
+-}
+spriteDocCurrent : Model -> Maybe PixelEditor.Doc
+spriteDocCurrent model =
+    case ( model.current, parsedDoc model ) of
+        ( Just path, Just doc ) ->
+            if String.endsWith ".sprite.json" path then
+                PixelEditor.fromDoc doc
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| ドット絵の一筆(または戻す/やり直す)1 件を docEdit の編集に翻訳する。
+書き戻しは sprites.<名前>.frames.<コマ> の rows 丸ごと 1 本 — 既存の編集直列
+(dirty・自動保存・衝突検知・保存後の焼き)にそのまま乗る。
+-}
+pixelPayload : PixelEditor.Edit -> EditPayload
+pixelPayload edit =
+    { op = SetOp
+    , path = [ KeySeg "sprites", KeySeg edit.sprite, KeySeg "frames", KeySeg edit.frame ]
+    , value = E.list E.string edit.rows
+    , isInt = False
+    }
+
+
 
 -- エントリの追加・複製・削除(テーブル上部の CRUD)
 
@@ -4128,6 +4191,7 @@ handleOkByKind env model =
                                     , previewReq = Nothing
                                     , previewStale = False
                                     , drag = Nothing
+                                    , pixel = PixelEditor.init
                                     , usagesOpenFor = Nothing
                                     , rename = Nothing
                                     , renameInflight = Nothing
@@ -4220,6 +4284,9 @@ handleOkByKind env model =
                                         , notice = Nothing
                                         , conflict = Nothing
                                         , savingText = Nothing
+
+                                        -- ドット絵の道具・履歴は開いたファイルの物(持ち越さない)
+                                        , pixel = PixelEditor.init
 
                                         -- ジャンプで開いた時だけ選択が乗る(普段は Nothing のまま)
                                         , sectionKey = model.pendingJump |> Maybe.map .sectionKey
@@ -5753,10 +5820,17 @@ viewEditing model =
                                 Nothing ->
                                     case effectiveMode model of
                                         VisualMode ->
-                                            [ viewVisualCenter model
-                                            , viewPaneHandle RightPane
-                                            , viewVisualSide model
-                                            ]
+                                            case spriteDocCurrent model of
+                                                -- ドット絵は 1 枚のピクセルエディタで完結
+                                                -- (道具・キャンバス・パレットを内側に持つ)
+                                                Just pdoc ->
+                                                    [ Html.map PixelMsg (PixelEditor.view pdoc model.pixel) ]
+
+                                                Nothing ->
+                                                    [ viewVisualCenter model
+                                                    , viewPaneHandle RightPane
+                                                    , viewVisualSide model
+                                                    ]
 
                                         SplitMode ->
                                             [ viewEditorPane model
@@ -5840,8 +5914,13 @@ effectiveMode : Model -> ViewMode
 effectiveMode model =
     case ( model.viewMode, model.current ) of
         ( VisualMode, Just _ ) ->
-            case ( model.schemaState, parsedDoc model ) of
-                ( SchemaReady schema, Just _ ) ->
+            -- ドット絵はスキーマ(JSON-Schema 形式 = SchemaForeign)でなく
+            -- 文書の形で判定する — 読めればピクセルエディタがビジュアルの主役
+            case ( spriteDocCurrent model, model.schemaState, parsedDoc model ) of
+                ( Just _, _, _ ) ->
+                    VisualMode
+
+                ( _, SchemaReady schema, Just _ ) ->
                     -- 出せるセクションが 1 つも無い(全部フォーム未対応)なら
                     -- テキストが主役の分割へ
                     if List.isEmpty (supportedSections schema) then
@@ -5850,7 +5929,7 @@ effectiveMode model =
                     else
                         VisualMode
 
-                ( SchemaLoading, _ ) ->
+                ( _, SchemaLoading, _ ) ->
                     VisualMode
 
                 _ ->
@@ -9105,6 +9184,13 @@ subscriptions model =
 
             Nothing ->
                 Sub.none
+
+        -- ドット絵の一筆はグリッドの外で離しても確定させる(描いている間だけ生きる)
+        , if PixelEditor.strokeActive model.pixel then
+            Browser.Events.onMouseUp (D.succeed (PixelMsg PixelEditor.StrokeEnded))
+
+          else
+            Sub.none
 
         -- 「いま画面に出ている Doc」(ゲームが書く debug/active-docs.json)の定期確認
         , if model.screen == Editing then
