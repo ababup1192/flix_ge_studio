@@ -6,6 +6,7 @@ module PixelEditor exposing
     , Out(..)
     , floodAt
     , fromDoc
+    , goldenHue
     , init
     , paintAt
     , palette
@@ -30,8 +31,8 @@ docText)から導き、一筆(pointerdown〜up)の途中だけ作業コピー(wo
 
 legend の値は意味色キー(テーマが解く名前)のことがあり、ここでは実色に
 解けない。サーバの解決表(POST /sprite/colors の「値 → #rrggbb」)があれば
-それを使い、無い・欠けるキーは #rrggbb 素通し → 名前から導く仮色、の順に
-倒す(表示のためだけ。保存される文字には関与しない)。
+それを使い、無い・欠けるキーは #rrggbb 素通し → legend 内の並び順から導く
+仮色、の順に倒す(表示のためだけ。保存される文字には関与しない)。
 
 -}
 
@@ -533,7 +534,7 @@ resolved はサーバの解決表(legend の値 → #rrggbb)。
 palette : Dict String String -> Doc -> List Swatch
 palette resolved doc =
     doc.legend
-        |> List.map (\( ch, name ) -> { ch = ch, name = name, css = colorCss resolved name })
+        |> List.map (\( ch, name ) -> { ch = ch, name = name, css = colorCss resolved (legendValues doc) name })
 
 
 {-| 透明を表す文字。実データが使っている非 legend 文字に合わせる('.' 優先)。 -}
@@ -569,8 +570,8 @@ transparentChar doc =
                     '.'
 
 
-colorCss : Dict String String -> String -> String
-colorCss resolved value =
+colorCss : Dict String String -> List String -> String -> String
+colorCss resolved values value =
     case Dict.get value resolved of
         Just hex ->
             -- サーバがゲームと同じ色解決で導いた実色(ゲーム画面と一致する)
@@ -581,8 +582,32 @@ colorCss resolved value =
                 value
 
             else
-                -- 解決表に無い意味色キーは実色に解けない。名前ごとに区別がつけば編集には足りる
-                "hsl(" ++ String.fromInt (hashHue value) ++ " 60% 55%)"
+                -- 解決表に無い意味色キーは実色に解けない。並び順から導く仮色で
+                -- 名前ごとに区別がつけば編集には足りる
+                "hsl(" ++ String.fromInt (goldenHue (indexOf value values)) ++ " 60% 55%)"
+
+
+{-| legend の値を並び順のまま(仮色の index の種)。 -}
+legendValues : Doc -> List String
+legendValues doc =
+    List.map Tuple.second doc.legend
+
+
+{-| 最初に一致する位置。無ければ 0(仮色の種に使うだけなので倒れてよい)。 -}
+indexOf : String -> List String -> Int
+indexOf target values =
+    values
+        |> List.indexedMap Tuple.pair
+        |> List.filterMap
+            (\( i, v ) ->
+                if v == target then
+                    Just i
+
+                else
+                    Nothing
+            )
+        |> List.head
+        |> Maybe.withDefault 0
 
 
 isHexColor : String -> Bool
@@ -596,11 +621,12 @@ isHexColor value =
             False
 
 
-hashHue : String -> Int
-hashHue name =
-    name
-        |> String.toList
-        |> List.foldl (\c acc -> modBy 360 (acc * 31 + Char.toCode c)) 7
+{-| パレット内の並び順(index)から仮色の色相を導く。黄金角(約137.5°)ずつ
+離すので、少数の候補どうしが必ず大きく離れる(ハッシュ由来の偶然の近さがない)。
+-}
+goldenHue : Int -> Int
+goldenHue index =
+    modBy 360 (round (toFloat index * 137.508))
 
 
 
@@ -961,7 +987,7 @@ viewCurrentColor resolved doc model =
         div []
             [ div
                 [ HA.class "h-14 rounded border border-edge"
-                , HA.style "background-color" (colorCss resolved name)
+                , HA.style "background-color" (colorCss resolved (legendValues doc) name)
                 ]
                 []
             , div [ HA.class "mt-1 truncate font-mono text-[11px] text-ink-soft" ]

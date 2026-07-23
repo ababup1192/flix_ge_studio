@@ -27,7 +27,8 @@ module MapEditor exposing
 
   - 地形 … rows に塗る文字。terrain Doc(entries[].{char,name,fill})が
     読めればそこから、無ければ rows に実際に出る文字+'.' を候補にする
-    (fail-open)。色は #rrggbb ならそのまま、それ以外は文字から安定に導く仮色。
+    (fail-open)。色は #rrggbb ならそのまま、それ以外はパレット内の並び順から
+    導く仮色('.' だけは無彩色寄りの暗色)。
   - 配置 … map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
     オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
 
@@ -42,7 +43,7 @@ import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
-import PixelEditor exposing (floodAt, paintAt, pickAt)
+import PixelEditor exposing (floodAt, goldenHue, paintAt, pickAt)
 import Svg
 import Svg.Attributes as SA
 
@@ -180,7 +181,8 @@ terrainSwatches terrainDoc rows =
 
         Nothing ->
             usedChars rows
-                |> List.map (\ch -> { ch = ch, name = String.fromChar ch, css = charCss ch })
+                |> List.indexedMap
+                    (\index ch -> { ch = ch, name = String.fromChar ch, css = provisionalCss index ch })
 
 
 docSwatches : D.Value -> Maybe (List Swatch)
@@ -194,14 +196,13 @@ docSwatches value =
                     Nothing
 
                 else
-                    Just entries
+                    Just (List.indexedMap entrySwatch entries)
             )
 
 
-{-| entry 1 件。char が 1 文字でない行は黙って除く。fill が #rrggbb なら
-その色、意味色キー(@…)等なら文字から仮色(表示のためだけ)。
+{-| entry 1 件の生読み。char が 1 文字でない行は黙って除く。
 -}
-entryDecoder : D.Decoder (Maybe Swatch)
+entryDecoder : D.Decoder (Maybe { ch : Char, name : String, fill : Maybe String })
 entryDecoder =
     D.map3
         (\charText name fill ->
@@ -210,17 +211,7 @@ entryDecoder =
                     Just
                         { ch = ch
                         , name = Maybe.withDefault (String.fromChar ch) name
-                        , css =
-                            case fill of
-                                Just f ->
-                                    if isHexColor f then
-                                        f
-
-                                    else
-                                        charCss ch
-
-                                Nothing ->
-                                    charCss ch
+                        , fill = fill
                         }
 
                 _ ->
@@ -229,6 +220,27 @@ entryDecoder =
         (D.field "char" D.string)
         (D.maybe (D.field "name" D.string))
         (D.maybe (D.field "fill" D.string))
+
+
+{-| fill が #rrggbb ならその色、意味色キー(@…)等はここでは実色に解けない
+ので並び順から仮色(表示のためだけ)。
+-}
+entrySwatch : Int -> { ch : Char, name : String, fill : Maybe String } -> Swatch
+entrySwatch index entry =
+    { ch = entry.ch
+    , name = entry.name
+    , css =
+        case entry.fill of
+            Just f ->
+                if isHexColor f then
+                    f
+
+                else
+                    provisionalCss index entry.ch
+
+            Nothing ->
+                provisionalCss index entry.ch
+    }
 
 
 {-| rows に出る文字を出現順に(重複なし)。'.' は消しゴムの行き先なので必ず入れる。
@@ -256,11 +268,18 @@ usedChars rows =
         distinct ++ [ defaultChar ]
 
 
-{-| 文字から区別のつく仮色(ピクセルエディタの hsl 導出と同じ流儀)。
+{-| パレット内の並び順から導く仮色。色相を黄金角(約137.5°)ずつ離すので、
+少数の候補どうしが必ず大きく離れる(文字ハッシュ由来の偶然の近さがない)。
+'.'(既定の文字=消しゴムが戻す先)だけは無彩色寄りの暗色に固定 — 意味の
+発明ではなく、既定文字の表示上の扱い。
 -}
-charCss : Char -> String
-charCss ch =
-    "hsl(" ++ String.fromInt (hashHue (String.fromChar ch)) ++ " 45% 45%)"
+provisionalCss : Int -> Char -> String
+provisionalCss index ch =
+    if ch == defaultChar then
+        "hsl(0 0% 30%)"
+
+    else
+        "hsl(" ++ String.fromInt (goldenHue index) ++ " 45% 45%)"
 
 
 isHexColor : String -> Bool

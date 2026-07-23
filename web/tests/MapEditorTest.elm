@@ -148,7 +148,62 @@ suite =
                         ( Just [ '#', ',', '.' ]
                         , Just [ ( '#', "石垣", True ), ( ',', "畑", False ) ]
                         )
+        , test "地形パレット — 仮色は並び順から色相を離して導く(少数の候補どうしが必ず見分けられる)。'.' は無彩色の暗色" <|
+            \_ ->
+                let
+                    swatches =
+                        MapEditor.fromDoc Nothing (parse """{ "rows": [ "#,~*", "...." ] }""")
+                            |> Maybe.map .terrain
+                            |> Maybe.withDefault []
+
+                    ( defaults, others ) =
+                        List.partition (\sw -> sw.ch == MapEditor.defaultChar) swatches
+
+                    hues =
+                        others |> List.filterMap (.css >> hslHue)
+
+                    minGap =
+                        pairs hues
+                            |> List.map (\( a, b ) -> min (abs (a - b)) (360 - abs (a - b)))
+                            |> List.minimum
+                            |> Maybe.withDefault 0
+                in
+                Expect.all
+                    [ -- 仮色は全員 hsl で導かれている
+                      \_ -> List.length hues |> Expect.equal (List.length others)
+
+                    -- どの 2 色も色相が大きく離れる(ハッシュ由来の偶然の近さがない)
+                    , \_ -> minGap |> Expect.atLeast 50
+
+                    -- '.'(既定の文字)は無彩色(彩度 0%)の暗色
+                    , \_ -> defaults |> List.map (.css >> String.contains " 0% ") |> Expect.equal [ True ]
+                    ]
+                    ()
         ]
+
+
+{-| "hsl(H S% L%)" の H。hsl でなければ Nothing。 -}
+hslHue : String -> Maybe Int
+hslHue css =
+    if String.startsWith "hsl(" css then
+        css
+            |> String.dropLeft 4
+            |> String.words
+            |> List.head
+            |> Maybe.andThen String.toInt
+
+    else
+        Nothing
+
+
+pairs : List a -> List ( a, a )
+pairs items =
+    case items of
+        x :: rest ->
+            List.map (Tuple.pair x) rest ++ pairs rest
+
+        [] ->
+            []
 
 
 kindShape : MapEditor.GroupKind -> ( String, Int, Bool )
