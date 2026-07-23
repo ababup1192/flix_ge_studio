@@ -32,6 +32,7 @@ import Json.Decode as D
 import Json.Encode as E
 import Lint
 import NewGame
+import MapEditor
 import PixelEditor
 import Plugins
 import Progress
@@ -567,6 +568,9 @@ type alias Model =
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
 
+    -- マップ(*.map.json のビジュアル編集)。持ち方はドット絵と同じ
+    , mapEd : MapEditor.Model
+
     -- 「+ 新しいファイル」ウィザード(Just = 3 ペインの代わりに表示中)
     , wizard : Maybe WizardState
 
@@ -720,6 +724,7 @@ init _ =
         , previewStale = False
         , drag = Nothing
         , pixel = PixelEditor.init
+        , mapEd = MapEditor.init
         , wizard = Nothing
         , usagesOpenFor = Nothing
         , rename = Nothing
@@ -788,6 +793,7 @@ type Msg
     | FieldEdited EditPayload
     | EditsQueued (List EditPayload)
     | PixelMsg PixelEditor.Msg
+    | MapMsg MapEditor.Msg
     | WeightsAddOpened (List Seg)
     | WeightsAddTyped String
     | WeightsAddCommitted
@@ -1303,7 +1309,7 @@ update msg model =
         ModeChosen mode ->
             -- 打ちかけは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)。
             -- ドット絵の作業コピーも手放す — テキスト側で文書が動き得るため
-            ( { model | viewMode = mode, activeDraft = Nothing, pixel = PixelEditor.release model.pixel }, Effect.none )
+            ( { model | viewMode = mode, activeDraft = Nothing, pixel = PixelEditor.release model.pixel, mapEd = MapEditor.release model.mapEd }, Effect.none )
 
         SectionClicked key ->
             -- 並べ替え・絞り込みは列の意味ごとセクションに紐づくので持ち越さない
@@ -1406,6 +1412,29 @@ update msg model =
                             queueEdit (pixelPayload edit) m1
 
                         PixelEditor.Noticed message ->
+                            showToast message m1
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        MapMsg mmsg ->
+            case mapDocCurrent model of
+                Just mdoc ->
+                    let
+                        ( mapEd, out ) =
+                            MapEditor.update mdoc mmsg model.mapEd
+
+                        m1 =
+                            { model | mapEd = mapEd }
+                    in
+                    case out of
+                        MapEditor.Silent ->
+                            ( m1, Effect.none )
+
+                        MapEditor.Edited edit ->
+                            queueEdits (mapPayloads edit) m1
+
+                        MapEditor.Noticed message ->
                             showToast message m1
 
                 Nothing ->
@@ -3035,6 +3064,73 @@ pixelPayload edit =
     }
 
 
+{-| 開いているファイルがマップ(パスが .map.json で終わり、rows が文字列配列)
+なら、その読み取り結果。読めない文書は Nothing — 従来のフォーム/コード表示へ
+静かに倒れる(spriteDocCurrent と同じ流儀。毎回引くのも同じ理由)。
+-}
+mapDocCurrent : Model -> Maybe MapEditor.Doc
+mapDocCurrent model =
+    case ( model.current, parsedDoc model ) of
+        ( Just path, Just doc ) ->
+            if String.endsWith ".map.json" path then
+                MapEditor.fromDoc (terrainDocCurrent model) doc
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| 地形パレットの素になる terrain Doc。editor.resources に宣言された
+*.terrain.json が横断辞書(crossSlots)で読めていればそれ(fail-open:
+無ければ Nothing で、パレットは rows の文字から導かれる)。
+-}
+terrainDocCurrent : Model -> Maybe D.Value
+terrainDocCurrent model =
+    model.crossSlots
+        |> List.filter (\slot -> String.endsWith ".terrain.json" slot.path)
+        |> List.filterMap .doc
+        |> List.head
+
+
+{-| マップの 1 操作を docEdit の編集列に翻訳する。rows は配列丸ごと 1 本、
+配置の移動は x・y の 2 本(それ以外のフィールドは触らない)、追加は配列末尾へ、
+削除は該当添字 — どれも既存の編集直列(dirty・自動保存・409・保存後の焼き)に乗る。
+-}
+mapPayloads : MapEditor.Edit -> List EditPayload
+mapPayloads edit =
+    case edit of
+        MapEditor.RowsEdited rows ->
+            [ { op = SetOp, path = [ KeySeg "rows" ], value = E.list E.string rows, isInt = False } ]
+
+        MapEditor.PointMoved move ->
+            let
+                base =
+                    KeySeg move.key
+                        :: (move.index |> Maybe.map (\i -> [ IdxSeg i ]) |> Maybe.withDefault [])
+            in
+            [ { op = SetOp, path = base ++ [ KeySeg "x" ], value = E.int move.x, isInt = True }
+            , { op = SetOp, path = base ++ [ KeySeg "y" ], value = E.int move.y, isInt = True }
+            ]
+
+        MapEditor.PointAdded added ->
+            [ { op = AppendOp
+              , path = [ KeySeg added.key ]
+              , value = E.object [ ( "x", E.int added.x ), ( "y", E.int added.y ) ]
+              , isInt = False
+              }
+            ]
+
+        MapEditor.PointRemoved removed ->
+            [ { op = RemoveOp
+              , path = [ KeySeg removed.key, IdxSeg removed.index ]
+              , value = E.null
+              , isInt = False
+              }
+            ]
+
+
 
 -- エントリの追加・複製・削除(テーブル上部の CRUD)
 
@@ -4192,6 +4288,7 @@ handleOkByKind env model =
                                     , previewStale = False
                                     , drag = Nothing
                                     , pixel = PixelEditor.init
+                                    , mapEd = MapEditor.init
                                     , usagesOpenFor = Nothing
                                     , rename = Nothing
                                     , renameInflight = Nothing
@@ -4287,6 +4384,7 @@ handleOkByKind env model =
 
                                         -- ドット絵の道具・履歴は開いたファイルの物(持ち越さない)
                                         , pixel = PixelEditor.init
+                                        , mapEd = MapEditor.init
 
                                         -- ジャンプで開いた時だけ選択が乗る(普段は Nothing のまま)
                                         , sectionKey = model.pendingJump |> Maybe.map .sectionKey
@@ -5820,13 +5918,17 @@ viewEditing model =
                                 Nothing ->
                                     case effectiveMode model of
                                         VisualMode ->
-                                            case spriteDocCurrent model of
+                                            case ( mapDocCurrent model, spriteDocCurrent model ) of
+                                                -- マップは 1 枚のマップエディタで完結
+                                                -- (道具・グリッド・パレットを内側に持つ)
+                                                ( Just mdoc, _ ) ->
+                                                    [ Html.map MapMsg (MapEditor.view mdoc model.mapEd) ]
+
                                                 -- ドット絵は 1 枚のピクセルエディタで完結
-                                                -- (道具・キャンバス・パレットを内側に持つ)
-                                                Just pdoc ->
+                                                ( _, Just pdoc ) ->
                                                     [ Html.map PixelMsg (PixelEditor.view pdoc model.pixel) ]
 
-                                                Nothing ->
+                                                _ ->
                                                     [ viewVisualCenter model
                                                     , viewPaneHandle RightPane
                                                     , viewVisualSide model
@@ -5914,8 +6016,12 @@ effectiveMode : Model -> ViewMode
 effectiveMode model =
     case ( model.viewMode, model.current ) of
         ( VisualMode, Just _ ) ->
-            -- ドット絵はスキーマ(JSON-Schema 形式 = SchemaForeign)でなく
-            -- 文書の形で判定する — 読めればピクセルエディタがビジュアルの主役
+            -- ドット絵・マップはスキーマ(JSON-Schema 形式 = SchemaForeign)でなく
+            -- 文書の形で判定する — 読めれば専用エディタがビジュアルの主役
+            if mapDocCurrent model /= Nothing then
+                VisualMode
+
+            else
             case ( spriteDocCurrent model, model.schemaState, parsedDoc model ) of
                 ( Just _, _, _ ) ->
                     VisualMode
@@ -9188,6 +9294,13 @@ subscriptions model =
         -- ドット絵の一筆はグリッドの外で離しても確定させる(描いている間だけ生きる)
         , if PixelEditor.strokeActive model.pixel then
             Browser.Events.onMouseUp (D.succeed (PixelMsg PixelEditor.StrokeEnded))
+
+          else
+            Sub.none
+
+        -- マップの一筆も同じ(グリッドの外で離しても確定させる)
+        , if MapEditor.strokeActive model.mapEd then
+            Browser.Events.onMouseUp (D.succeed (MapMsg MapEditor.StrokeEnded))
 
           else
             Sub.none

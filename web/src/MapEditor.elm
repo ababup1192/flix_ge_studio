@@ -1,0 +1,1515 @@
+module MapEditor exposing
+    ( Doc
+    , Edit(..)
+    , GroupKind(..)
+    , Model
+    , Msg(..)
+    , Out(..)
+    , addColumn
+    , addRow
+    , defaultChar
+    , fromDoc
+    , init
+    , release
+    , strokeActive
+    , update
+    , view
+    )
+
+{-| マップ(\*.map.json)の手直し。骨格はピクセルエディタと同じ:
+左に道具(ペン・消しゴム・バケツ・スポイト・戻す/やり直す)、中央にセルの
+グリッド、右にパレット。
+
+エディタ内はベタ塗り — セルは地形 1 文字 = 1 色で塗るだけで、角の丸みなど
+本物の見た目は再現しない(本物はミニプレイヤーが映す)。
+
+パレットは 2 グループ:
+
+  - 地形 … rows に塗る文字。terrain Doc(entries[].{char,name,fill})が
+    読めればそこから、無ければ rows に実際に出る文字+'.' を候補にする
+    (fail-open)。色は #rrggbb ならそのまま、それ以外は文字から安定に導く仮色。
+  - 配置 … map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
+    オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
+
+文書の正本はここに置かない — 描画は毎回親から渡される Doc から導き、
+一筆の途中だけ rows の作業コピー(working)が表示に勝つ。確定は 1 操作 =
+1 つの Edit として親へ返し、親の編集直列(docEdit → dirty → 保存)に乗せる。
+
+-}
+
+import Dict
+import Html exposing (Html, button, div, span, text)
+import Html.Attributes as HA
+import Html.Events as HE
+import Json.Decode as D
+import PixelEditor exposing (floodAt, paintAt, pickAt)
+import Svg
+import Svg.Attributes as SA
+
+
+
+-- 文書(親が渡す読み取り結果)
+
+
+type alias Doc =
+    { rows : List String
+    , groups : List PlaceGroup
+    , terrain : List Swatch
+    }
+
+
+{-| 配置 1 キーぶん。単体({x,y} オブジェクト)か配列かで動かし方が変わる。
+xyOnly = 要素が x,y だけ(herbs/lamps 型)。それ以外(villagers 型)は追加に
+別のフィールドが要るので、ここでは足せない(移動・削除のみ)。
+-}
+type alias PlaceGroup =
+    { key : String
+    , kind : GroupKind
+    }
+
+
+type GroupKind
+    = Single ( Int, Int )
+    | Many { xyOnly : Bool, points : List ( Int, Int ) }
+
+
+type alias Swatch =
+    { ch : Char
+    , name : String
+    , css : String
+    }
+
+
+{-| rows の既定の文字(消しゴム・広げた新セルの埋め草)。
+-}
+defaultChar : Char
+defaultChar =
+    '.'
+
+
+{-| パース済み map Doc の読み取り。rows(文字列配列・空でない)が無い文書は
+Nothing — 呼び側は従来のフォーム/コード表示へ倒す(壊さない)。
+terrainDoc は読めた terrain Doc(無ければ Nothing で rows から導く)。
+-}
+fromDoc : Maybe D.Value -> D.Value -> Maybe Doc
+fromDoc terrainDoc value =
+    case D.decodeValue (D.field "rows" (D.list D.string)) value of
+        Ok rows ->
+            if List.isEmpty rows then
+                Nothing
+
+            else
+                Just
+                    { rows = rows
+                    , groups = placeGroups value
+                    , terrain = terrainSwatches terrainDoc rows
+                    }
+
+        Err _ ->
+            Nothing
+
+
+{-| トップレベルから x,y 持ちを機械的に拾う。順序は JSON のキー順のまま。
+-}
+placeGroups : D.Value -> List PlaceGroup
+placeGroups value =
+    D.decodeValue (D.keyValuePairs D.value) value
+        |> Result.withDefault []
+        |> List.filterMap
+            (\( key, v ) ->
+                case D.decodeValue pointDecoder v of
+                    Ok point ->
+                        Just { key = key, kind = Single point }
+
+                    Err _ ->
+                        D.decodeValue (D.list D.value) v
+                            |> Result.toMaybe
+                            |> Maybe.andThen (manyKind key)
+            )
+
+
+{-| 配列が「全要素 x,y 持ち・空でない」なら配置グループ。
+空配列は x,y 持ちか判別できないので拾わない(fail-open)。
+-}
+manyKind : String -> List D.Value -> Maybe PlaceGroup
+manyKind key items =
+    let
+        points =
+            List.filterMap (\v -> D.decodeValue pointDecoder v |> Result.toMaybe) items
+    in
+    if List.isEmpty points || List.length points /= List.length items then
+        Nothing
+
+    else
+        Just
+            { key = key
+            , kind =
+                Many
+                    { xyOnly = List.all xyOnlyValue items
+                    , points = points
+                    }
+            }
+
+
+pointDecoder : D.Decoder ( Int, Int )
+pointDecoder =
+    D.map2 Tuple.pair (D.field "x" D.int) (D.field "y" D.int)
+
+
+xyOnlyValue : D.Value -> Bool
+xyOnlyValue v =
+    D.decodeValue (D.keyValuePairs D.value) v
+        |> Result.toMaybe
+        |> Maybe.map (List.all (\( k, _ ) -> k == "x" || k == "y"))
+        |> Maybe.withDefault False
+
+
+
+-- 地形パレットの導出
+
+
+{-| terrain Doc(entries[].{char,name,fill})が読めればそこから。
+無い・壊れている・entries が空なら rows に実際に出る文字+'.'(fail-open)。
+名詞は発明しない — Doc の name か文字そのものだけ。
+-}
+terrainSwatches : Maybe D.Value -> List String -> List Swatch
+terrainSwatches terrainDoc rows =
+    case terrainDoc |> Maybe.andThen docSwatches of
+        Just swatches ->
+            swatches
+
+        Nothing ->
+            usedChars rows
+                |> List.map (\ch -> { ch = ch, name = String.fromChar ch, css = charCss ch })
+
+
+docSwatches : D.Value -> Maybe (List Swatch)
+docSwatches value =
+    D.decodeValue (D.field "entries" (D.list entryDecoder)) value
+        |> Result.toMaybe
+        |> Maybe.map (List.filterMap identity)
+        |> Maybe.andThen
+            (\entries ->
+                if List.isEmpty entries then
+                    Nothing
+
+                else
+                    Just entries
+            )
+
+
+{-| entry 1 件。char が 1 文字でない行は黙って除く。fill が #rrggbb なら
+その色、意味色キー(@…)等なら文字から仮色(表示のためだけ)。
+-}
+entryDecoder : D.Decoder (Maybe Swatch)
+entryDecoder =
+    D.map3
+        (\charText name fill ->
+            case String.toList charText of
+                [ ch ] ->
+                    Just
+                        { ch = ch
+                        , name = Maybe.withDefault (String.fromChar ch) name
+                        , css =
+                            case fill of
+                                Just f ->
+                                    if isHexColor f then
+                                        f
+
+                                    else
+                                        charCss ch
+
+                                Nothing ->
+                                    charCss ch
+                        }
+
+                _ ->
+                    Nothing
+        )
+        (D.field "char" D.string)
+        (D.maybe (D.field "name" D.string))
+        (D.maybe (D.field "fill" D.string))
+
+
+{-| rows に出る文字を出現順に(重複なし)。'.' は消しゴムの行き先なので必ず入れる。
+-}
+usedChars : List String -> List Char
+usedChars rows =
+    let
+        distinct =
+            rows
+                |> List.concatMap String.toList
+                |> List.foldl
+                    (\c acc ->
+                        if List.member c acc then
+                            acc
+
+                        else
+                            acc ++ [ c ]
+                    )
+                    []
+    in
+    if List.member defaultChar distinct then
+        distinct
+
+    else
+        distinct ++ [ defaultChar ]
+
+
+{-| 文字から区別のつく仮色(ピクセルエディタの hsl 導出と同じ流儀)。
+-}
+charCss : Char -> String
+charCss ch =
+    "hsl(" ++ String.fromInt (hashHue (String.fromChar ch)) ++ " 45% 45%)"
+
+
+isHexColor : String -> Bool
+isHexColor value =
+    case String.uncons value of
+        Just ( '#', rest ) ->
+            (String.length rest == 3 || String.length rest == 6)
+                && List.all Char.isHexDigit (String.toList rest)
+
+        _ ->
+            False
+
+
+hashHue : String -> Int
+hashHue name =
+    name
+        |> String.toList
+        |> List.foldl (\c acc -> modBy 360 (acc * 31 + Char.toCode c)) 7
+
+
+
+-- 状態
+
+
+type Tool
+    = Pen
+    | Eraser
+    | Bucket
+    | Dropper
+
+
+{-| いま塗る/置く物。地形(rows の文字)か配置(グループのキー)か。
+-}
+type Brush
+    = Terrain Char
+    | Place String
+
+
+type Axis
+    = Cols
+    | Rows
+
+
+{-| 確定待ちの確認。消す物が空でない時だけここを経由する。
+-}
+type Confirm
+    = RemovePointConfirm { key : String, index : Int }
+    | ShrinkConfirm Axis
+
+
+{-| 戻す/やり直すの 1 操作。rows はスナップショット(ピクセルエディタと同じ)、
+配置は逆操作を覚える。追加の取り消し・削除のやり直しは「そのグループの末尾」を
+消す(追加は常に末尾へ入るため。適用時に長さから添字を解く)。
+-}
+type Step
+    = RowsStep { before : List String, after : List String }
+    | MoveStep { key : String, index : Maybe Int, from : ( Int, Int ), to : ( Int, Int ) }
+    | AddStep { key : String, point : ( Int, Int ) }
+    | RemoveStep { key : String, point : ( Int, Int ), index : Int }
+
+
+type alias Model =
+    { tool : Tool
+
+    -- Nothing は「まだ選んでいない」= 地形の先頭
+    , brush : Maybe Brush
+
+    -- 配列グループで選択中の 1 個(次のクリックで動かす対象)
+    , picked : Maybe ( String, Int )
+    , cellPx : Int
+    , hover : Maybe ( Int, Int )
+
+    -- 一筆の途中(Just = 塗っている)。before は戻す用の一筆前
+    , stroke : Maybe { ch : Char, before : List String }
+
+    -- 表示が文書に勝つ rows の作業コピー(一筆の途中と、確定後のエコー待ちの間)
+    , working : Maybe (List String)
+    , confirm : Maybe Confirm
+    , undo : List Step
+    , redo : List Step
+    }
+
+
+init : Model
+init =
+    { tool = Pen
+    , brush = Nothing
+    , picked = Nothing
+    , cellPx = baseCellPx
+    , hover = Nothing
+    , stroke = Nothing
+    , working = Nothing
+    , confirm = Nothing
+    , undo = []
+    , redo = []
+    }
+
+
+{-| 一筆の途中か(親がグローバル mouseup を購読する間だけ True)。
+-}
+strokeActive : Model -> Bool
+strokeActive model =
+    model.stroke /= Nothing
+
+
+{-| 一筆・作業コピー・選択を手放して文書の値へ戻る(モード切替等、テキスト側で
+文書が動き得る時に親が呼ぶ)。道具・ズーム・履歴は保つ。
+-}
+release : Model -> Model
+release model =
+    { model | stroke = Nothing, working = Nothing, hover = Nothing, picked = Nothing, confirm = Nothing }
+
+
+
+-- 更新
+
+
+type Msg
+    = ToolChosen Tool
+    | TerrainChosen Char
+    | PlaceChosen String
+    | ZoomStepped Int
+    | CellPressed Int Int Int
+    | CellEntered Int Int
+    | GridLeft
+    | StrokeEnded
+    | GrowPressed Axis
+    | ShrinkPressed Axis
+    | ConfirmAccepted
+    | ConfirmDismissed
+    | UndoPressed
+    | RedoPressed
+      -- contextmenu を抑えるためだけの空打ち(右クリック=消しゴムを活かす)
+    | Swallowed
+
+
+{-| 編集 1 件。親が docEdit の payload へ翻訳する:
+rows は配列丸ごと 1 本、配置は該当 path(villagers.0.x 等)。
+-}
+type Edit
+    = RowsEdited (List String)
+    | PointMoved { key : String, index : Maybe Int, x : Int, y : Int }
+    | PointAdded { key : String, x : Int, y : Int }
+    | PointRemoved { key : String, index : Int }
+
+
+type Out
+    = Silent
+    | Edited Edit
+    | Noticed String
+
+
+update : Doc -> Msg -> Model -> ( Model, Out )
+update doc msg model =
+    case msg of
+        Swallowed ->
+            ( model, Silent )
+
+        ToolChosen tool ->
+            -- 配置を選んでいる間はバケツ無効(ボタンも押せないが、ショートカットもここで塞ぐ)
+            if tool == Bucket && isPlaceBrush model then
+                ( model, Silent )
+
+            else
+                ( { model | tool = tool }, Silent )
+
+        TerrainChosen ch ->
+            -- 消しゴム・スポイト中の色選びは「その色で塗りたい」なのでペンへ
+            ( { model
+                | brush = Just (Terrain ch)
+                , picked = Nothing
+                , tool =
+                    if model.tool == Eraser || model.tool == Dropper then
+                        Pen
+
+                    else
+                        model.tool
+              }
+            , Silent
+            )
+
+        PlaceChosen key ->
+            -- 配置に効く道具はペンだけ(バケツ等は残しても迷うだけ)
+            ( { model | brush = Just (Place key), picked = Nothing, tool = Pen }, Silent )
+
+        ZoomStepped dir ->
+            ( { model | cellPx = zoomStep dir model.cellPx }, Silent )
+
+        CellEntered x y ->
+            let
+                m1 =
+                    { model | hover = Just ( x, y ) }
+            in
+            case ( m1.stroke, m1.working ) of
+                ( Just stroke, Just rows ) ->
+                    ( { m1 | working = Just (paintAt stroke.ch ( x, y ) rows) }, Silent )
+
+                _ ->
+                    ( m1, Silent )
+
+        GridLeft ->
+            ( { model | hover = Nothing }, Silent )
+
+        CellPressed x y buttonId ->
+            press doc ( x, y ) buttonId model
+
+        StrokeEnded ->
+            endStroke model
+
+        GrowPressed axis ->
+            commitRows (grow axis (shownRows doc model)) doc model
+
+        ShrinkPressed axis ->
+            shrinkPress axis doc model
+
+        ConfirmAccepted ->
+            acceptConfirm doc model
+
+        ConfirmDismissed ->
+            ( { model | confirm = Nothing }, Silent )
+
+        UndoPressed ->
+            case model.undo of
+                [] ->
+                    ( model, Silent )
+
+                step :: rest ->
+                    applyStep doc True step { model | undo = rest, redo = step :: model.redo }
+
+        RedoPressed ->
+            case model.redo of
+                [] ->
+                    ( model, Silent )
+
+                step :: rest ->
+                    applyStep doc False step { model | redo = rest, undo = step :: model.undo }
+
+
+{-| 押した瞬間の分岐。右ボタンは道具に依らず消しゴム(定番ツールの作法)。
+-}
+press : Doc -> ( Int, Int ) -> Int -> Model -> ( Model, Out )
+press doc cell buttonId model =
+    if buttonId == 2 || (buttonId == 0 && model.tool == Eraser) then
+        erasePress doc cell model
+
+    else if buttonId /= 0 then
+        ( model, Silent )
+
+    else
+        case model.tool of
+            Eraser ->
+                -- 上で処理済み(ここには来ない)
+                ( model, Silent )
+
+            Pen ->
+                case activeBrush doc model of
+                    Terrain ch ->
+                        ( startStroke ch cell doc model, Silent )
+
+                    Place key ->
+                        placePress doc key cell model
+
+            Bucket ->
+                case activeBrush doc model of
+                    Terrain ch ->
+                        commitRows (floodAt ch cell (shownRows doc model)) doc model
+
+                    Place _ ->
+                        ( model, Silent )
+
+            Dropper ->
+                case pickAt cell (shownRows doc model) of
+                    Just ch ->
+                        ( { model | brush = Just (Terrain ch), tool = Pen, picked = Nothing }, Silent )
+
+                    Nothing ->
+                        ( model, Silent )
+
+
+{-| 消しゴム。配置の印の上ならその要素の削除(確認つき。配列要素だけ —
+単体オブジェクトは消すと文書が欠けるので動かすだけ)。地形セルなら '.' へ戻す一筆。
+-}
+erasePress : Doc -> ( Int, Int ) -> Model -> ( Model, Out )
+erasePress doc cell model =
+    case pointAt doc cell of
+        Just ( key, Just index ) ->
+            ( { model | confirm = Just (RemovePointConfirm { key = key, index = index }) }, Silent )
+
+        Just ( _, Nothing ) ->
+            ( model, Noticed "この印は消せません(動かすだけにしてあります)" )
+
+        Nothing ->
+            ( startStroke defaultChar cell doc model, Silent )
+
+
+{-| 配置ブラシでのクリック。単体はクリック先へ即移動。配列は
+印をクリック=選ぶ → 別セルをクリック=移動。x,y だけの配列は
+何も選んでいない空セルへのクリック=追加。
+-}
+placePress : Doc -> String -> ( Int, Int ) -> Model -> ( Model, Out )
+placePress doc key cell model =
+    case groupKind doc key of
+        Nothing ->
+            ( model, Silent )
+
+        Just (Single point) ->
+            if point == cell then
+                ( model, Silent )
+
+            else
+                commitMove { key = key, index = Nothing, from = point, to = cell } model
+
+        Just (Many many) ->
+            let
+                hitIndex =
+                    many.points
+                        |> List.indexedMap Tuple.pair
+                        |> List.filter (\( _, p ) -> p == cell)
+                        |> List.head
+                        |> Maybe.map Tuple.first
+            in
+            case ( model.picked, hitIndex ) of
+                ( _, Just index ) ->
+                    -- 印の上: 選ぶ(同じ印をもう一度なら選択解除)
+                    ( { model
+                        | picked =
+                            if model.picked == Just ( key, index ) then
+                                Nothing
+
+                            else
+                                Just ( key, index )
+                      }
+                    , Silent
+                    )
+
+                ( Just ( pickedKey, index ), Nothing ) ->
+                    if pickedKey == key then
+                        case many.points |> List.drop index |> List.head of
+                            Just from ->
+                                commitMove { key = key, index = Just index, from = from, to = cell } model
+
+                            Nothing ->
+                                ( { model | picked = Nothing }, Silent )
+
+                    else
+                        ( { model | picked = Nothing }, Silent )
+
+                ( Nothing, Nothing ) ->
+                    if many.xyOnly then
+                        commitAdd key cell model
+
+                    else
+                        ( model, Noticed "動かしたい印をクリックで選んでください" )
+
+
+commitMove : { key : String, index : Maybe Int, from : ( Int, Int ), to : ( Int, Int ) } -> Model -> ( Model, Out )
+commitMove move model =
+    ( { model
+        | undo = pushHistory (MoveStep move) model.undo
+        , redo = []
+      }
+    , Edited (PointMoved { key = move.key, index = move.index, x = Tuple.first move.to, y = Tuple.second move.to })
+    )
+
+
+commitAdd : String -> ( Int, Int ) -> Model -> ( Model, Out )
+commitAdd key (( x, y ) as point) model =
+    ( { model
+        | undo = pushHistory (AddStep { key = key, point = point }) model.undo
+        , redo = []
+      }
+    , Edited (PointAdded { key = key, x = x, y = y })
+    )
+
+
+commitRemove : Doc -> { key : String, index : Int } -> Model -> ( Model, Out )
+commitRemove doc target model =
+    case groupPoints doc target.key |> List.drop target.index |> List.head of
+        Just point ->
+            ( { model
+                | undo = pushHistory (RemoveStep { key = target.key, point = point, index = target.index }) model.undo
+                , redo = []
+
+                -- 添字がずれるので選択は持ち越さない
+                , picked = Nothing
+              }
+            , Edited (PointRemoved { key = target.key, index = target.index })
+            )
+
+        Nothing ->
+            ( model, Silent )
+
+
+startStroke : Char -> ( Int, Int ) -> Doc -> Model -> Model
+startStroke ch cell doc model =
+    let
+        rows =
+            shownRows doc model
+    in
+    { model
+        | stroke = Just { ch = ch, before = rows }
+        , working = Just (paintAt ch cell rows)
+    }
+
+
+endStroke : Model -> ( Model, Out )
+endStroke model =
+    case ( model.stroke, model.working ) of
+        ( Just stroke, Just rows ) ->
+            if rows == stroke.before then
+                ( { model | stroke = Nothing }, Silent )
+
+            else
+                ( { model
+                    | stroke = Nothing
+                    , undo = pushHistory (RowsStep { before = stroke.before, after = rows }) model.undo
+                    , redo = []
+                  }
+                , Edited (RowsEdited rows)
+                )
+
+        _ ->
+            ( { model | stroke = Nothing }, Silent )
+
+
+{-| 一筆を介さない rows の即時確定(バケツ・広げる/狭める)。
+-}
+commitRows : List String -> Doc -> Model -> ( Model, Out )
+commitRows rows doc model =
+    let
+        before =
+            shownRows doc model
+    in
+    if rows == before then
+        ( model, Silent )
+
+    else
+        ( { model
+            | working = Just rows
+            , undo = pushHistory (RowsStep { before = before, after = rows }) model.undo
+            , redo = []
+          }
+        , Edited (RowsEdited rows)
+        )
+
+
+{-| 狭める。消える端に既定の文字以外・配置の印があれば確認を挟む。
+-}
+shrinkPress : Axis -> Doc -> Model -> ( Model, Out )
+shrinkPress axis doc model =
+    let
+        rows =
+            shownRows doc model
+    in
+    if not (shrinkable axis rows) then
+        ( model, Silent )
+
+    else if shrinkTouches axis rows doc.groups then
+        ( { model | confirm = Just (ShrinkConfirm axis) }, Silent )
+
+    else
+        commitRows (shrink axis rows) doc model
+
+
+acceptConfirm : Doc -> Model -> ( Model, Out )
+acceptConfirm doc model =
+    case model.confirm of
+        Just (RemovePointConfirm target) ->
+            commitRemove doc target { model | confirm = Nothing }
+
+        Just (ShrinkConfirm axis) ->
+            commitRows (shrink axis (shownRows doc model)) doc { model | confirm = Nothing }
+
+        Nothing ->
+            ( model, Silent )
+
+
+{-| 戻す/やり直すの適用。配置の追加/削除の巻き戻しは末尾基準
+(追加は常に末尾へ入るため)。対象が既に無ければ何もしない。
+-}
+applyStep : Doc -> Bool -> Step -> Model -> ( Model, Out )
+applyStep doc isUndo step model =
+    let
+        m1 =
+            { model | stroke = Nothing, picked = Nothing }
+    in
+    case step of
+        RowsStep snap ->
+            let
+                rows =
+                    if isUndo then
+                        snap.before
+
+                    else
+                        snap.after
+            in
+            ( { m1 | working = Just rows }, Edited (RowsEdited rows) )
+
+        MoveStep move ->
+            let
+                ( x, y ) =
+                    if isUndo then
+                        move.from
+
+                    else
+                        move.to
+            in
+            ( m1, Edited (PointMoved { key = move.key, index = move.index, x = x, y = y }) )
+
+        AddStep add ->
+            if isUndo then
+                removeLast doc add.key m1
+
+            else
+                ( m1, Edited (PointAdded { key = add.key, x = Tuple.first add.point, y = Tuple.second add.point }) )
+
+        RemoveStep removed ->
+            if isUndo then
+                ( m1, Edited (PointAdded { key = removed.key, x = Tuple.first removed.point, y = Tuple.second removed.point }) )
+
+            else
+                removeLast doc removed.key m1
+
+
+removeLast : Doc -> String -> Model -> ( Model, Out )
+removeLast doc key model =
+    let
+        len =
+            List.length (groupPoints doc key)
+    in
+    if len <= 0 then
+        ( model, Silent )
+
+    else
+        ( model, Edited (PointRemoved { key = key, index = len - 1 }) )
+
+
+pushHistory : Step -> List Step -> List Step
+pushHistory step history =
+    -- 覚えるのは直近 50 操作まで(スナップショットを無限に抱えない)
+    step :: List.take 49 history
+
+
+
+-- 純ロジック(広げる・狭める)
+
+
+{-| 右端に 1 列足す。全行を「一番長い行+1」まで既定の文字で埋める —
+不揃いの行もここで揃う。
+-}
+addColumn : List String -> List String
+addColumn rows =
+    let
+        w =
+            maxWidth rows
+    in
+    List.map (String.padRight (w + 1) defaultChar) rows
+
+
+{-| 下端に 1 行足す(一番長い行と同じ幅、既定の文字で)。
+-}
+addRow : List String -> List String
+addRow rows =
+    rows ++ [ String.repeat (maxWidth rows) (String.fromChar defaultChar) ]
+
+
+grow : Axis -> List String -> List String
+grow axis =
+    case axis of
+        Cols ->
+            addColumn
+
+        Rows ->
+            addRow
+
+
+shrink : Axis -> List String -> List String
+shrink axis rows =
+    case axis of
+        Cols ->
+            List.map (String.left (maxWidth rows - 1)) rows
+
+        Rows ->
+            List.take (List.length rows - 1) rows
+
+
+shrinkable : Axis -> List String -> Bool
+shrinkable axis rows =
+    case axis of
+        Cols ->
+            maxWidth rows > 1
+
+        Rows ->
+            List.length rows > 1
+
+
+{-| 狭めると消える端に、既定の文字以外か配置の印があるか(=確認が要るか)。
+-}
+shrinkTouches : Axis -> List String -> List PlaceGroup -> Bool
+shrinkTouches axis rows groups =
+    let
+        ( edge, cells ) =
+            case axis of
+                Cols ->
+                    ( \( x, _ ) -> x >= maxWidth rows - 1
+                    , rows |> List.concatMap (String.toList >> List.drop (maxWidth rows - 1))
+                    )
+
+                Rows ->
+                    ( \( _, y ) -> y >= List.length rows - 1
+                    , rows |> List.drop (List.length rows - 1) |> List.concatMap String.toList
+                    )
+    in
+    List.any (\c -> c /= defaultChar) cells
+        || List.any edge (List.concatMap allPoints groups)
+
+
+maxWidth : List String -> Int
+maxWidth rows =
+    rows |> List.map String.length |> List.maximum |> Maybe.withDefault 0
+
+
+
+-- 読み(選択の解決)
+
+
+shownRows : Doc -> Model -> List String
+shownRows doc model =
+    Maybe.withDefault doc.rows model.working
+
+
+{-| いまのブラシ。選んだ物が文書から消えていたら地形の先頭へ倒す。
+-}
+activeBrush : Doc -> Model -> Brush
+activeBrush doc model =
+    let
+        valid brush =
+            case brush of
+                Terrain ch ->
+                    List.any (\sw -> sw.ch == ch) doc.terrain
+
+                Place key ->
+                    List.any (\g -> g.key == key) doc.groups
+    in
+    case model.brush |> Maybe.andThen (\b -> ifTrue (valid b) b) of
+        Just brush ->
+            brush
+
+        Nothing ->
+            doc.terrain
+                |> List.head
+                |> Maybe.map (.ch >> Terrain)
+                |> Maybe.withDefault (Terrain defaultChar)
+
+
+isPlaceBrush : Model -> Bool
+isPlaceBrush model =
+    case model.brush of
+        Just (Place _) ->
+            True
+
+        _ ->
+            False
+
+
+groupKind : Doc -> String -> Maybe GroupKind
+groupKind doc key =
+    doc.groups
+        |> List.filter (\g -> g.key == key)
+        |> List.head
+        |> Maybe.map .kind
+
+
+groupPoints : Doc -> String -> List ( Int, Int )
+groupPoints doc key =
+    groupKind doc key
+        |> Maybe.map kindPoints
+        |> Maybe.withDefault []
+
+
+kindPoints : GroupKind -> List ( Int, Int )
+kindPoints kind =
+    case kind of
+        Single point ->
+            [ point ]
+
+        Many many ->
+            many.points
+
+
+allPoints : PlaceGroup -> List ( Int, Int )
+allPoints group =
+    kindPoints group.kind
+
+
+{-| セルの上の配置。配列要素(Just index)を優先し、次に単体(Nothing)。
+消しゴムの当たり判定に使う。
+-}
+pointAt : Doc -> ( Int, Int ) -> Maybe ( String, Maybe Int )
+pointAt doc cell =
+    let
+        hits toIndex points key =
+            points
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( _, p ) -> p == cell)
+                |> List.map (\( i, _ ) -> ( key, toIndex i ))
+
+        manyHits =
+            doc.groups
+                |> List.concatMap
+                    (\g ->
+                        case g.kind of
+                            Many many ->
+                                hits Just many.points g.key
+
+                            Single _ ->
+                                []
+                    )
+
+        singleHits =
+            doc.groups
+                |> List.concatMap
+                    (\g ->
+                        case g.kind of
+                            Single point ->
+                                if point == cell then
+                                    [ ( g.key, Nothing ) ]
+
+                                else
+                                    []
+
+                            Many _ ->
+                                []
+                    )
+    in
+    List.head (manyHits ++ singleHits)
+
+
+ifTrue : Bool -> a -> Maybe a
+ifTrue cond value =
+    if cond then
+        Just value
+
+    else
+        Nothing
+
+
+{-| ズーム 100% のセル辺(px)。
+-}
+baseCellPx : Int
+baseCellPx =
+    22
+
+
+zoomLevels : List Int
+zoomLevels =
+    [ 14, 18, baseCellPx, 28, 34 ]
+
+
+zoomStep : Int -> Int -> Int
+zoomStep dir current =
+    let
+        index =
+            zoomLevels
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( _, v ) -> v == current)
+                |> List.head
+                |> Maybe.map Tuple.first
+                |> Maybe.withDefault 2
+    in
+    zoomLevels
+        |> List.drop (clamp 0 (List.length zoomLevels - 1) (index + dir))
+        |> List.head
+        |> Maybe.withDefault current
+
+
+
+-- 表示
+
+
+view : Doc -> Model -> Html Msg
+view doc model =
+    div [ HA.class "map-editor relative flex min-w-0 flex-1 bg-app" ]
+        ([ viewTools doc model
+         , viewCenter doc model
+         , viewPalette doc model
+         ]
+            ++ (case model.confirm of
+                    Just confirm ->
+                        [ viewConfirm confirm ]
+
+                    Nothing ->
+                        []
+               )
+        )
+
+
+viewTools : Doc -> Model -> Html Msg
+viewTools doc model =
+    div [ HA.class "map-tools flex w-14 shrink-0 flex-col items-center gap-1.5 border-r border-edge bg-panel py-2" ]
+        [ toolButton model Pen False "ペン(P)" iconPen
+        , toolButton model Eraser False "消しゴム(E)" iconEraser
+        , toolButton model Bucket (isPlaceBrush model) "バケツ(B)" iconBucket
+        , toolButton model Dropper False "スポイト(I)" iconDropper
+        , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
+        , historyButton "戻す(⌘Z / Ctrl+Z)" UndoPressed (List.isEmpty model.undo) iconUndo
+        , historyButton "やり直す(⇧⌘Z / Ctrl+Y)" RedoPressed (List.isEmpty model.redo) iconRedo
+        ]
+
+
+toolButton : Model -> Tool -> Bool -> String -> Html Msg -> Html Msg
+toolButton model tool disabled label body =
+    button
+        [ HA.classList
+            [ ( "map-tool flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded border", True )
+            , ( "border-accent bg-accent/10 text-accent", model.tool == tool )
+            , ( "border-transparent text-ink-soft hover:bg-white/5 hover:text-ink", model.tool /= tool )
+            , ( "cursor-default opacity-40 hover:bg-transparent", disabled )
+            ]
+        , HA.title label
+        , HA.disabled disabled
+        , HE.onClick (ToolChosen tool)
+        ]
+        [ body ]
+
+
+historyButton : String -> Msg -> Bool -> Html Msg -> Html Msg
+historyButton label msg disabled body =
+    button
+        [ HA.class "map-tool flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent text-ink-soft hover:bg-white/5 hover:text-ink disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+        , HA.title label
+        , HA.disabled disabled
+        , HE.onClick msg
+        ]
+        [ body ]
+
+
+viewCenter : Doc -> Model -> Html Msg
+viewCenter doc model =
+    let
+        rows =
+            shownRows doc model
+    in
+    div [ HA.class "map-center flex min-w-0 flex-1 flex-col" ]
+        [ div
+            [ HA.class "map-stage flex min-h-0 flex-1 cursor-crosshair overflow-auto p-4 select-none"
+
+            -- ショートカットはグリッドが焦点の時だけ(入力欄の ⌘Z を横取りしない)
+            , HA.tabindex 0
+            , HE.custom "keydown" keyDecoder
+            , HE.custom "contextmenu"
+                (D.succeed { message = Swallowed, stopPropagation = True, preventDefault = True })
+            ]
+            [ div [ HA.class "m-auto" ]
+                [ div [ HA.class "flex items-start" ]
+                    [ viewGridWithMarks doc model rows
+                    , viewColButtons rows
+                    ]
+                , viewRowButtons rows
+                ]
+            ]
+        , viewStatus model rows
+        ]
+
+
+{-| グリッド+配置の印。印は座標から重ねるだけ(クリックはセル側が受ける)。
+-}
+viewGridWithMarks : Doc -> Model -> List String -> Html Msg
+viewGridWithMarks doc model rows =
+    let
+        colors =
+            doc.terrain
+                |> List.map (\sw -> ( sw.ch, sw.css ))
+                |> Dict.fromList
+    in
+    div
+        [ HA.class "map-grid relative border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]"
+        , HE.onMouseLeave GridLeft
+        ]
+        ((rows |> List.indexedMap (viewGridRow colors model.cellPx))
+            ++ List.concatMap (viewGroupMarks model) doc.groups
+        )
+
+
+viewGridRow : Dict.Dict Char String -> Int -> Int -> String -> Html Msg
+viewGridRow colors cellPx y row =
+    div [ HA.class "flex" ]
+        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors cellPx x y ch))
+
+
+viewCell : Dict.Dict Char String -> Int -> Int -> Int -> Char -> Html Msg
+viewCell colors cellPx x y ch =
+    div
+        ([ HA.class "map-cell shrink-0"
+         , HA.style "width" (String.fromInt cellPx ++ "px")
+         , HA.style "height" (String.fromInt cellPx ++ "px")
+         , HE.custom "mousedown"
+            (D.field "button" D.int
+                |> D.map (\b -> { message = CellPressed x y b, stopPropagation = True, preventDefault = False })
+            )
+         , HE.onMouseEnter (CellEntered x y)
+         ]
+            ++ (case Dict.get ch colors of
+                    Just css ->
+                        [ HA.style "background-color" css ]
+
+                    Nothing ->
+                        [ HA.class "px-checker" ]
+               )
+        )
+        []
+
+
+{-| 配置 1 グループぶんの印(キー頭文字の小さなバッジ)。
+-}
+viewGroupMarks : Model -> PlaceGroup -> List (Html Msg)
+viewGroupMarks model group =
+    case group.kind of
+        Single point ->
+            [ viewMark model group.key False point ]
+
+        Many many ->
+            many.points
+                |> List.indexedMap
+                    (\i point ->
+                        viewMark model group.key (model.picked == Just ( group.key, i )) point
+                    )
+
+
+viewMark : Model -> String -> Bool -> ( Int, Int ) -> Html Msg
+viewMark model key selected ( x, y ) =
+    div
+        [ HA.class "pointer-events-none absolute flex items-center justify-center"
+        , HA.style "left" (String.fromInt (x * model.cellPx) ++ "px")
+        , HA.style "top" (String.fromInt (y * model.cellPx) ++ "px")
+        , HA.style "width" (String.fromInt model.cellPx ++ "px")
+        , HA.style "height" (String.fromInt model.cellPx ++ "px")
+        ]
+        [ span
+            [ HA.classList
+                [ ( "flex h-4 w-4 items-center justify-center rounded-full border bg-panel font-mono text-[9px] leading-none text-ink", True )
+                , ( "border-accent ring-2 ring-accent/70", selected )
+                ]
+            , HA.style "border-color" (markCss key)
+            ]
+            [ text (String.left 1 key) ]
+        ]
+
+
+markCss : String -> String
+markCss key =
+    "hsl(" ++ String.fromInt (hashHue key) ++ " 70% 65%)"
+
+
+{-| 右端の +/−(列)。
+-}
+viewColButtons : List String -> Html Msg
+viewColButtons rows =
+    div [ HA.class "ml-1.5 flex flex-col gap-1" ]
+        [ growButton "列を足す" (GrowPressed Cols)
+        , shrinkButton "右端の列を消す" (shrinkable Cols rows) (ShrinkPressed Cols)
+        ]
+
+
+{-| 下端の +/−(行)。
+-}
+viewRowButtons : List String -> Html Msg
+viewRowButtons rows =
+    div [ HA.class "mt-1.5 flex gap-1" ]
+        [ growButton "行を足す" (GrowPressed Rows)
+        , shrinkButton "下端の行を消す" (shrinkable Rows rows) (ShrinkPressed Rows)
+        ]
+
+
+growButton : String -> Msg -> Html Msg
+growButton label msg =
+    button
+        [ HA.class "btn btn-mini h-6 w-6 justify-center"
+        , HA.title label
+        , HE.onClick msg
+        ]
+        [ text "+" ]
+
+
+shrinkButton : String -> Bool -> Msg -> Html Msg
+shrinkButton label enabled msg =
+    button
+        [ HA.class "btn btn-mini h-6 w-6 justify-center"
+        , HA.title label
+        , HA.disabled (not enabled)
+        , HE.onClick msg
+        ]
+        [ text "−" ]
+
+
+viewStatus : Model -> List String -> Html Msg
+viewStatus model rows =
+    div [ HA.class "map-status flex h-8 shrink-0 items-center gap-2 border-t border-edge bg-panel px-3 text-[11px] text-ink-soft" ]
+        [ button
+            [ HA.class "btn btn-mini"
+            , HA.title "ズーム −"
+            , HA.disabled (Just model.cellPx == List.head zoomLevels)
+            , HE.onClick (ZoomStepped -1)
+            ]
+            [ text "−" ]
+        , span [ HA.class "w-10 text-center font-mono" ]
+            [ text (String.fromInt (model.cellPx * 100 // baseCellPx) ++ "%") ]
+        , button
+            [ HA.class "btn btn-mini"
+            , HA.title "ズーム +"
+            , HA.disabled (Just model.cellPx == List.head (List.reverse zoomLevels))
+            , HE.onClick (ZoomStepped 1)
+            ]
+            [ text "+" ]
+        , span [ HA.class "ml-2 font-mono text-ink-faint" ]
+            [ text (String.fromInt (maxWidth rows) ++ "×" ++ String.fromInt (List.length rows)) ]
+        , span [ HA.class "spacer flex-1" ] []
+        , case model.picked of
+            Just ( key, _ ) ->
+                span [ HA.class "text-ink-faint" ] [ text (key ++ " — 動かす先をクリック") ]
+
+            Nothing ->
+                text ""
+        , span [ HA.class "w-16 text-right font-mono text-ink-faint" ]
+            [ text
+                (case model.hover of
+                    Just ( x, y ) ->
+                        String.fromInt x ++ ", " ++ String.fromInt y
+
+                    Nothing ->
+                        ""
+                )
+            ]
+        ]
+
+
+viewPalette : Doc -> Model -> Html Msg
+viewPalette doc model =
+    div [ HA.class "map-palette w-56 shrink-0 overflow-y-auto border-l border-edge bg-panel p-3" ]
+        [ div [ HA.class "mb-1.5 text-[11px] text-ink-faint" ] [ text "地形" ]
+        , div [ HA.class "flex flex-wrap gap-1.5" ]
+            (doc.terrain |> List.map (viewSwatch doc model))
+        , if List.isEmpty doc.groups then
+            text ""
+
+          else
+            div []
+                [ div [ HA.class "mt-4 mb-1.5 text-[11px] text-ink-faint" ] [ text "配置" ]
+                , div [ HA.class "flex flex-col gap-1" ]
+                    (doc.groups |> List.map (viewPlaceEntry doc model))
+                ]
+        ]
+
+
+viewSwatch : Doc -> Model -> Swatch -> Html Msg
+viewSwatch doc model swatch =
+    let
+        selected =
+            model.tool /= Eraser && activeBrush doc model == Terrain swatch.ch
+    in
+    button
+        [ HA.classList
+            [ ( "flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm border font-mono text-[10px] text-white/80", True )
+            , ( "border-accent ring-2 ring-accent/60", selected )
+            , ( "border-edge hover:border-ink-faint", not selected )
+            ]
+        , HA.style "background-color" swatch.css
+        , HA.title swatch.name
+        , HE.onClick (TerrainChosen swatch.ch)
+        ]
+        [ text (String.fromChar swatch.ch) ]
+
+
+viewPlaceEntry : Doc -> Model -> PlaceGroup -> Html Msg
+viewPlaceEntry doc model group =
+    let
+        selected =
+            activeBrush doc model == Place group.key
+
+        count =
+            List.length (allPoints group)
+    in
+    button
+        [ HA.classList
+            [ ( "flex cursor-pointer items-center gap-2 rounded border px-2 py-1 text-left text-xs", True )
+            , ( "border-accent bg-accent/10 text-accent", selected )
+            , ( "border-edge text-ink-soft hover:border-ink-faint hover:text-ink", not selected )
+            ]
+        , HA.title group.key
+        , HE.onClick (PlaceChosen group.key)
+        ]
+        [ span
+            [ HA.class "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-panel font-mono text-[9px] leading-none text-ink"
+            , HA.style "border-color" (markCss group.key)
+            ]
+            [ text (String.left 1 group.key) ]
+        , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] [ text group.key ]
+        , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
+            [ text
+                (case group.kind of
+                    Single _ ->
+                        ""
+
+                    Many _ ->
+                        String.fromInt count
+                )
+            ]
+        ]
+
+
+viewConfirm : Confirm -> Html Msg
+viewConfirm confirm =
+    let
+        ( message, okLabel ) =
+            case confirm of
+                RemovePointConfirm target ->
+                    ( "「" ++ target.key ++ "」の印をひとつ削除します。よろしいですか?", "削除する" )
+
+                ShrinkConfirm Cols ->
+                    ( "右端の列は空ではありません。消しますか?", "消す" )
+
+                ShrinkConfirm Rows ->
+                    ( "下端の行は空ではありません。消しますか?", "消す" )
+    in
+    div [ HA.class "absolute inset-0 z-20 flex items-center justify-center bg-black/40" ]
+        [ div [ HA.class "w-72 rounded border border-edge bg-panel p-4 shadow-lg" ]
+            [ div [ HA.class "mb-3 text-xs text-ink" ] [ text message ]
+            , div [ HA.class "flex justify-end gap-2" ]
+                [ button [ HA.class "btn", HE.onClick ConfirmDismissed ] [ text "やめる" ]
+                , button [ HA.class "btn btn-danger", HE.onClick ConfirmAccepted ] [ text okLabel ]
+                ]
+            ]
+        ]
+
+
+
+-- ショートカット(グリッドが焦点の時だけ届く keydown)
+
+
+keyDecoder : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+keyDecoder =
+    D.map4
+        (\key meta ctrl shift -> { key = key, meta = meta, ctrl = ctrl, shift = shift })
+        (D.field "key" D.string)
+        (D.field "metaKey" D.bool)
+        (D.field "ctrlKey" D.bool)
+        (D.field "shiftKey" D.bool)
+        |> D.andThen
+            (\k ->
+                case shortcutMsg k of
+                    Just msg ->
+                        D.succeed { message = msg, stopPropagation = True, preventDefault = True }
+
+                    Nothing ->
+                        D.fail "他のキーは素通し"
+            )
+
+
+shortcutMsg : { key : String, meta : Bool, ctrl : Bool, shift : Bool } -> Maybe Msg
+shortcutMsg k =
+    case ( String.toLower k.key, k.meta || k.ctrl, k.shift ) of
+        ( "z", True, False ) ->
+            Just UndoPressed
+
+        ( "z", True, True ) ->
+            Just RedoPressed
+
+        ( "y", True, _ ) ->
+            Just RedoPressed
+
+        ( "p", False, _ ) ->
+            Just (ToolChosen Pen)
+
+        ( "e", False, _ ) ->
+            Just (ToolChosen Eraser)
+
+        ( "b", False, _ ) ->
+            Just (ToolChosen Bucket)
+
+        ( "i", False, _ ) ->
+            Just (ToolChosen Dropper)
+
+        _ ->
+            Nothing
+
+
+
+-- アイコン(SVG 線画・20px — ピクセルエディタと同じ形)
+
+
+icon : List (Svg.Svg Msg) -> Html Msg
+icon paths =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24"
+        , SA.width "20"
+        , SA.height "20"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.6"
+        , SA.strokeLinecap "round"
+        , SA.strokeLinejoin "round"
+        ]
+        paths
+
+
+iconPen : Html Msg
+iconPen =
+    icon [ Svg.path [ SA.d "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" ] [] ]
+
+
+iconEraser : Html Msg
+iconEraser =
+    icon
+        [ Svg.path [ SA.d "m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" ] []
+        , Svg.path [ SA.d "M22 21H7" ] []
+        , Svg.path [ SA.d "m5 11 9 9" ] []
+        ]
+
+
+iconBucket : Html Msg
+iconBucket =
+    icon
+        [ Svg.path [ SA.d "m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" ] []
+        , Svg.path [ SA.d "m5 2 5 5" ] []
+        , Svg.path [ SA.d "M2 13h15" ] []
+        , Svg.path [ SA.d "M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" ] []
+        ]
+
+
+iconDropper : Html Msg
+iconDropper =
+    icon
+        [ Svg.path [ SA.d "m2 22 1-1h3l9-9" ] []
+        , Svg.path [ SA.d "M3 21v-3l9-9" ] []
+        , Svg.path [ SA.d "m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" ] []
+        ]
+
+
+iconUndo : Html Msg
+iconUndo =
+    icon
+        [ Svg.path [ SA.d "M9 14 4 9l5-5" ] []
+        , Svg.path [ SA.d "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11" ] []
+        ]
+
+
+iconRedo : Html Msg
+iconRedo =
+    icon
+        [ Svg.path [ SA.d "m15 14 5-5-5-5" ] []
+        , Svg.path [ SA.d "M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13" ] []
+        ]
