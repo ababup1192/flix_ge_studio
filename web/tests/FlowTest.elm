@@ -760,6 +760,25 @@ suite =
                     |> ProgramTest.clickButton "ホーム"
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> ProgramTest.expectViewHasNot [ class "mini-player" ]
+        , test "ミニプレイヤー: 絵をクリックすると拡大が開き、閉じると消える" <|
+            \() ->
+                landingWith resourcesBody
+                    |> respondOk 0
+                        "galleryList"
+                        (E.object
+                            [ ( "gallery"
+                              , E.list identity [ E.object [ ( "name", E.string "title.png" ) ] ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.clickButton "🎞️ ミニプレイヤー"
+                    |> ProgramTest.ensureViewHasNot [ class "mini-zoom" ]
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "mini-shot" ])
+                        ( "click", E.object [] )
+                    |> ProgramTest.ensureViewHas [ class "mini-zoom" ]
+                    |> ProgramTest.clickButton "閉じる"
+                    |> ProgramTest.expectViewHasNot [ class "mini-zoom" ]
         , test "プロジェクトを選ぶ: 編集中から選択画面を開き、「← いまのゲームに戻る」で編集へ戻れる" <|
             \() ->
                 bootedWith resourcesBody

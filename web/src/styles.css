@@ -177,8 +177,9 @@
       animation: atelier-overlay-in 0.25s ease;
     }
 
-    /* プレビュー拡大(lightbox)も同じふわり */
-    .atelier-lightbox {
+    /* プレビュー拡大(lightbox)・ミニプレイヤーの拡大も同じふわり */
+    .atelier-lightbox,
+    .mini-zoom {
       animation: atelier-overlay-in 0.2s ease;
     }
   }

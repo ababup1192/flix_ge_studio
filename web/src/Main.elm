@@ -463,13 +463,15 @@ type alias Model =
     -- (Nothing = 自動 — 知らせの最新を追う)。miniScenes は場面チップの材料
     -- (/gallery/list)、miniChanges は知らせの列の写し(自動追従と v= の種)。
     -- miniRefresh は絵のキャッシュ破りの目盛り(描き直しが終わるたび進む)、
-    -- miniSwapNotice は「✓ 差し替わりました」の点灯(2 秒で消える)
+    -- miniSwapNotice は「✓ 差し替わりました」の点灯(2 秒で消える)。
+    -- miniZoom は絵の拡大表示(開いた時の場面名。Nothing = 閉じている)
     , miniPlayerOpen : Bool
     , miniPin : Maybe String
     , miniScenes : List String
     , miniChanges : List Journey.Change
     , miniRefresh : Int
     , miniSwapNotice : Bool
+    , miniZoom : Maybe String
 
     -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
     -- 一方向の封筒(kind serverBase)で知らせる。届くまでは同一オリジン扱い("")
@@ -674,6 +676,7 @@ init _ =
         , miniChanges = []
         , miniRefresh = 0
         , miniSwapNotice = False
+        , miniZoom = Nothing
         , serverBase = ""
         , reqCounter = 0
         , notice = Nothing
@@ -835,6 +838,8 @@ type Msg
     | MiniSceneClicked (Maybe String)
     | MiniStartClicked
     | MiniSwapNoticeExpired
+    | MiniZoomOpened String
+    | MiniZoomClosed
     | ProjectPickerOpened
     | BackToEditingClicked
     | NewGameMsg NewGame.Msg
@@ -1088,6 +1093,14 @@ update msg model =
 
         MiniSwapNoticeExpired ->
             ( { model | miniSwapNotice = False }, Effect.none )
+
+        MiniZoomOpened name ->
+            -- 開いた時の場面名を覚える — 拡大中に自動追従が進んでも
+            -- 別場面へ勝手に切り替えない(差し替えは URL の v が進むので映る)
+            ( { model | miniZoom = Just name }, Effect.none )
+
+        MiniZoomClosed ->
+            ( { model | miniZoom = Nothing }, Effect.none )
 
         ProjectPickerOpened ->
             -- 上のバーの右端から選択画面へ。編集状態(model)は捨てない —
@@ -5043,7 +5056,10 @@ view model =
                         else
                             viewEditing model
                 , if model.tab == AtelierTab then
-                    viewMiniPlayer model
+                    div []
+                        [ viewMiniPlayer model
+                        , viewMiniZoom model
+                        ]
 
                   else
                     text ""
@@ -5184,22 +5200,15 @@ viewMiniPicture model =
                 [ text "場面の絵はまだありません" ]
 
         Just name ->
-            let
-                -- 焼き直しで中身が入れ替わるファイルなので v でキャッシュを破る
-                -- (知らせの版 + 描き直しの目盛り — 同じ URL のまま古い絵を出さない)
-                ver =
-                    model.miniChanges
-                        |> List.filter (\c -> c.name == name)
-                        |> List.head
-                        |> Maybe.map .ver
-                        |> Maybe.withDefault 0
-
-                url =
-                    galleryImageUrl model.serverBase "golden" name
-                        ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt model.miniRefresh)
-            in
             div [ HA.class "relative mt-2" ]
-                [ img [ HA.class "scene-shot block w-full rounded border border-edge bg-well", HA.src url, HA.alt name ] []
+                [ img
+                    [ HA.class "scene-shot mini-shot block w-full cursor-zoom-in rounded border border-edge bg-well"
+                    , HA.src (miniImageUrl model name)
+                    , HA.alt name
+                    , HA.title "クリックで拡大"
+                    , HE.onClick (MiniZoomOpened name)
+                    ]
+                    []
                 , if model.changesBaking then
                     div [ HA.class "mini-baking absolute inset-0 flex items-center justify-center gap-2 rounded bg-black/60 text-[11px] text-ink" ]
                         [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
@@ -5288,6 +5297,54 @@ miniSceneLabel name =
 
     else
         name
+
+
+{-| 場面の絵(golden/ の PNG)の URL。焼き直しで中身が入れ替わるファイルなので
+v でキャッシュを破る(知らせの版 + 描き直しの目盛り — 同じ URL のまま古い絵を
+出さない)。ミニプレイヤー本体と拡大表示で同じ式(同じ絵)を使う。
+-}
+miniImageUrl : Model -> String -> String
+miniImageUrl model name =
+    let
+        ver =
+            model.miniChanges
+                |> List.filter (\c -> c.name == name)
+                |> List.head
+                |> Maybe.map .ver
+                |> Maybe.withDefault 0
+    in
+    galleryImageUrl model.serverBase "golden" name
+        ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt model.miniRefresh)
+
+
+{-| ミニプレイヤーの絵の拡大。アトリエのプレビュー拡大(lightbox)と同じ流儀 —
+暗幕の上に PNG を大きく(〜90vw / 85vh・ドットのまま)、場面名を添える。
+閉じるのはクリック・閉じる ボタン・Esc(Esc の購読は subscriptions)。
+開いた時の場面名を持つので裏の自動追従で別場面へは切り替わらない —
+差し替え(同じ場面の新しい絵)だけが v の進みで映る。
+-}
+viewMiniZoom : Model -> Html Msg
+viewMiniZoom model =
+    case model.miniZoom of
+        Nothing ->
+            text ""
+
+        Just name ->
+            div
+                [ HA.class "mini-zoom fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/80"
+                , HE.onClick MiniZoomClosed
+                ]
+                [ img
+                    [ HA.class "scene-shot h-[85vh] max-w-[90vw] object-contain"
+                    , HA.src (miniImageUrl model name)
+                    , HA.alt name
+                    ]
+                    []
+                , div [ HA.class "flex items-center gap-3" ]
+                    [ div [ HA.class "font-mono text-[11px] text-ink" ] [ text (miniSceneLabel name) ]
+                    , button [ HA.class "btn btn-mini", HE.onClick MiniZoomClosed ] [ text "閉じる" ]
+                    ]
+                ]
 
 
 {-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
@@ -9040,6 +9097,23 @@ subscriptions model =
                         (\key ->
                             if key == "Escape" then
                                 D.succeed (AtelierMsg Atelier.LightboxClosed)
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else
+            Sub.none
+
+        -- ミニプレイヤーの拡大が開いている間だけ Esc で閉じる購読を生かす
+        , if model.miniZoom /= Nothing then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed MiniZoomClosed
 
                             else
                                 D.fail "他のキーは素通し"
