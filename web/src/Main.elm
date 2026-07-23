@@ -5451,6 +5451,9 @@ viewEditing model =
                                             [ viewEditorPane model ]
                            )
                     )
+
+                -- 開いたファイルの境界の 1 行(素材なら②への行き来、調整値なら完結の一言)
+                , viewRoleBoundary model
                 , viewProblemBar model
                 , case model.conflict of
                     Just _ ->
@@ -5708,16 +5711,71 @@ baseName path =
     String.split "/" path |> List.reverse |> List.head |> Maybe.withDefault path
 
 
+{-| フォーム/エディタの下の境界の 1 行。開いたファイルが
+素材(role:material の宣言)なら「素材を切り替える」への行き来リンク、
+宣言された調整値(tuning)なら「値を変えるだけで完結」の一言(リンクなし)。
+宣言外のファイル(すべてのファイル表示中に開ける)にはこの行自体を出さない。
+題は宣言題(括弧前)だけを織り込む — 名詞を発明しない。
+-}
+viewRoleBoundary : Model -> Html Msg
+viewRoleBoundary model =
+    case model.current of
+        Nothing ->
+            text ""
+
+        Just path ->
+            case Atelier.materialTitleOf model.atelier path of
+                Just title ->
+                    let
+                        count =
+                            Atelier.slotCandidateCount model.atelier path
+                    in
+                    div [ HA.class "role-boundary flex min-h-8 shrink-0 items-center border-t border-edge bg-panel px-3" ]
+                        [ if count > 0 then
+                            button
+                                [ HA.class "boundary-swap cursor-pointer text-[11px] text-accent hover:underline"
+                                , HE.onClick (AtelierMsg Atelier.OpenPicks)
+                                ]
+                                [ text ("候補 " ++ String.fromInt count ++ " 件 — 別の" ++ title ++ "に切り替える →") ]
+
+                          else
+                            button
+                                [ HA.class "boundary-swap cursor-pointer text-[11px] text-accent hover:underline"
+                                , HE.onClick (AtelierMsg (Atelier.CreateForSlotClicked path))
+                                ]
+                                [ text ("別の" ++ title ++ "に切り替える(まず候補を作ります)→") ]
+                        ]
+
+                Nothing ->
+                    case currentGroup model of
+                        Just group ->
+                            div [ HA.class "role-boundary flex min-h-8 shrink-0 items-center border-t border-edge bg-panel px-3" ]
+                                [ span [ HA.class "boundary-tuning text-[11px] text-ink-faint" ]
+                                    [ text
+                                        (Atelier.titleBeforeParen (Maybe.withDefault group.id group.title)
+                                            ++ "は値を変えるだけで完結します(切り替えるものはありません)"
+                                        )
+                                    ]
+                                ]
+
+                        Nothing ->
+                            text ""
+
+
 viewFilePane : Model -> Html Msg
 viewFilePane model =
     let
-        -- 宣言されたリソース(/resources)を見出し付きで先頭に、
-        -- 旧 /files 由来は重複を除いて「その他」へ
+        -- 宣言されたリソース(/resources)を見出し付きで先頭に。
+        -- 宣言に無いファイル(旧 /files 由来)は既定では出さず、
+        -- 「🗂 すべてのファイル」のトグルの間だけ「その他」に出す
         declared =
             declaredPaths model.groups
 
         others =
             List.filter (\p -> not (List.member p declared)) model.files
+
+        showAll =
+            Atelier.showAllFiles model.atelier
 
         -- ダッシュボード節(宣言がある時だけ)。グループ見出しの上に置く
         dashRows =
@@ -5739,7 +5797,7 @@ viewFilePane model =
                     )
 
         -- 宣言が 1 件も無いプロジェクトに「その他」だけ出すと見出しが意味を
-        -- 持たない(全部がその他)ので、その時は従来どおり素の一覧にする
+        -- 持たない(全部がその他)ので、その時はトグルを介さず素の一覧にする
         otherRows =
             if List.isEmpty others then
                 []
@@ -5747,11 +5805,34 @@ viewFilePane model =
             else if List.isEmpty model.groups then
                 List.map (viewFileRow model) others
 
-            else
+            else if showAll then
                 viewGroupHeading "その他" :: List.map (viewFileRow model) others
+
+            else
+                []
 
         rows =
             dashRows ++ groupRows ++ otherRows
+
+        -- 一覧の下の控えめなトグル。宣言も宣言外も両方ある時だけ意味を持つ
+        filesToggle =
+            if List.isEmpty model.groups || (List.isEmpty others && not showAll) then
+                []
+
+            else
+                [ button
+                    [ HA.class "files-toggle mx-3 mt-3 cursor-pointer text-left text-[11px] text-ink-faint hover:text-ink-soft"
+                    , HE.onClick (AtelierMsg Atelier.FilesFilterToggled)
+                    ]
+                    [ text
+                        (if showAll then
+                            "宣言された素材だけに戻す"
+
+                         else
+                            "🗂 すべてのファイル"
+                        )
+                    ]
+                ]
     in
     div
         [ HA.class "pane-files flex shrink-0 flex-col overflow-y-auto border-r border-edge bg-panel py-2"
@@ -5765,6 +5846,7 @@ viewFilePane model =
                 else
                     rows
                )
+            ++ filesToggle
             ++ [ button [ HA.class "new-resource btn mx-3 mt-3", HE.onClick WizardOpened ] [ text "+ 新規リソース" ] ]
         )
 

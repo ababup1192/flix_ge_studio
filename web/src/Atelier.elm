@@ -51,9 +51,11 @@ module Atelier exposing
     , launchStarting
     , lightboxOpen
     , lightboxShownFile
+    , materialTitleOf
     , mockChip
     , needsCopyReset
     , needsTick
+    , pickRows
     , previewState
     , promoteFailed
     , promoted
@@ -67,12 +69,16 @@ module Atelier exposing
     , shownGamePrompt
     , shownWirePrompt
     , shownPrompt
+    , showAllFiles
     , showArchiver
     , showExtend
     , showLanding
     , showPicks
+    , slotCandidateCount
+    , slotVersion
     , slotsFailed
     , statusDecoder
+    , titleBeforeParen
     , update
     , view
     , viewArchiver
@@ -507,6 +513,10 @@ type alias Model =
     -- いま開いているセクション(入口 / 素材 / 調整 / 広げる / アーカイブ)
     , section : Section
 
+    -- 調整の左の一覧に宣言外のファイルまで全部出すか。既定は「宣言された資源だけ」—
+    -- 入口・広げるの小リンク「🗂 すべてのファイル」だけが真で入る
+    , allFiles : Bool
+
     -- 「ゲームを広げる」の下書きと、仕上げに足すあなたの言葉
     , extendPrompt : ExtendPrompt
     , extendWords : String
@@ -559,6 +569,7 @@ init =
     , pending = Nothing
     , overlay = Nothing
     , section = SectionLanding
+    , allFiles = False
     , extendPrompt = ExtendIdle
     , extendWords = ""
     , extendCopied = False
@@ -592,9 +603,12 @@ type Msg
     | OverlayClosed
     | OpenLanding
     | OpenStorehouse
+    | OpenAllFiles
+    | FilesFilterToggled
     | OpenPicks
     | OpenExtend
     | OpenArchiver
+    | CreateForSlotClicked String
     | ExtendKindClicked String
     | ExtendWordsEdited String
     | CopyExtendPromptClicked
@@ -734,10 +748,29 @@ update msg model =
             ( switchSection SectionLanding model, OutNone )
 
         OpenStorehouse ->
-            ( switchSection SectionStorehouse model, OutNone )
+            -- 入口の「パラメータを変える」等からの調整。一覧は既定
+            -- (宣言された資源だけ)に戻す
+            ( switchSection SectionStorehouse { model | allFiles = False }, OutNone )
+
+        OpenAllFiles ->
+            -- 小リンク「🗂 すべてのファイル」— 調整を全ファイル一覧で開く
+            ( switchSection SectionStorehouse { model | allFiles = True }, OutNone )
+
+        FilesFilterToggled ->
+            -- 調整の一覧の下のトグル(すべてのファイル ⇄ 宣言された素材だけ)
+            ( { model | allFiles = not model.allFiles }, OutNone )
 
         OpenPicks ->
             ( switchSection SectionPicks model, OutNone )
+
+        CreateForSlotClicked slotFile ->
+            -- スロット行の「✨ 候補を作る」— 既存の候補づくりパネルを
+            -- そのスロット向け(AI・スロット選択済み)に開く。調整の境界の
+            -- 「まず候補を作ります」からも来るのでセクションも素材に合わせる
+            ( switchSection SectionPicks
+                (mapCreate (\c -> { c | open = Just True, path = Just PathAi, slot = Just slotFile }) model)
+            , OutNone
+            )
 
         OpenExtend ->
             -- 前の失敗文言は持ち越さない(届いた下書きは残す — 書きかけを消さない)
@@ -1190,6 +1223,136 @@ archiveCount model =
     case model.archive of
         ArchiveReady archive ->
             List.length archive.history + List.length archive.candidates
+
+        _ ->
+            0
+
+
+{-| 調整の一覧に宣言外のファイルまで全部出すか(Main の左レールが読む)。 -}
+showAllFiles : Model -> Bool
+showAllFiles model =
+    model.allFiles
+
+
+{-| 宣言題の括弧前を機械的に切る(「ドット絵(額縁)」→「ドット絵」)。
+言い換え・意訳はしない — UI に出る名詞はゲームが宣言した題だけ。
+-}
+titleBeforeParen : String -> String
+titleBeforeParen title =
+    let
+        cut sep s =
+            String.split sep s |> List.head |> Maybe.withDefault s
+    in
+    String.trim (cut "(" (cut "(" title))
+
+
+{-| 行の見出しに使う題。宣言題(括弧前)、無ければファイル名(名詞を発明しない)。 -}
+rowTitle : String -> String -> String
+rowTitle title file =
+    case titleBeforeParen title of
+        "" ->
+            baseName file
+
+        cut ->
+            cut
+
+
+{-| 素材セクションの 1 行 = 1 素材スロット。slot は候補のある列(無ければ Nothing)。 -}
+type alias PickRow =
+    { file : String
+    , title : String
+    , entityId : Maybe String
+    , slot : Maybe Slot
+    }
+
+
+{-| 素材スロットの行の導出。role:material の宣言(/atelier/slots)全部が行になり、
+候補(/atelier/candidates)はスロット別に付く。宣言が引けない時(旧サーバ等)は
+候補のあるスロットだけを行にする(fail-open — 候補を見せない画面にしない)。
+-}
+pickRows : Model -> List PickRow
+pickRows model =
+    let
+        candidateSlots =
+            case model.data of
+                Ready candidates ->
+                    candidates.slots
+
+                _ ->
+                    []
+
+        declared =
+            List.map .file model.create.slots
+
+        fromDecl decl =
+            { file = decl.file
+            , title = rowTitle decl.title decl.file
+            , entityId = decl.entityId
+            , slot = candidateSlots |> List.filter (\s -> s.slot == decl.file) |> List.head
+            }
+
+        leftover =
+            candidateSlots
+                |> List.filter (\s -> not (List.member s.slot declared))
+                |> List.map
+                    (\s ->
+                        { file = s.slot
+                        , title = rowTitle "" s.slot
+                        , entityId = s.entityId
+                        , slot = Just s
+                        }
+                    )
+    in
+    List.map fromDecl model.create.slots ++ leftover
+
+
+{-| 「いまの素材: vN」の N。スロットのアーカイブ最大バージョン + 1、無ければ 1
+(/atelier/archive から導出。読めないサーバでも v1 に倒れる)。
+-}
+slotVersion : Model -> String -> Int
+slotVersion model slotFile =
+    slotPastVersions model slotFile
+        |> List.head
+        |> Maybe.map (\v -> v + 1)
+        |> Maybe.withDefault 1
+
+
+{-| スロットの過去バージョン(新しい順)。行の「🗃️ 過去バージョン」の材料。 -}
+slotPastVersions : Model -> String -> List Int
+slotPastVersions model slotFile =
+    case model.archive of
+        ArchiveReady archive ->
+            archive.history
+                |> List.filter (\e -> e.slot == slotFile)
+                |> List.map .ver
+                |> List.sortBy negate
+
+        _ ->
+            []
+
+
+{-| そのファイルが素材スロット(role:material の宣言)なら、行き来リンクに
+織り込む題(括弧前)。宣言外・tuning は Nothing — Main の境界の 1 行が
+素材か調整値かをこれで見分ける。
+-}
+materialTitleOf : Model -> String -> Maybe String
+materialTitleOf model file =
+    model.create.slots
+        |> List.filter (\s -> s.file == file)
+        |> List.head
+        |> Maybe.map (\s -> rowTitle s.title s.file)
+
+
+{-| スロットの候補の数(退避 prev 札は数えない)。境界の「候補 N 件」の材料。 -}
+slotCandidateCount : Model -> String -> Int
+slotCandidateCount model slotFile =
+    case model.data of
+        Ready candidates ->
+            candidates.slots
+                |> List.filter (\s -> s.slot == slotFile)
+                |> List.concatMap .candidates
+                |> List.filter (\c -> not c.isPrev)
+                |> List.length
 
         _ ->
             0
@@ -1906,9 +2069,9 @@ cardAction model info =
 
 
 {-| 素材セクションの画面(Main が showPicks の時だけこれを主役に描く —
-Doc エディタもそのタブ群もここには出ない)。1 画面に収まる密度を保つ:
-スロットは実際には 1〜数個で、カードの直下に装着ボタンが必ず見える。
-候補が届く前(Loading 等)でも、つくるバーは出す(空の画面で待たせない)。
+Doc エディタもそのタブ群もここには出ない)。1 行 = 1 素材スロット
+(role:material の宣言全部)で、候補はスロット別にその行へ付く。
+候補が届く前(Loading 等)でも、つくるバーと行は出す(空の画面で待たせない)。
 -}
 view : String -> Model -> Html Msg
 view base model =
@@ -1919,22 +2082,14 @@ view base model =
                 , [ viewCreate model ]
                 , case model.data of
                     Ready candidates ->
-                        List.concat
-                            [ if List.isEmpty candidates.slots then
-                                []
+                        viewBakePanel model candidates
 
-                              else
-                                [ div [ HA.class "mb-5" ]
-                                    [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "🎨 候補選び" ]
-                                    , div [ HA.class "mt-1 text-[11px] text-ink-soft" ]
-                                        [ text "新しい見た目の候補です。カードを選んで、ゲームで使いましょう" ]
-                                    ]
-                                ]
-                            , viewBakePanel model candidates
-                            , List.map (viewSlot base model candidates.baking) candidates.slots
-                            , viewComboTrial candidates.slots
-                            , viewLoose candidates.loose
-                            ]
+                    _ ->
+                        []
+                , List.map (viewPickRow base model) (pickRows model)
+                , case model.data of
+                    Ready candidates ->
+                        viewComboTrial candidates.slots ++ viewLoose candidates.loose
 
                     _ ->
                         []
@@ -2022,7 +2177,7 @@ viewLanding model =
                 text ""
             , button
                 [ HA.class "atelier-landing-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                , HE.onClick OpenStorehouse
+                , HE.onClick OpenAllFiles
                 ]
                 [ text "🗂 すべてのファイル" ]
             ]
@@ -2094,7 +2249,7 @@ viewExtend model =
                             [ text "+ 新規リソース" ]
                         , button
                             [ HA.class "atelier-extend-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                            , HE.onClick OpenStorehouse
+                            , HE.onClick OpenAllFiles
                             ]
                             [ text "🗂 すべてのファイル" ]
                         ]
@@ -2420,29 +2575,81 @@ anyPreviewMissing candidates =
         candidates.slots
 
 
-viewSlot : String -> Model -> Bool -> Slot -> Html Msg
-viewSlot base model baking slot =
-    div [ HA.class "atelier-slot mb-4" ]
-        (div [ HA.class "mb-1.5 flex items-center gap-2" ]
-            [ span [ HA.class "font-mono text-[11px] text-ink-soft" ] [ text slot.slot ]
-            , case slot.entityId of
-                Just entity ->
-                    span [ HA.class "badge" ] [ text entity ]
+{-| 素材スロットの 1 行。見出し(宣言題 + path + いまの素材 vN)、候補のカード
+(無ければ「✨ 候補を作る」への誘い)、行の道具(候補づくり・調整への行き来・
+過去バージョン)。装着・アーカイブ送りの操作は従来のままカードの中。
+-}
+viewPickRow : String -> Model -> PickRow -> Html Msg
+viewPickRow base model row =
+    div [ HA.class "atelier-slot mb-5 rounded-lg border border-edge/60 bg-panel/40 p-4" ]
+        (List.concat
+            [ [ div [ HA.class "flex flex-wrap items-center gap-2" ]
+                    [ span [ HA.class "text-sm font-semibold text-ink" ] [ text row.title ]
+                    , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
+                        [ text row.file ]
+                    , case row.entityId of
+                        Just entity ->
+                            span [ HA.class "badge shrink-0" ] [ text entity ]
+
+                        Nothing ->
+                            text ""
+                    , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
+                        [ text ("いまの素材: v" ++ String.fromInt (slotVersion model row.file)) ]
+                    ]
+              ]
+            , case row.slot of
+                Just slot ->
+                    div [ HA.class "mt-3 flex flex-wrap gap-2" ]
+                        (viewCurrentCard base model (isBaking model) slot
+                            :: List.map (viewCard base model (isBaking model) slot.slot) slot.candidates
+                        )
+                        :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
+                           (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
+                                viewGate model
+
+                            else
+                                []
+                           )
 
                 Nothing ->
-                    text ""
-            ]
-            :: div [ HA.class "flex flex-wrap gap-2" ]
-                (viewCurrentCard base model baking slot
-                    :: List.map (viewCard base model baking slot.slot) slot.candidates
-                )
-            :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
-               (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
-                    viewGate model
+                    if model.data == Loading then
+                        -- 候補の一覧がまだ届いていない — 「まだ無い」とは言わない
+                        []
 
-                else
+                    else
+                        [ div [ HA.class "atelier-slot-empty mt-3 text-[11px] text-ink-faint" ]
+                            [ text "候補はまだありません — 「✨ 候補を作る」から AI に依頼できます" ]
+                        ]
+            , [ div [ HA.class "mt-3 flex flex-wrap items-center gap-3" ]
+                    [ button
+                        [ HA.class "atelier-slot-create btn btn-mini"
+                        , HE.onClick (CreateForSlotClicked row.file)
+                        ]
+                        [ text "✨ 候補を作る" ]
+                    , button
+                        [ HA.class "atelier-slot-tune cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                        , HE.onClick (EditCandidateClicked row.file)
+                        ]
+                        [ text ("この" ++ row.title ++ "のまま値を変える →") ]
+                    ]
+              ]
+            , case slotPastVersions model row.file of
+                [] ->
                     []
-               )
+
+                versions ->
+                    [ button
+                        [ HA.class "atelier-slot-history mt-2 block cursor-pointer text-left text-[11px] text-ink-faint hover:text-ink-soft"
+                        , HE.onClick OpenArchiver
+                        ]
+                        [ text
+                            ("🗃️ 過去バージョン: "
+                                ++ (versions |> List.map (\v -> "v" ++ String.fromInt v) |> String.join " / ")
+                                ++ "(戻せます)"
+                            )
+                        ]
+                    ]
+            ]
         )
 
 

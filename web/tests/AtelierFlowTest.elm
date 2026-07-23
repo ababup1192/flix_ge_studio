@@ -234,6 +234,35 @@ suite =
                         |> Atelier.hasCandidates
                         |> Expect.equal False
             ]
+        , describe "素材スロットの行(素材を切り替えるの一覧)"
+            [ test "宣言された素材が全部行になり、候補はスロット別に付き、いまの素材の vN はアーカイブ履歴から導く" <|
+                \_ ->
+                    let
+                        model =
+                            withCandidates
+                                |> Atelier.gotSlots
+                                    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人(主役)", hint = "" }
+                                    , { file = "assets/theme.json", entityId = Nothing, kind = "theme", title = "色", hint = "" }
+                                    ]
+                                |> Atelier.gotArchive
+                                    { history =
+                                        [ { file = "atelier/archive/prologue.v2.sprite.json", slot = "assets/prologue.sprite.json", ver = 2, note = Nothing, mtime = 2 }
+                                        , { file = "atelier/archive/prologue.v1.sprite.json", slot = "assets/prologue.sprite.json", ver = 1, note = Nothing, mtime = 1 }
+                                        ]
+                                    , candidates = []
+                                    }
+                    in
+                    Atelier.pickRows model
+                        |> List.map
+                            (\row ->
+                                ( row.title
+                                , row.slot |> Maybe.map (\s -> List.length s.candidates) |> Maybe.withDefault 0
+                                , Atelier.slotVersion model row.file
+                                )
+                            )
+                        -- 題は宣言題の括弧前。候補ゼロのスロットも行として残り、履歴なしは v1
+                        |> Expect.equal [ ( "村人", 2, 3 ), ( "色", 0, 1 ) ]
+            ]
         , describe "アーカイバ(何も捨てない置き場)"
             [ test "🗃 でアーカイブ送りの便りが飛び、飛行中の二度押しは送らない" <|
                 \_ ->

@@ -531,10 +531,13 @@ openedLevel =
         |> respondOk 7 "previewItems" previewBody
 
 
-{-| プラグイン宣言の無い hitbox.json を開き、本文(4)・スキーマ欠け(5)まで済んだ状態。 -}
+{-| プラグイン宣言の無い hitbox.json を開き、本文(4)・スキーマ欠け(5)まで済んだ状態。
+宣言外のファイルは既定の一覧に出ない —「🗂 すべてのファイル」を通ってから開く。
+-}
 openedHitbox : App
 openedHitbox =
     booted
+        |> ProgramTest.clickButton "🗂 すべてのファイル"
         |> ProgramTest.clickButton "hitbox.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "hitbox.json" "{ }")
@@ -749,6 +752,32 @@ suite =
                         )
                     |> ProgramTest.ensureViewHas [ class "atelier-extend-draft" ]
                     |> ProgramTest.expectViewHas [ text "📋 プロンプトをコピー" ]
+        , test "調整の境界: 素材(material)には②への行き来リンク、tuning には完結の一言だけ" <|
+            \() ->
+                booted
+                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/level.json" levelText)
+                    -- 宣言はあるが素材スロットではない = tuning。リンクは出さない
+                    |> ProgramTest.ensureViewHas [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
+                    |> ProgramTest.ensureViewHasNot [ text "別のレベルに切り替える(まず候補を作ります)→" ]
+                    -- 素材スロットの宣言が届いたら、同じファイルは行き来リンクに変わる
+                    -- (題は宣言題の括弧前だけを織り込む)
+                    |> respondOk 0
+                        "atelierSlots"
+                        (E.object
+                            [ ( "slots"
+                              , E.list identity
+                                    [ E.object
+                                        [ ( "file", E.string "assets/level.json" )
+                                        , ( "title", E.string "レベル(調整卓)" )
+                                        ]
+                                    ]
+                              )
+                            ]
+                        )
+                    |> ProgramTest.ensureViewHasNot [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
+                    |> ProgramTest.expectViewHas [ text "別のレベルに切り替える(まず候補を作ります)→" ]
         , test "ホーム: pick(候補を比べて選ぼう)は入口を挟まず素材セクションへ直行する" <|
             \() ->
                 bootedWith resourcesBody
