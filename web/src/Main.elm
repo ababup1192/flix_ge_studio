@@ -968,11 +968,6 @@ update msg model =
                         )
                         m1
 
-                Atelier.OutFetchGamePrompt direction ->
-                    request "promptGame"
-                        (E.object [ ( "direction", E.string direction ) ])
-                        m1
-
                 Atelier.OutFetchExtendPrompt kind ->
                     -- 「ゲームを広げる」の依頼文の下書き(genesisPrompt と同じ流儀)
                     request "promptExtend"
@@ -991,16 +986,6 @@ update msg model =
                 Atelier.OutEditFile file ->
                     -- 候補カードの「✏️ 手直し」— 調整(エディタ)でそのまま開く
                     openFile file m1
-
-                Atelier.OutScaffold info ->
-                    request "scaffoldDoc"
-                        (E.object
-                            [ ( "kind", E.string info.kind )
-                            , ( "title", E.string info.title )
-                            , ( "role", E.string info.role )
-                            ]
-                        )
-                        m1
 
                 Atelier.OutArchive candidate ->
                     -- 候補カードの 🗃️ — アーカイブへ送る(消さない)
@@ -3844,14 +3829,6 @@ handleOkByKind env model =
                 Err _ ->
                     ( { model | atelier = Atelier.promptFailed "応答が読めませんでした" model.atelier }, Effect.none )
 
-        "promptGame" ->
-            case D.decodeValue (D.field "prompt" D.string) env.body of
-                Ok prompt ->
-                    ( { model | atelier = Atelier.gotGamePrompt prompt model.atelier }, Effect.none )
-
-                Err _ ->
-                    ( { model | atelier = Atelier.gamePromptFailed "応答が読めませんでした" model.atelier }, Effect.none )
-
         "atelierCopy" ->
             -- 複製できた。調整(エディタ)へ切り替え、できた写しをそのまま開く
             let
@@ -3992,19 +3969,6 @@ handleOkByKind env model =
                 Err _ ->
                     -- 契約とずれた応答で回し続けても仕方ない(準備中に倒す)
                     ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
-
-        "scaffoldDoc" ->
-            case D.decodeValue Atelier.scaffoldResultDecoder env.body of
-                Ok result ->
-                    -- 骨組みができた。「つくる」の素材スロットも取り直す
-                    ( { model | atelier = Atelier.scaffoldDone result model.atelier }
-                    , requestInfo "atelierSlots"
-                    )
-
-                Err _ ->
-                    ( { model | atelier = Atelier.scaffoldFailed "応答が読めませんでした" model.atelier }
-                    , Effect.none
-                    )
 
         "selectProject" ->
             case D.decodeValue Api.projectSwitchDecoder env.body of
@@ -4618,14 +4582,6 @@ handleErrByKind env message model =
             -- ログ口が無い・落ちた。回し続けても仕方ないので止める(準備中に倒す)
             ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
 
-        "scaffoldDoc" ->
-            -- 404(旧サーバ)は「準備中」、400/409 は日本語の理由をその場に出す
-            if String.contains "404" message then
-                ( { model | atelier = Atelier.scaffoldUnavailable model.atelier }, Effect.none )
-
-            else
-                ( { model | atelier = Atelier.scaffoldFailed message model.atelier }, Effect.none )
-
         "getFile" ->
             if Just env.id == model.schemaReq then
                 -- スキーマが無いのは普通のこと(生テキスト編集は常に生きている)
@@ -4790,14 +4746,6 @@ handleErrByKind env message model =
         "promptAtelier" ->
             -- 理由(日本語)はボタンの近くに出す。生のエラー行は見せない
             ( { model | atelier = Atelier.promptFailed message model.atelier }, Effect.none )
-
-        "promptGame" ->
-            -- 404(旧サーバ)は「準備中」、400 は日本語の理由をその場に出す
-            if String.contains "404" message then
-                ( { model | atelier = Atelier.gamePromptFailed "準備中 — このサーバはまだ対応していません" model.atelier }, Effect.none )
-
-            else
-                ( { model | atelier = Atelier.gamePromptFailed message model.atelier }, Effect.none )
 
         "atelierCopy" ->
             -- 409(名前衝突)は次の空き番でもう一度。その他はトーストで理由を告げる

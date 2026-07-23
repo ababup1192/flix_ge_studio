@@ -8,7 +8,6 @@ module NewGameTest exposing (suite)
 
 -}
 
-import Atelier
 import Effect exposing (Effect)
 import Expect
 import Json.Decode as D
@@ -224,24 +223,6 @@ suite =
                     in
                     ( NewGame.isPolling model.newGame, NewGame.shownError model.newGame /= Nothing )
                         |> Expect.equal ( False, True )
-            , test "scaffold の成功で /atelier/slots を取り直す(refetch intent)" <|
-                \_ ->
-                    pickerModel
-                        |> Main.update
-                            (Main.GotApiResponse
-                                (envelope "scaffoldDoc"
-                                    True
-                                    (E.object
-                                        [ ( "ok", E.bool True )
-                                        , ( "files", E.list E.string [ "assets/enemy.json" ] )
-                                        , ( "wirePrompt", E.string "配線して" )
-                                        ]
-                                    )
-                                )
-                            )
-                        |> Tuple.mapSecond kindsOf
-                        |> Tuple.mapFirst (\m -> Atelier.shownWirePrompt m.atelier)
-                        |> Expect.equal ( Just "配線して", [ "atelierSlots" ] )
             ]
         , describe "/projects/new/log の橋渡し"
             [ test "欠けたフィールドは既定に倒す(fail-open)" <|

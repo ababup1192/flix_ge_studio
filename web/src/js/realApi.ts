@@ -160,12 +160,6 @@ export function realApi(base: string): Api {
           });
           return getJson(`${base}/prompt/atelier?${q}`);
         }
-        case "promptGame": {
-          // 400 は {ok:false, error:日本語} — raiseHttpError が " — 理由" で投げ、
-          // Elm 側が理由だけ表示する。404(旧サーバ)は「準備中」に倒れる
-          const q = new URLSearchParams({ direction: String(payload.direction ?? "") });
-          return getJson(`${base}/prompt/game?${q}`);
-        }
         case "promptWire":
           return getJson(`${base}/prompt/wire?doc=${encodeURIComponent(payload.doc)}`);
         case "atelierCopy": {
@@ -211,9 +205,6 @@ export function realApi(base: string): Api {
           return sendJson("POST", `${base}/projects/new`, payload);
         case "projectNewLog":
           return getJson(`${base}/projects/new/log`);
-        case "scaffoldDoc":
-          // 400/409 は {ok:false, error:日本語} — projectNew と同じ流儀
-          return sendJson("POST", `${base}/scaffold/doc`, payload);
         case "gameStatus":
           return getJson(`${base}/game/status`);
         case "gameStart": {

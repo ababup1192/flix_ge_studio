@@ -1,7 +1,6 @@
 module Atelier exposing
     ( Archive
     , Candidates
-    , CreatePath(..)
     , CreateSlot
     , Launch(..)
     , Mode(..)
@@ -22,13 +21,11 @@ module Atelier exposing
     , autoCopyName
     , cleanReason
     , copyDone
-    , chosenPath
     , copyFailed
     , copyRetry
     , createAnchored
     , createAnchoredTo
     , createOpen
-    , createPaths
     , createSlotsDecoder
     , extendPromptFailed
     , gameLogDecoder
@@ -38,10 +35,7 @@ module Atelier exposing
     , gotBakeLog
     , gotCandidates
     , gotGameLog
-    , gamePromptErrorShown
     , gotExtendPrompt
-    , gotGamePrompt
-    , gamePromptFailed
     , gotGameStatus
     , gotPrompt
     , gotSlots
@@ -61,14 +55,7 @@ module Atelier exposing
     , promoteFailed
     , promoted
     , promptFailed
-    , scaffoldDone
-    , scaffoldErrorShown
-    , scaffoldFailed
-    , scaffoldResultDecoder
-    , scaffoldUnavailable
     , selectedSlotHint
-    , shownGamePrompt
-    , shownWirePrompt
     , shownPrompt
     , showAllFiles
     , showArchiver
@@ -303,40 +290,6 @@ type PromptState
     | PromptFailed String
 
 
-{-| 「新しい種類の素材/設定を足す」(POST /scaffold/doc)の状態。
-成功はできたファイル一覧と配線プロンプト(wirePrompt)を同じ場所に出す。
--}
-type alias Scaffold =
-    { kind : String
-    , title : String
-
-    -- "material"(えらんで装着する物)| "tuning"(数値やデータ)
-    , role : String
-    , pending : Bool
-    , error : Maybe String
-    , result : Maybe ScaffoldResult
-    , copied : Bool
-    }
-
-
-type alias ScaffoldResult =
-    { files : List String
-    , wirePrompt : String
-    }
-
-
-initScaffold : Scaffold
-initScaffold =
-    { kind = ""
-    , title = ""
-    , role = "material"
-    , pending = False
-    , error = Nothing
-    , result = Nothing
-    , copied = False
-    }
-
-
 {-| 「つくる」(創作の第一幕)。open = Nothing は既定(畳む)に従う —
 開くのは手だけ。
 -}
@@ -353,124 +306,11 @@ type alias Create =
     -- (409 の時に次の空き番へ進めるための控え)
     , copyPending : Bool
     , lastCopy : Maybe { slot : String, name : String }
-    , scaffold : Scaffold
-
-    -- 🕹️ あそびを作らせる(GET /prompt/game)。
-    -- インタビュー(2 問 + エッセンス): 選択肢(Pick)と「言葉で」(Text)は
-    -- 別に持ち、言葉が入っていればそちらが答え(消せば選択肢に戻る)。
-    -- 答えは direction に「動かすもの: …/終わり方: …/エッセンス: …」で合成する
-    , gameDirection : String
-    , gameMoverPick : String
-    , gameMoverText : String
-    , gameEndPick : String
-    , gameEndText : String
-    , gameEssence : String
-    , gamePrompt : PromptState
-    , gameCopied : Bool
-
-    -- 「なにをつくる?」で選んだ道。Nothing = まだ選んでいない(選択リストを出す)。
-    -- とじる→ひらくでも保持する(入力も同様に消えない)
-    , path : Maybe CreatePath
 
     -- スロットカードを開いて(または境界リンクから)繋留されたか。True の間は
     -- パネルを選択中スロットのカードの中に描く(パネルが画面に出るのはこの時だけ)
     , anchored : Bool
     }
-
-
-{-| 「なにをつくる?」の 3 つの道。選ぶと その 1 つのフォームだけが出る。
-(手直し・複製は「つくる」ではなく、えらぶ側の候補カードから入る)
--}
-type CreatePath
-    = PathGame
-    | PathAi
-    | PathScaffold
-
-
-{-| インタビュー 1 問目「動かすのは、何?」の選択肢。先頭がテンプレートのまま。 -}
-moverOptions : List String
-moverOptions =
-    [ "パドルのまま", "猫(しっぽで打ち返す)", "宇宙船" ]
-
-
-moverDefault : String
-moverDefault =
-    "パドルのまま"
-
-
-{-| インタビュー 2 問目「一回の遊びは、どう終わる?」の選択肢。先頭がテンプレートのまま。 -}
-endOptions : List String
-endOptions =
-    [ "ぜんぶ壊したら勝ち", "時間切れまでスコア稼ぎ", "エンドレスで、どんどん速く" ]
-
-
-endDefault : String
-endDefault =
-    "ぜんぶ壊したら勝ち"
-
-
-{-| エッセンスの例(押すとそのまま入る)。 -}
-essenceExamples : List String
-essenceExamples =
-    [ "夜だけの世界", "すべて和菓子でできている", "音がすべて猫の声" ]
-
-
-{-| 「言葉で」が入っていればそちらが答え、空なら選択肢。 -}
-answerOf : String -> String -> String
-answerOf text_ pick =
-    case String.trim text_ of
-        "" ->
-            pick
-
-        answer ->
-            answer
-
-
-{-| いま効いているエッセンス(素材づくりへの提案にも映す)。空 = 無し。 -}
-essenceOf : Create -> String
-essenceOf create =
-    String.trim create.gameEssence
-
-
-{-| インタビューの答えと自由記述を 1 本の direction に合成する。
-形式: 「動かすもの: …/終わり方: …/エッセンス: …」(エッセンスは空なら省く)。
-自由記述があれば先頭に連結する。
--}
-interviewDirection : Bool -> Create -> String
-interviewDirection starterFresh create =
-    let
-        essence =
-            essenceOf create
-
-        composed =
-            String.join "/"
-                ((if starterFresh then
-                    [ "動かすもの: " ++ answerOf create.gameMoverText create.gameMoverPick
-                    , "終わり方: " ++ answerOf create.gameEndText create.gameEndPick
-                    ]
-
-                  else
-                    -- 育ったゲームでは「テンプレートのまま」の既定が意味を持たないので、
-                    -- 2 問は依頼文に載せない(エッセンスと自由記述だけが答え)
-                    []
-                 )
-                    ++ (if essence == "" then
-                            []
-
-                        else
-                            [ "エッセンス: " ++ essence ]
-                       )
-                )
-    in
-    case ( String.trim create.gameDirection, composed ) of
-        ( "", c ) ->
-            c
-
-        ( free, "" ) ->
-            free
-
-        ( free, c ) ->
-            free ++ "/" ++ c
 
 
 initCreate : Create
@@ -484,16 +324,6 @@ initCreate =
     , copied = False
     , copyPending = False
     , lastCopy = Nothing
-    , scaffold = initScaffold
-    , gameDirection = ""
-    , gameMoverPick = moverDefault
-    , gameMoverText = ""
-    , gameEndPick = endDefault
-    , gameEndText = ""
-    , gameEssence = ""
-    , gamePrompt = PromptIdle
-    , gameCopied = False
-    , path = Nothing
     , anchored = False
     }
 
@@ -636,25 +466,9 @@ type Msg
     | CreateDirectionEdited String
     | MakePromptClicked
     | CopyPromptClicked
-    | PathChosen CreatePath
-    | PathCleared
-    | GameDirectionEdited String
-    | GameMoverPicked String
-    | GameMoverEdited String
-    | GameEndPicked String
-    | GameEndEdited String
-    | GameEssenceEdited String
-    | GamePromptEdited String
-    | MakeGamePromptClicked
-    | CopyGamePromptClicked
     | CopyResetTick
     | EditCandidateClicked String
     | CopyCurrentClicked String
-    | ScaffoldKindEdited String
-    | ScaffoldTitleEdited String
-    | ScaffoldRoleChosen String
-    | ScaffoldClicked
-    | ScaffoldCopyClicked
     | NoOp
 
 
@@ -669,12 +483,10 @@ type Out
     | OutClosed
     | OutToast String
     | OutFetchPrompt { slot : String, count : Int, direction : String }
-    | OutFetchGamePrompt String
     | OutFetchExtendPrompt String
     | OutCopyPrompt String
     | OutCopyFile { slot : String, name : String }
     | OutEditFile String
-    | OutScaffold { kind : String, title : String, role : String }
     | OutArchive String
     | OutRestore String
 
@@ -773,7 +585,7 @@ update msg model =
             -- そのスロットのカードを開く(anchored)。調整の境界の
             -- 「まず候補を作ります」からも来るのでセクションも素材に合わせる
             ( switchSection SectionPicks
-                (mapCreate (\c -> { c | open = Just True, path = Just PathAi, slot = Just slotFile, anchored = True }) model)
+                (mapCreate (\c -> { c | open = Just True, slot = Just slotFile, anchored = True }) model)
             , OutNone
             )
 
@@ -956,66 +768,9 @@ update msg model =
                 _ ->
                     ( model, OutNone )
 
-        PathChosen path ->
-            ( mapCreate (\c -> { c | path = Just path }) model, OutNone )
-
-        PathCleared ->
-            -- 「← ほかのつくり方」。フォームの入力・結果は消さない(戻っても残る)
-            ( mapCreate (\c -> { c | path = Nothing }) model, OutNone )
-
-        GameDirectionEdited text_ ->
-            ( mapCreate (\c -> { c | gameDirection = text_ }) model, OutNone )
-
-        GameMoverPicked option ->
-            -- 選択肢を選んだら「言葉で」は畳む(答えはいつも 1 つ)
-            ( mapCreate (\c -> { c | gameMoverPick = option, gameMoverText = "" }) model, OutNone )
-
-        GameMoverEdited text_ ->
-            ( mapCreate (\c -> { c | gameMoverText = text_ }) model, OutNone )
-
-        GameEndPicked option ->
-            ( mapCreate (\c -> { c | gameEndPick = option, gameEndText = "" }) model, OutNone )
-
-        GameEndEdited text_ ->
-            ( mapCreate (\c -> { c | gameEndText = text_ }) model, OutNone )
-
-        GameEssenceEdited text_ ->
-            ( mapCreate (\c -> { c | gameEssence = text_ }) model, OutNone )
-
-        GamePromptEdited text_ ->
-            -- 届いた依頼文は下書き — 渡す前に書き換えて構わない
-            case model.create.gamePrompt of
-                PromptReady _ ->
-                    ( mapCreate (\c -> { c | gamePrompt = PromptReady text_ }) model, OutNone )
-
-                _ ->
-                    ( model, OutNone )
-
-        MakeGamePromptClicked ->
-            if model.create.gamePrompt == PromptLoading then
-                -- 飛行中の二度押しは送らない
-                ( model, OutNone )
-
-            else
-                -- 2 問の答え(テンプレートのままが既定)があるので direction は空にならない
-                ( mapCreate (\c -> { c | gamePrompt = PromptLoading, gameCopied = False }) model
-                , OutFetchGamePrompt (interviewDirection model.starterFresh model.create)
-                )
-
-        CopyGamePromptClicked ->
-            case model.create.gamePrompt of
-                PromptReady prompt ->
-                    ( mapCreate (\c -> { c | gameCopied = True }) model
-                    , OutCopyPrompt prompt
-                    )
-
-                _ ->
-                    ( model, OutNone )
-
         CopyResetTick ->
             ( { model | extendCopied = False }
-                |> mapCreate (\c -> { c | copied = False, gameCopied = False })
-                |> mapScaffold (\s -> { s | copied = False })
+                |> mapCreate (\c -> { c | copied = False })
             , OutNone
             )
 
@@ -1040,61 +795,6 @@ update msg model =
                 , OutCopyFile { slot = slotFile, name = name }
                 )
 
-        ScaffoldKindEdited text_ ->
-            ( mapScaffold (\s -> { s | kind = text_, error = Nothing }) model, OutNone )
-
-        ScaffoldTitleEdited text_ ->
-            ( mapScaffold (\s -> { s | title = text_ }) model, OutNone )
-
-        ScaffoldRoleChosen role ->
-            ( mapScaffold (\s -> { s | role = role }) model, OutNone )
-
-        ScaffoldClicked ->
-            if model.create.scaffold.pending then
-                -- 飛行中の二度押しは送らない
-                ( model, OutNone )
-
-            else
-                let
-                    kind =
-                        String.trim model.create.scaffold.kind
-                in
-                if kind == "" then
-                    ( mapScaffold (\s -> { s | error = Just "種類の名前を入れてください(半角の小文字)" }) model
-                    , OutNone
-                    )
-
-                else if not (isValidKindName kind) then
-                    ( mapScaffold (\s -> { s | error = Just "半角の小文字で始め、a-z 0-9 _ だけが使えます" }) model
-                    , OutNone
-                    )
-
-                else
-                    ( mapScaffold (\s -> { s | pending = True, error = Nothing, result = Nothing }) model
-                    , OutScaffold
-                        { kind = kind
-                        , title =
-                            case String.trim model.create.scaffold.title of
-                                "" ->
-                                    -- 表示名が空なら kind で代用(空の題は寂しい)
-                                    kind
-
-                                title ->
-                                    title
-                        , role = model.create.scaffold.role
-                        }
-                    )
-
-        ScaffoldCopyClicked ->
-            case model.create.scaffold.result of
-                Just result ->
-                    ( mapScaffold (\s -> { s | copied = True }) model
-                    , OutCopyPrompt result.wirePrompt
-                    )
-
-                Nothing ->
-                    ( model, OutNone )
-
         NoOp ->
             ( model, OutNone )
 
@@ -1108,22 +808,6 @@ mapCreate f model =
 switchSection : Section -> Model -> Model
 switchSection section model =
     { model | section = section, promoteError = Nothing, versionPending = Nothing }
-
-
-mapScaffold : (Scaffold -> Scaffold) -> Model -> Model
-mapScaffold f =
-    mapCreate (\c -> { c | scaffold = f c.scaffold })
-
-
-{-| 種類の名前の規則(^[a-z][a-z0-9_]*$)。 -}
-isValidKindName : String -> Bool
-isValidKindName name =
-    case String.uncons name of
-        Just ( c, rest ) ->
-            Char.isLower c && String.all (\x -> Char.isLower x || Char.isDigit x || x == '_') rest
-
-        Nothing ->
-            False
 
 
 promote : Mode -> Selection -> Model -> ( Model, Out )
@@ -1608,20 +1292,6 @@ promptFailed message model =
     mapCreate (\c -> { c | prompt = PromptFailed (cleanReason message) }) model
 
 
-{-| GET /prompt/game 成功。 -}
-gotGamePrompt : String -> Model -> Model
-gotGamePrompt prompt model =
-    mapCreate (\c -> { c | gamePrompt = PromptReady prompt, gameCopied = False }) model
-
-
-{-| GET /prompt/game の失敗。理由だけを箱の場所に出す(404 は Main が
-「準備中」の文言に均してから呼ぶ)。
--}
-gamePromptFailed : String -> Model -> Model
-gamePromptFailed message model =
-    mapCreate (\c -> { c | gamePrompt = PromptFailed (cleanReason message) }) model
-
-
 {-| GET /prompt/extend 成功。届いた下書きは読み取り専用の枠に出る。 -}
 gotExtendPrompt : { title : String, prompt : String } -> Model -> Model
 gotExtendPrompt draft model =
@@ -1645,40 +1315,6 @@ extendClipboard draft words =
 
         written ->
             draft ++ "\n" ++ written
-
-
-{-| 画面に映っているゲームプロンプト(テストの覗き窓)。 -}
-shownGamePrompt : Model -> Maybe String
-shownGamePrompt model =
-    case model.create.gamePrompt of
-        PromptReady prompt ->
-            Just prompt
-
-        _ ->
-            Nothing
-
-
-{-| 「あそびを作らせる」の失敗文言(検証・サーバとも同じ場所。テストの覗き窓)。 -}
-gamePromptErrorShown : Model -> Maybe String
-gamePromptErrorShown model =
-    case model.create.gamePrompt of
-        PromptFailed reason ->
-            Just reason
-
-        _ ->
-            Nothing
-
-
-{-| 「なにをつくる?」の並び。素材の道が先(あそび・新種はその後)。 -}
-createPaths : List CreatePath
-createPaths =
-    [ PathAi, PathGame, PathScaffold ]
-
-
-{-| いま選んでいる道(Nothing = 選択リストを出している)。テストの覗き窓。 -}
-chosenPath : Model -> Maybe CreatePath
-chosenPath model =
-    model.create.path
 
 
 {-| POST /atelier/copy 成功。調整(エディタ)へ切り替える —
@@ -1796,50 +1432,12 @@ slotCandidateFiles model slotFile =
             []
 
 
-{-| POST /scaffold/doc 成功。できたファイルと配線プロンプトを同じ場所に出す。 -}
-scaffoldDone : ScaffoldResult -> Model -> Model
-scaffoldDone result model =
-    mapScaffold (\s -> { s | pending = False, result = Just result, error = Nothing, copied = False }) model
-
-
-{-| POST /scaffold/doc の失敗(400/409)。日本語の理由をその場に出す。 -}
-scaffoldFailed : String -> Model -> Model
-scaffoldFailed message model =
-    mapScaffold (\s -> { s | pending = False, error = Just (cleanReason message) }) model
-
-
-{-| エンドポイント未実装のサーバ(404 等)。「準備中」に倒すだけ(fail-open)。 -}
-scaffoldUnavailable : Model -> Model
-scaffoldUnavailable model =
-    mapScaffold (\s -> { s | pending = False, error = Just "この機能はまだ準備中です(サーバが古い可能性があります)" }) model
-
-
-{-| 画面に映っている配線プロンプト(テストの覗き窓)。 -}
-shownWirePrompt : Model -> Maybe String
-shownWirePrompt model =
-    Maybe.map .wirePrompt model.create.scaffold.result
-
-
-{-| 「新しい種類」の失敗文言(検証・サーバ 400/409 とも同じ場所)。 -}
-scaffoldErrorShown : Model -> Maybe String
-scaffoldErrorShown model =
-    model.create.scaffold.error
-
-
-{-| POST /scaffold/doc の応答。欠けは既定値に倒す(fail-open)。 -}
-scaffoldResultDecoder : D.Decoder ScaffoldResult
-scaffoldResultDecoder =
-    D.map2 ScaffoldResult
-        (D.oneOf [ D.field "files" (D.list D.string), D.succeed [] ])
-        (D.oneOf [ D.field "wirePrompt" D.string, D.succeed "" ])
-
-
 {-| 「✓ コピーしました」の戻し待ちか。Main の subscriptions がこれを見て
 2 秒後の CopyResetTick を流す(オーバーレイの段送りと同じ流儀)。
 -}
 needsCopyReset : Model -> Bool
 needsCopyReset model =
-    model.create.copied || model.create.gameCopied || model.create.scaffold.copied || model.extendCopied
+    model.create.copied || model.extendCopied
 
 
 {-| 「つくる」パネルが開いているか。手で触っていなければ畳む。 -}
@@ -3209,10 +2807,10 @@ viewLightbox base bust lightbox =
 -- つくる(創作の第一幕)
 
 
-{-| 「つくる」の畳めるセクション。開くと「なにをつくる?」の
-選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
-実体は 1 つで、スロットカードが開いた時(anchored)にだけ
-そのカードの中に描かれる(最上段の常設バーは置かない)。
+{-| 「つくる」の畳めるセクション。開くと、そのスロット向けの
+AI 候補づくりフォームに直行する(道えらびは挟まない — あそび・新種は
+「ゲームを広げる」の役割)。実体は 1 つで、スロットカードが開いた時
+(anchored)にだけそのカードの中に描かれる(最上段の常設バーは置かない)。
 -}
 viewCreate : Model -> Html Msg
 viewCreate model =
@@ -3237,81 +2835,16 @@ viewCreate model =
             ]
             :: (if createOpen model then
                     -- 中身は画面の半分までで内側スクロール — プロンプト箱が育っても
-                    -- 下の編集領域を潰さず、開閉バーは常に見え、常に押せる
+                    -- 下の編集領域を潰さず、開閉バーは常に見え、常に押せる。
+                    -- フォームは AI 候補づくりに直行(道えらびは挟まない)
                     [ div [ HA.class "atelier-create-body max-h-[50vh] overflow-y-auto" ]
-                        (case model.create.path of
-                            Nothing ->
-                                -- まだ選んでいない: 「なにをつくる?」の 1 問だけ
-                                [ div [ HA.class "px-4 pb-2 text-xs font-semibold text-ink" ] [ text "なにをつくる?" ]
-                                , div [ HA.class "flex flex-col gap-1.5 px-4 pb-4" ]
-                                    (List.map viewPathRow createPaths)
-                                ]
-
-                            Just path ->
-                                -- 選んだ 1 つのフォームだけを出す(他は出さない)
-                                [ button
-                                    [ HA.class "atelier-path-back cursor-pointer px-4 pb-2 text-left text-[11px] text-ink-faint transition-colors hover:text-ink-soft"
-                                    , HE.onClick PathCleared
-                                    ]
-                                    [ text "← ほかのつくり方" ]
-                                , div [ HA.class "px-4 pb-4" ]
-                                    [ case path of
-                                        PathGame ->
-                                            viewGameCard model.starterFresh model.create
-
-                                        PathAi ->
-                                            viewAiCard model.create
-
-                                        PathScaffold ->
-                                            viewScaffoldCard model.create.scaffold
-                                    ]
-                                ]
-                        )
+                        [ div [ HA.class "px-4 pb-4" ] [ viewAiCard model.create ] ]
                     ]
 
                 else
                     []
                )
         )
-
-
-{-| 「なにをつくる?」の 1 行(アイコン+名前+一言)。 -}
-viewPathRow : CreatePath -> Html Msg
-viewPathRow path =
-    let
-        info =
-            pathInfo path
-    in
-    button
-        [ HA.class "atelier-path-row flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-edge px-3 py-2 text-left transition-colors hover:bg-white/5"
-        , HE.onClick (PathChosen path)
-        ]
-        [ span [ HA.class "text-base leading-none" ] [ text info.icon ]
-        , span [ HA.class "text-xs font-semibold text-ink" ] [ text info.title ]
-        , span [ HA.class "min-w-0 flex-1 truncate text-[11px] text-ink-faint" ] [ text info.blurb ]
-        ]
-
-
-pathInfo : CreatePath -> { icon : String, title : String, blurb : String }
-pathInfo path =
-    case path of
-        PathGame ->
-            { icon = "🕹️"
-            , title = "あそびを作らせる"
-            , blurb = "遊びのルールをAIに作らせる — 先に遊びを決めると必要な素材がはっきりします"
-            }
-
-        PathAi ->
-            { icon = "🤖"
-            , title = "素材をAIに作らせる"
-            , blurb = "見た目や音の候補をAIに作らせて、選んで使う"
-            }
-
-        PathScaffold ->
-            { icon = "📦"
-            , title = "新しい種類を足す"
-            , blurb = "新しい種類の素材/設定の骨組み(Doc)を作る"
-            }
 
 
 {-| 「AIに作らせる」— プロンプトを組んでコピーする道。作るのは AI(外)で、
@@ -3337,16 +2870,7 @@ viewAiCard create =
                           , Html.textarea
                                 [ HA.class "field mt-2 h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
                                 , HA.rows 3
-                                , HA.placeholder
-                                    -- あそびのインタビューでエッセンスが決まって
-                                    -- いれば、素材の方向性にも同じ軸を提案する
-                                    (case essenceOf create of
-                                        "" ->
-                                            "方向性: この素材スロットで何を、どんな雰囲気にしたいかを書きます"
-
-                                        essence ->
-                                            "方向性: エッセンス『" ++ essence ++ "』"
-                                    )
+                                , HA.placeholder "方向性: この素材スロットで何を、どんな雰囲気にしたいかを書きます"
                                 , HA.value create.direction
                                 , HE.onInput CreateDirectionEdited
                                 ]
@@ -3465,310 +2989,6 @@ viewPromptBox create =
                 [ text "Claude Code などのAIに貼り付けてください。候補が atelier/ にできると、ここに自動で現れます(プレビューも自動で描き出されます)" ]
             ]
 
-
-{-| 「あそびを作らせる」— ゲームのルールそのものを AI に作らせる道。
-プロンプトを組んでコピーするだけ(作るのは AI で、続きはホームの提案が拾う)。
--}
-viewGameCard : Bool -> Create -> Html Msg
-viewGameCard starterFresh create =
-    div
-        [ HA.class "atelier-create-game min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
-        (List.concat
-            [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "🕹️ あそびを作らせる" ]
-              , div [ HA.class "mb-2 text-[11px] leading-relaxed text-ink-faint" ]
-                    [ text "先に遊びを決めると、必要な素材がはっきりします。素材づくりはその後がおすすめ" ]
-              ]
-
-            -- インタビューの 2 問は「テンプレートのまま」が答えになる生まれたて限定。
-            -- 育ったゲームにパドルやブロックの言葉は無意味なので出さない
-            , if starterFresh then
-                [ viewInterviewQuestion
-                    { label = "動かすのは、何?"
-                    , options = moverOptions
-                    , pick = create.gameMoverPick
-                    , text_ = create.gameMoverText
-                    , placeholder = "言葉で書くと、そちらが答えになります"
-                    , onPick = GameMoverPicked
-                    , onEdit = GameMoverEdited
-                    }
-                , viewInterviewQuestion
-                    { label = "一回の遊びは、どう終わる?"
-                    , options = endOptions
-                    , pick = create.gameEndPick
-                    , text_ = create.gameEndText
-                    , placeholder = "言葉で書くと、そちらが答えになります"
-                    , onPick = GameEndPicked
-                    , onEdit = GameEndEdited
-                    }
-                ]
-
-              else
-                []
-            , [ viewEssenceRow create
-              , Html.textarea
-                    [ HA.class "field mt-2 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
-                    , HA.rows 2
-                    , HA.placeholder
-                        (if starterFresh then
-                            "自由に書き足す(細かい注文があれば)"
-
-                         else
-                            "どう変えたいかを言葉で書きます"
-                        )
-                    , HA.value create.gameDirection
-                    , HE.onInput GameDirectionEdited
-                    ]
-                    []
-              , div [ HA.class "mt-3" ]
-                    [ button
-                        [ HA.class "btn btn-primary"
-                        , HA.disabled
-                            (create.gamePrompt
-                                == PromptLoading
-                                || interviewDirection starterFresh create
-                                == ""
-                            )
-                        , HE.onClick MakeGamePromptClicked
-                        ]
-                        [ text
-                            (if create.gamePrompt == PromptLoading then
-                                "作っています…"
-
-                             else
-                                "プロンプトを作る"
-                            )
-                        ]
-                    ]
-              ]
-            , viewGamePromptBox create
-            ]
-        )
-
-
-{-| インタビュー 1 問(選択肢チップ + 「言葉で」)。言葉が入っていれば
-そちらが答えなので、チップの光は消す。
--}
-viewInterviewQuestion :
-    { label : String
-    , options : List String
-    , pick : String
-    , text_ : String
-    , placeholder : String
-    , onPick : String -> Msg
-    , onEdit : String -> Msg
-    }
-    -> Html Msg
-viewInterviewQuestion q =
-    let
-        custom =
-            String.trim q.text_ /= ""
-    in
-    div [ HA.class "atelier-interview-q mt-2" ]
-        [ div [ HA.class "text-[11px] text-ink-soft" ] [ text q.label ]
-        , div [ HA.class "mt-1 flex flex-wrap items-center gap-1.5" ]
-            (List.map
-                (\option ->
-                    button
-                        [ HA.classList
-                            [ ( "btn btn-mini", True )
-                            , ( "btn-primary", not custom && q.pick == option )
-                            ]
-                        , HE.onClick (q.onPick option)
-                        ]
-                        [ text option ]
-                )
-                q.options
-                ++ [ Html.input
-                        [ HA.class "field w-44 text-xs"
-                        , HA.placeholder q.placeholder
-                        , HA.value q.text_
-                        , HE.onInput q.onEdit
-                        ]
-                        []
-                   ]
-            )
-        ]
-
-
-{-| 「あなたのエッセンスを、ひとこと」。例チップは押すとそのまま入る。
-入れたエッセンスは素材づくり(🤖)の方向性の提案にも映る。
--}
-viewEssenceRow : Create -> Html Msg
-viewEssenceRow create =
-    div [ HA.class "atelier-interview-essence mt-2" ]
-        [ div [ HA.class "text-[11px] text-ink-soft" ] [ text "あなたのエッセンスを、ひとこと" ]
-        , Html.input
-            [ HA.class "field mt-1 w-full text-xs"
-            , HA.placeholder "世界ぜんたいに効かせたい一言(下の言葉を押しても入ります)"
-            , HA.value create.gameEssence
-            , HE.onInput GameEssenceEdited
-            ]
-            []
-        , div [ HA.class "mt-1 flex flex-wrap gap-1.5" ]
-            (List.map
-                (\example ->
-                    button
-                        [ HA.class "btn btn-mini"
-                        , HE.onClick (GameEssenceEdited example)
-                        ]
-                        [ text example ]
-                )
-                essenceExamples
-            )
-        ]
-
-
-viewGamePromptBox : Create -> List (Html Msg)
-viewGamePromptBox create =
-    case create.gamePrompt of
-        PromptIdle ->
-            []
-
-        PromptLoading ->
-            []
-
-        PromptFailed reason ->
-            [ div [ HA.class "mt-2 text-[11px] text-danger" ]
-                [ text ("プロンプトを作れませんでした — " ++ reason) ]
-            ]
-
-        PromptReady prompt ->
-            [ -- 届いた依頼文は下書き — 渡す前に書き換えて構わない(編集可)
-              Html.textarea
-                [ HA.class "atelier-game-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
-                , HA.value prompt
-                , HE.onInput GamePromptEdited
-                ]
-                []
-            , div [ HA.class "mt-2" ]
-                [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyGamePromptClicked ]
-                    [ text
-                        (if create.gameCopied then
-                            "✓ コピーしました"
-
-                         else
-                            "📋 コピー"
-                        )
-                    ]
-                ]
-            , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
-                [ text "AIに貼ると、ルールとテストまで作ります。できたら、ホームに知らせが届きます" ]
-            ]
-
-
-{-| 「新しい種類の素材/設定を足す」— Doc の骨組み(scaffold)を作る道。
-成功はできたファイル一覧と、ゲームへ配線するためのプロンプト(AI に貼る)を出す。
--}
-viewScaffoldCard : Scaffold -> Html Msg
-viewScaffoldCard scaffold =
-    div [ HA.class "atelier-create-scaffold min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
-        (List.concat
-            [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "📦 新しい種類の素材/設定を足す" ]
-              , Html.input
-                    [ HA.class "field w-full font-mono text-xs"
-                    , HA.placeholder "種類の名前(半角の小文字)"
-                    , HA.value scaffold.kind
-                    , HE.onInput ScaffoldKindEdited
-                    ]
-                    []
-              , Html.input
-                    [ HA.class "field mt-2 w-full text-xs"
-                    , HA.placeholder "表示名(日本語でかまいません)"
-                    , HA.value scaffold.title
-                    , HE.onInput ScaffoldTitleEdited
-                    ]
-                    []
-              , div [ HA.class "mt-2 flex flex-col gap-1" ]
-                    [ viewRoleRadio scaffold "material" "素材(選んで使う物)"
-                    , viewRoleRadio scaffold "tuning" "調整(数値やデータ)"
-                    ]
-              , div [ HA.class "mt-3" ]
-                    [ button
-                        [ HA.class "btn"
-                        , HA.disabled scaffold.pending
-                        , HE.onClick ScaffoldClicked
-                        ]
-                        [ text
-                            (if scaffold.pending then
-                                "作っています…"
-
-                             else
-                                "📦 骨組みを作る"
-                            )
-                        ]
-                    ]
-              , case scaffold.error of
-                    Just reason ->
-                        div [ HA.class "mt-2 text-[11px] text-danger" ]
-                            [ text ("作れませんでした — " ++ reason) ]
-
-                    Nothing ->
-                        text ""
-              ]
-            , viewScaffoldResult scaffold
-            ]
-        )
-
-
-viewRoleRadio : Scaffold -> String -> String -> Html Msg
-viewRoleRadio scaffold role label =
-    Html.label [ HA.class "flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-soft" ]
-        [ Html.input
-            [ HA.type_ "radio"
-            , HA.name "scaffold-role"
-            , HA.checked (scaffold.role == role)
-            , HE.onClick (ScaffoldRoleChosen role)
-            ]
-            []
-        , text label
-        ]
-
-
-viewScaffoldResult : Scaffold -> List (Html Msg)
-viewScaffoldResult scaffold =
-    case scaffold.result of
-        Nothing ->
-            []
-
-        Just result ->
-            List.concat
-                [ [ div [ HA.class "mt-3 text-[11px] font-semibold text-ok" ] [ text "✓ 骨組みができました" ] ]
-                , if List.isEmpty result.files then
-                    []
-
-                  else
-                    [ div [ HA.class "mt-1" ]
-                        (List.map
-                            (\file -> div [ HA.class "font-mono text-[11px] text-ink-soft" ] [ text file ])
-                            result.files
-                        )
-                    ]
-                , if result.wirePrompt == "" then
-                    []
-
-                  else
-                    -- 配線プロンプトは AI カードと同じコピーの作法(箱 + 📋コピー)
-                    [ Html.textarea
-                        [ HA.class "atelier-wire-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
-                        , HA.readonly True
-                        , HA.value result.wirePrompt
-                        ]
-                        []
-                    , div [ HA.class "mt-2" ]
-                        [ button [ HA.class "btn btn-primary w-full", HE.onClick ScaffoldCopyClicked ]
-                            [ text
-                                (if scaffold.copied then
-                                    "✓ コピーしました"
-
-                                 else
-                                    "📋 コピー"
-                                )
-                            ]
-                        ]
-                    , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
-                        [ text "このプロンプトをAIに貼ると、ゲームがこのDocを読むようになります" ]
-                    ]
-                ]
 
 
 
