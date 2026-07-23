@@ -93,6 +93,15 @@ mod Changes {
 
     // ── 純粋なルール (テスト対象) ──────────────────────────
 
+    /// この相対パスへの保存が検査 (pump) をその場で蹴る対象か —
+    /// 見た目に効き得る素材 (assets/ の JSON) だけ。stale 判定が見るのも assets/ の
+    /// JSON なので、それに合わせる。gallery/ や golden/ や debug/ への書き込みでは
+    /// 蹴らない — 焼きの成果物の保存がまた焼きを呼ぶ、という堂々巡りをここで断つ。
+    /// 対象を広めに拾っても pump は冪等 (stale と走行権で守られる) なので安全。
+    pub def kicksPumpOnSave(relPath: String): Bool =
+        String.startsWith(prefix = "assets/", relPath)
+            and String.endsWith(suffix = ".json", relPath)
+
     /// 基準の退避先の名前: "title.png" と 3 → "title.v3.png"。
     pub def versionName(name: String, n: Int32): String =
         if (String.endsWith(suffix = ".png", name))

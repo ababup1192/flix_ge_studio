@@ -23,6 +23,17 @@ mod TestChanges {
              Changes.nextVerFrom("title.v1.png" :: "title.v3.png" :: "over.v9.png" :: Nil,
                  "title.png")))
 
+    /// 保存が検査を蹴る対象か: assets/ の JSON だけ。焼きの成果物 (gallery/ や golden/) や
+    /// JSON でない物は蹴らない — 保存→焼き→保存…の堂々巡りを判定の段階で断つ。
+    @Test
+    def testKicksPumpOnSave(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false, false),
+            (Changes.kicksPumpOnSave("assets/sample.kind.json"),
+             Changes.kicksPumpOnSave("gallery/title.png"),
+             Changes.kicksPumpOnSave("golden/title.png"),
+             Changes.kicksPumpOnSave("assets/title.png")))
+
     /// 記録の読み書き: 追記で後ろに積まれ、同じ場面は最新の 1 件に畳まれる。
     /// 壊れた断片は黙って捨てる (fail-open)。
     @Test

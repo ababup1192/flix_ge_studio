@@ -133,7 +133,7 @@ mod Editor {
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
             case ("GET", "/resources") => withProject(selection, exchange, dir -> handleResources(dir, exchange))
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
-            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, readBody(exchange), exchange))
+            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, readBody(exchange), exchange))
             case ("POST", "/preview/ui") => withProject(selection, exchange, dir -> {
                 let (status, json) = PreviewUi.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)
@@ -586,7 +586,10 @@ mod Editor {
     /// ifMtime (GET /file が返した mtime) 付きなら、ディスクの現 mtime と違うとき 409 を返す —
     /// 別の窓・別プロセスが先に保存した内容を黙って上書きしない(最後の書き手勝ちの事故防止)。
     /// 省略時は従来どおり無条件で書く(後方互換)。
-    def handleWriteFile(dir: String, bodyText: String, exchange: HttpExchange): Unit \ IO =
+    /// 見た目に効き得る素材の保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
+    /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
+    /// この応答が焼きの完了を待つことはない。
+    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, bodyText: String, exchange: HttpExchange): Unit \ IO =
         let parsed = JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
         let fields = parsed
             |> Option.flatMap(obj -> forM (
@@ -612,10 +615,15 @@ mod Editor {
                     }), exchange)
                 else match FileIndex.writeInside(str = content, dir, relPath) {
                     case Err(message) => sendJson(400, errorJson(message), exchange)
-                    case Ok(_)        => sendJson(200, JObject(Map#{
-                        "ok"    => JBool(true),
-                        "mtime" => JNumber(mtimeToBd(mtimeOf(dir, relPath)))
-                    }), exchange)
+                    case Ok(_)        => {
+                        if (Changes.kicksPumpOnSave(relPath))
+                            discard Changes.pump(changes, runner, dir)
+                        else ();
+                        sendJson(200, JObject(Map#{
+                            "ok"    => JBool(true),
+                            "mtime" => JNumber(mtimeToBd(mtimeOf(dir, relPath)))
+                        }), exchange)
+                    }
                 }
         }
 
