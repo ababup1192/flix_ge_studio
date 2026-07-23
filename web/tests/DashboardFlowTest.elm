@@ -221,7 +221,7 @@ booted =
         |> respondOk 3 "resources" resourcesBody
         |> ProgramTest.clickButton "アトリエ"
         -- アトリエは開くたび候補えらび(swap)とアーカイバの材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
         -- 入口から調整(Doc エディタ)へ
         |> ProgramTest.clickButton "パラメータを変える"
 

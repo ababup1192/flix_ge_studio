@@ -1,4 +1,4 @@
-port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, init, main, update, view)
+port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, init, main, miniShownScene, update, view)
 
 {-| リソース(スキーマ付き JSON)エディタ。
 
@@ -458,8 +458,18 @@ type alias Model =
     -- アトリエの「候補選び」(swap)。調整(Doc エディタ)は従来どおり Main が持つ
     , atelier : Atelier.Model
 
-    -- ミニプレイヤー(これから)の折りたたみ。開いている間だけ枠と状態行を出す
+    -- ミニプレイヤー(「編集の今」を映す右下の枠。アトリエタブの間だけ出す)。
+    -- open は折りたたみ(セッション中だけ記憶)。pin はピン留め中の場面
+    -- (Nothing = 自動 — 知らせの最新を追う)。miniScenes は場面チップの材料
+    -- (/gallery/list)、miniChanges は知らせの列の写し(自動追従と v= の種)。
+    -- miniRefresh は絵のキャッシュ破りの目盛り(描き直しが終わるたび進む)、
+    -- miniSwapNotice は「✓ 差し替わりました」の点灯(2 秒で消える)
     , miniPlayerOpen : Bool
+    , miniPin : Maybe String
+    , miniScenes : List String
+    , miniChanges : List Journey.Change
+    , miniRefresh : Int
+    , miniSwapNotice : Bool
 
     -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
     -- 一方向の封筒(kind serverBase)で知らせる。届くまでは同一オリジン扱い("")
@@ -659,6 +669,11 @@ init _ =
         , scenes = Nothing
         , atelier = Atelier.init
         , miniPlayerOpen = False
+        , miniPin = Nothing
+        , miniScenes = []
+        , miniChanges = []
+        , miniRefresh = 0
+        , miniSwapNotice = False
         , serverBase = ""
         , reqCounter = 0
         , notice = Nothing
@@ -817,6 +832,9 @@ type Msg
     | LaunchPollTick
     | RunnerPollTick
     | MiniPlayerToggled
+    | MiniSceneClicked (Maybe String)
+    | MiniStartClicked
+    | MiniSwapNoticeExpired
     | NewGameMsg NewGame.Msg
     | ProjectNewPollTick
       -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
@@ -1044,6 +1062,30 @@ update msg model =
 
         MiniPlayerToggled ->
             ( { model | miniPlayerOpen = not model.miniPlayerOpen }, Effect.none )
+
+        MiniSceneClicked pin ->
+            -- Just = チップでピン留め、Nothing = 「自動」で追従に戻る
+            ( { model | miniPin = pin }, Effect.none )
+
+        MiniStartClicked ->
+            -- ミニプレイヤー下段の起動。アトリエの起動と同じ経路に委譲する —
+            -- 二度押しの守り(LaunchStarting / LaunchRunning は黙る)もそのまま効く
+            let
+                ( atelier, out ) =
+                    Atelier.update Atelier.StartGameClicked model.atelier
+
+                m1 =
+                    { model | atelier = atelier }
+            in
+            case out of
+                Atelier.OutStartGame ->
+                    request "gameStart" (E.object []) m1
+
+                _ ->
+                    ( m1, Effect.none )
+
+        MiniSwapNoticeExpired ->
+            ( { model | miniSwapNotice = False }, Effect.none )
 
         NewGameMsg nmsg ->
             let
@@ -3730,8 +3772,28 @@ handleOkByKind env model =
                                 other ->
                                     other
 
+                        -- 描き直しが終わった瞬間(true → false)。golden/ の絵は
+                        -- この時に入れ替わる — ミニプレイヤーのキャッシュ破りの
+                        -- 目盛りを進め、知らせの列が実際に動いた時だけ
+                        -- 「✓ 差し替わりました」を点す(2 秒で消える)
+                        bakeDone =
+                            model.changesBaking && not changes.baking
+
                         m1 =
-                            { model | changesBaking = changes.baking, changesModal = modal }
+                            { model
+                                | changesBaking = changes.baking
+                                , changesModal = modal
+                                , miniChanges = changes.changes
+                                , miniRefresh =
+                                    if bakeDone then
+                                        model.miniRefresh + 1
+
+                                    else
+                                        model.miniRefresh
+                                , miniSwapNotice =
+                                    (bakeDone && changes.changes /= model.miniChanges)
+                                        || model.miniSwapNotice
+                            }
 
                         ( m2, toastFx ) =
                             if model.changesModal == Just ChangesLoading && modal == Nothing then
@@ -3758,8 +3820,10 @@ handleOkByKind env model =
         "galleryList" ->
             case D.decodeValue scenesDecoder env.body of
                 Ok names ->
+                    -- ミニプレイヤーの場面チップも同じ出どころ(1 応答で両方養う)
                     ( { model
-                        | scenes =
+                        | miniScenes = names
+                        , scenes =
                             if model.scenes == Just ScenesLoading then
                                 Just (ScenesReady names)
 
@@ -3770,8 +3834,8 @@ handleOkByKind env model =
                     )
 
                 Err _ ->
-                    -- 契約とずれた応答。モーダルは静かに畳む
-                    ( { model | scenes = Nothing }, Effect.none )
+                    -- 契約とずれた応答。モーダルは静かに畳み、チップは空へ(fail-open)
+                    ( { model | scenes = Nothing, miniScenes = [] }, Effect.none )
 
         "atelierCandidates" ->
             case D.decodeValue Atelier.candidatesDecoder env.body of
@@ -4716,8 +4780,9 @@ handleErrByKind env message model =
             ( model, requestInfo "journeyState" )
 
         "galleryList" ->
-            -- 一覧が取れないならモーダルは畳む(404 の旧サーバも同じ)
-            ( { model | scenes = Nothing }, Effect.none )
+            -- 一覧が取れないならモーダルは畳み、ミニプレイヤーは空の一言へ
+            -- (404 の旧サーバも同じ。パネル自体は出したまま — 起動は生きている)
+            ( { model | scenes = Nothing, miniScenes = [] }, Effect.none )
 
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
@@ -4882,15 +4947,26 @@ gotoTab tab model =
                 , atelier = Atelier.update Atelier.OpenLanding model.atelier |> Tuple.first
               }
             , Effect.batch
-                [ requestInfo "atelierCandidates"
-                , requestInfo "gameStatus"
+                ([ requestInfo "atelierCandidates"
+                 , requestInfo "gameStatus"
 
-                -- 「つくる」の素材スロット(無いサーバでは AI カードが準備中になるだけ)
-                , requestInfo "atelierSlots"
+                 -- 「つくる」の素材スロット(無いサーバでは AI カードが準備中になるだけ)
+                 , requestInfo "atelierSlots"
 
-                -- アーカイブの中身(無いサーバでは入口ごと出ないだけ)
-                , requestInfo "atelierArchive"
-                ]
+                 -- アーカイブの中身(無いサーバでは入口ごと出ないだけ)
+                 , requestInfo "atelierArchive"
+
+                 -- ミニプレイヤーの場面チップ(全場面モーダルと同じ出どころ)
+                 , requestInfo "galleryList"
+                 ]
+                    ++ (if model.changesAvailable then
+                            -- 自動追従の種(知らせの最新)。口が無いサーバでは呼ばない
+                            [ requestInfo "journeyChanges" ]
+
+                        else
+                            []
+                       )
+                )
             )
 
 
@@ -4914,7 +4990,7 @@ view model =
             viewPicker model.newGame model.picker
 
         Editing ->
-            -- ミニプレイヤー(fixed)はどのタブでも右下に居る
+            -- ミニプレイヤー(fixed)はアトリエタブの間だけ右下に居る
             div []
                 [ case model.tab of
                     HomeTab ->
@@ -4936,7 +5012,11 @@ view model =
 
                         else
                             viewEditing model
-                , viewMiniPlayer model
+                , if model.tab == AtelierTab then
+                    viewMiniPlayer model
+
+                  else
+                    text ""
                 ]
 
 
@@ -4972,46 +5052,20 @@ viewNavTabs tab =
         ]
 
 
-{-| ミニプレイヤー(これから)。右下の折りたたみピル。枠は予定の姿だが、
-状態行(走行中 / 停止中)だけは本物 — /game/status か journey の checks を映す。
+{-| ミニプレイヤー — 「ゲームの今」でなく「編集の今」を映す右下の枠
+(アトリエタブの間だけ)。場面の絵は基準(golden/)の PNG。既定の「自動」は
+知らせの最新の場面を追い、場面チップでピン留めできる。知らせの既読(seen)は
+ここでは付けない — 通知と見比べモーダルの責務を侵さない。
 -}
 viewMiniPlayer : Model -> Html Msg
 viewMiniPlayer model =
-    let
-        running =
-            Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
-    in
     div [ HA.class "mini-player fixed bottom-4 right-4 z-40" ]
         [ if model.miniPlayerOpen then
             div [ HA.class "w-72 rounded-lg border border-edge bg-panel p-3 shadow-[0_4px_16px_rgb(0_0_0/0.45)]" ]
-                [ button
-                    [ HA.class "flex w-full cursor-pointer items-center gap-1.5 text-left text-xs font-semibold text-ink"
-                    , HE.onClick MiniPlayerToggled
-                    ]
-                    [ text "▶ ミニプレイヤー"
-                    , Atelier.mockChip
-                    , span [ HA.class "flex-1" ] []
-                    , span [ HA.class "text-[11px] font-normal text-ink-faint" ] [ text "たたむ" ]
-                    ]
-                , div [ HA.class "mt-2 flex h-28 items-center justify-center rounded border border-dashed border-ink-faint/50 px-3 text-center text-[11px] leading-relaxed text-ink-faint" ]
-                    [ text "走っているゲームをここに小さく映す予定です。いまは別ウィンドウで走ります。" ]
-                , div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
-                    [ span
-                        [ HA.classList
-                            [ ( "inline-block h-2 w-2 rounded-full", True )
-                            , ( "bg-ok", running )
-                            , ( "bg-ink-faint", not running )
-                            ]
-                        ]
-                        []
-                    , text
-                        (if running then
-                            "走行中"
-
-                         else
-                            "停止中"
-                        )
-                    ]
+                [ viewMiniHeader model
+                , viewMiniChips model
+                , viewMiniPicture model
+                , viewMiniStatus model
                 ]
 
           else
@@ -5019,8 +5073,178 @@ viewMiniPlayer model =
                 [ HA.class "mini-player-pill flex cursor-pointer items-center gap-1.5 rounded-full border border-edge bg-panel px-3 py-1.5 text-xs text-ink shadow-[0_2px_8px_rgb(0_0_0/0.35)] hover:bg-white/5"
                 , HE.onClick MiniPlayerToggled
                 ]
-                [ text "▶ ミニプレイヤー", Atelier.mockChip ]
+                [ text "🎞️ ミニプレイヤー" ]
         ]
+
+
+{-| ヘッダ。クリックで畳む/開く。差し替え直後だけ「✓ 差し替わりました」を添える。 -}
+viewMiniHeader : Model -> Html Msg
+viewMiniHeader model =
+    button
+        [ HA.class "flex w-full cursor-pointer items-center gap-1.5 text-left text-xs font-semibold text-ink"
+        , HE.onClick MiniPlayerToggled
+        ]
+        [ text "🎞️ ミニプレイヤー"
+        , if model.miniSwapNotice then
+            span [ HA.class "mini-swap shrink-0 text-[10px] font-normal text-ok" ]
+                [ text "✓ 差し替わりました" ]
+
+          else
+            text ""
+        , span [ HA.class "flex-1" ] []
+        , span [ HA.class "shrink-0 text-[11px] font-normal text-ink-faint" ] [ text "たたむ" ]
+        ]
+
+
+{-| 場面チップ列。「自動(変わった場面)」が既定、場面チップでピン留め。
+場面がまだ無ければ列ごと出さない(絵の枠の空の一言に任せる)。
+-}
+viewMiniChips : Model -> Html Msg
+viewMiniChips model =
+    if List.isEmpty model.miniScenes then
+        text ""
+
+    else
+        let
+            chip cls label active msg =
+                button
+                    [ HA.classList
+                        [ ( cls ++ " badge cursor-pointer", True )
+                        , ( "bg-accent/20 text-accent", active )
+                        , ( "text-ink-faint hover:text-ink-soft", not active )
+                        ]
+                    , HE.onClick msg
+                    ]
+                    [ text label ]
+        in
+        div [ HA.class "mini-chips mt-2 flex max-h-16 flex-wrap gap-1 overflow-y-auto" ]
+            (chip "mini-chip-auto" "自動(変わった場面)" (model.miniPin == Nothing) (MiniSceneClicked Nothing)
+                :: List.map
+                    (\name ->
+                        chip "mini-chip"
+                            (miniSceneLabel name)
+                            (model.miniPin == Just name)
+                            (MiniSceneClicked (Just name))
+                    )
+                    model.miniScenes
+            )
+
+
+{-| 選択中の場面の絵(golden/ の PNG)。描き直し中はオーバーレイを重ねる。
+場面が 1 つも無い時は静かな一言 — 枠は出したまま(下段の起動は生きている)。
+-}
+viewMiniPicture : Model -> Html Msg
+viewMiniPicture model =
+    case miniShownScene { pin = model.miniPin, changes = model.miniChanges, scenes = model.miniScenes } of
+        Nothing ->
+            div [ HA.class "mini-empty mt-2 flex h-28 items-center justify-center rounded border border-edge bg-well px-3 text-center text-[11px] text-ink-faint" ]
+                [ text "場面の絵はまだありません" ]
+
+        Just name ->
+            let
+                -- 焼き直しで中身が入れ替わるファイルなので v でキャッシュを破る
+                -- (知らせの版 + 描き直しの目盛り — 同じ URL のまま古い絵を出さない)
+                ver =
+                    model.miniChanges
+                        |> List.filter (\c -> c.name == name)
+                        |> List.head
+                        |> Maybe.map .ver
+                        |> Maybe.withDefault 0
+
+                url =
+                    galleryImageUrl model.serverBase "golden" name
+                        ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt model.miniRefresh)
+            in
+            div [ HA.class "relative mt-2" ]
+                [ img [ HA.class "scene-shot block w-full rounded border border-edge bg-well", HA.src url, HA.alt name ] []
+                , if model.changesBaking then
+                    div [ HA.class "mini-baking absolute inset-0 flex items-center justify-center gap-2 rounded bg-black/60 text-[11px] text-ink" ]
+                        [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                        , text "描き直しています…"
+                        ]
+
+                  else
+                    text ""
+                ]
+
+
+{-| 下段 — 起動状態と「▶ 起動する」。起動はアトリエと同じ経路
+(StartGameClicked)に委譲するので二度押しの守りもそのまま。
+-}
+viewMiniStatus : Model -> Html Msg
+viewMiniStatus model =
+    let
+        running =
+            Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
+    in
+    div []
+        [ div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
+            [ span
+                [ HA.classList
+                    [ ( "inline-block h-2 w-2 rounded-full", True )
+                    , ( "bg-ok", running )
+                    , ( "bg-ink-faint", not running )
+                    ]
+                ]
+                []
+            , text
+                (if running then
+                    "起動中"
+
+                 else
+                    "停止中"
+                )
+            , span [ HA.class "flex-1" ] []
+            , if running then
+                text ""
+
+              else
+                case model.atelier.launch of
+                    Atelier.LaunchStarting _ ->
+                        button [ HA.class "btn btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]
+
+                    _ ->
+                        button [ HA.class "btn btn-mini", HE.onClick MiniStartClicked ] [ text "▶ 起動する" ]
+            ]
+        , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
+            [ text
+                (if running then
+                    "動きの確認はゲームの窓で"
+
+                 else
+                    "絵は起動していなくても映ります"
+                )
+            ]
+        ]
+
+
+{-| ミニプレイヤーが映す場面の決めごと(純関数)。ピン留めが最優先。
+「自動」は知らせの最新 — サーバ(Changes)は新しい変化を列の末尾へ積むので
+末尾を取る。知らせがまだ無ければ一覧の先頭、場面が無ければ Nothing(空の一言)。
+-}
+miniShownScene : { pin : Maybe String, changes : List Journey.Change, scenes : List String } -> Maybe String
+miniShownScene info =
+    case info.pin of
+        Just name ->
+            Just name
+
+        Nothing ->
+            case List.reverse info.changes of
+                latest :: _ ->
+                    Just latest.name
+
+                [] ->
+                    List.head info.scenes
+
+
+{-| 場面チップの見出し(拡張子は落とす — チップは日常語の場面名だけ)。 -}
+miniSceneLabel : String -> String
+miniSceneLabel name =
+    if String.endsWith ".png" name then
+        String.dropRight 4 name
+
+    else
+        name
 
 
 {-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
@@ -8758,10 +8982,18 @@ subscriptions model =
           else
             Sub.none
 
-        -- ホームに居る間、見た目の検査を進めて知らせと描き出しの実況を追う
-        -- (8 秒間隔)。この口を持たないサーバ(404)では回さない
-        , if model.screen == Editing && model.tab == HomeTab && model.changesAvailable then
+        -- ホームとアトリエに居る間、見た目の検査を進めて知らせ・実況・
+        -- ミニプレイヤーの追従を養う(8 秒間隔)。この口を持たないサーバ
+        -- (404)では回さない
+        , if model.screen == Editing && (model.tab == HomeTab || model.tab == AtelierTab) && model.changesAvailable then
             Time.every 8000 (\_ -> ChangesPollTick)
+
+          else
+            Sub.none
+
+        -- ミニプレイヤーの「✓ 差し替わりました」の戻し(2 秒)。点いている間だけ生きる
+        , if model.miniSwapNotice then
+            Time.every 2000 (\_ -> MiniSwapNoticeExpired)
 
           else
             Sub.none

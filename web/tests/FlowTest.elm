@@ -367,7 +367,7 @@ landingWith resources =
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
         -- アトリエは開くたび候補えらび(swap)とアーカイバの材料を取り直す(採番外 id 0)
-        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+        |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
 
 
 {-| 入口から調整(Doc エディタ)へ入った状態(編集フローの検査はここから)。 -}
@@ -733,7 +733,7 @@ suite =
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "arrange" "arrange")
                     |> ProgramTest.clickButton "アレンジする"
-                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
                     -- 入口(3枚のカード)から選んでもらう
                     |> ProgramTest.expectViewHas [ class "atelier-landing" ]
         , test "ホーム: /journey/state が無いサーバでも落ちず、アレンジの一手に倒れる" <|
@@ -753,6 +753,13 @@ suite =
                     |> ProgramTest.ensureViewHas [ class "atelier-slot" ]
                     |> ProgramTest.clickButton "← アトリエ"
                     |> ProgramTest.expectViewHas [ class "atelier-landing" ]
+        , test "ミニプレイヤー: アトリエタブでは出て、ホームでは出ない" <|
+            \() ->
+                landingWith resourcesBody
+                    |> ProgramTest.ensureViewHas [ class "mini-player" ]
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
+                    |> ProgramTest.expectViewHasNot [ class "mini-player" ]
         , test "アトリエ: 入口の「ゲームを広げる」から部屋へ、「場面を足す」で下書きが届きコピーが見える" <|
             \() ->
                 landingWith resourcesBody
@@ -827,7 +834,7 @@ suite =
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "pick" "atelier")
                     |> ProgramTest.clickButton "アトリエへ"
-                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
+                    |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
                     |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
                     |> ProgramTest.expectViewHas [ class "atelier-slot" ]
