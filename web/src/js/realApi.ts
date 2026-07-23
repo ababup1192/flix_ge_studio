@@ -225,6 +225,9 @@ export function realApi(base: string): Api {
           return sendJson("POST", `${base}/preview/items`, payload);
         case "previewUi":
           return sendJson("POST", `${base}/preview/ui`, payload);
+        case "spriteColors":
+          // ドット絵 legend の実色表。404(旧サーバ)は Elm 側が仮色に倒す
+          return sendJson("POST", `${base}/sprite/colors`, payload);
         case "previewHitbox":
           return sendJson("POST", `${base}/preview/hitbox`, payload);
         case "previewFx":

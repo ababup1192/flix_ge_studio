@@ -568,6 +568,11 @@ type alias Model =
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
 
+    -- ドット絵 legend の実色表(サーバの POST /sprite/colors が返す「値 → #rrggbb」)。
+    -- 開いている sprite Doc の分だけ持ち、届くまで・解けないキーは仮色に倒す
+    , spriteColors : Dict.Dict String String
+    , spriteColorsReq : Maybe Int
+
     -- マップ(*.map.json のビジュアル編集)。持ち方はドット絵と同じ
     , mapEd : MapEditor.Model
 
@@ -724,6 +729,8 @@ init _ =
         , previewStale = False
         , drag = Nothing
         , pixel = PixelEditor.init
+        , spriteColors = Dict.empty
+        , spriteColorsReq = Nothing
         , mapEd = MapEditor.init
         , wizard = Nothing
         , usagesOpenFor = Nothing
@@ -1308,8 +1315,18 @@ update msg model =
 
         ModeChosen mode ->
             -- 打ちかけは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)。
-            -- ドット絵の作業コピーも手放す — テキスト側で文書が動き得るため
-            ( { model | viewMode = mode, activeDraft = Nothing, pixel = PixelEditor.release model.pixel, mapEd = MapEditor.release model.mapEd }, Effect.none )
+            -- ドット絵の作業コピーも手放す — テキスト側で文書が動き得るため。
+            -- ビジュアルへ戻る時は legend 実色表も取り直す(テキスト側で legend や
+            -- テーマが変わっていても、古い色で描き続けない)
+            let
+                m1 =
+                    { model | viewMode = mode, activeDraft = Nothing, pixel = PixelEditor.release model.pixel, mapEd = MapEditor.release model.mapEd }
+            in
+            if mode == VisualMode then
+                requestSpriteColors m1
+
+            else
+                ( m1, Effect.none )
 
         SectionClicked key ->
             -- 並べ替え・絞り込みは列の意味ごとセクションに紐づくので持ち越さない
@@ -3051,6 +3068,32 @@ spriteDocCurrent model =
             Nothing
 
 
+{-| 開いているドット絵の legend 実色表をサーバに頼む(POST /sprite/colors)。
+サーバはゲームと同じ色解決(テーマ・パレット)で「値 → #rrggbb」を返し、
+パレットの見た目がゲーム画面と一致する。sprite Doc でなければ何もしない。
+往復中の重複要求は出さない(応答は id で判定するので追い越しも安全)。
+-}
+requestSpriteColors : Model -> ( Model, Effect )
+requestSpriteColors model =
+    case ( model.current, spriteDocCurrent model, model.spriteColorsReq ) of
+        ( Just path, Just _, Nothing ) ->
+            case parsedDoc model of
+                Just doc ->
+                    let
+                        ( m1, fx ) =
+                            request "spriteColors"
+                                (E.object [ ( "path", E.string path ), ( "doc", doc ) ])
+                                model
+                    in
+                    ( { m1 | spriteColorsReq = Just m1.reqCounter }, fx )
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        _ ->
+            ( model, Effect.none )
+
+
 {-| ドット絵の一筆(または戻す/やり直す)1 件を docEdit の編集に翻訳する。
 書き戻しは sprites.<名前>.frames.<コマ> の rows 丸ごと 1 本 — 既存の編集直列
 (dirty・自動保存・衝突検知・保存後の焼き)にそのまま乗る。
@@ -4288,6 +4331,8 @@ handleOkByKind env model =
                                     , previewStale = False
                                     , drag = Nothing
                                     , pixel = PixelEditor.init
+                                    , spriteColors = Dict.empty
+                                    , spriteColorsReq = Nothing
                                     , mapEd = MapEditor.init
                                     , usagesOpenFor = Nothing
                                     , rename = Nothing
@@ -4382,8 +4427,10 @@ handleOkByKind env model =
                                         , conflict = Nothing
                                         , savingText = Nothing
 
-                                        -- ドット絵の道具・履歴は開いたファイルの物(持ち越さない)
+                                        -- ドット絵の道具・履歴・実色表は開いたファイルの物(持ち越さない)
                                         , pixel = PixelEditor.init
+                                        , spriteColors = Dict.empty
+                                        , spriteColorsReq = Nothing
                                         , mapEd = MapEditor.init
 
                                         -- ジャンプで開いた時だけ選択が乗る(普段は Nothing のまま)
@@ -4397,8 +4444,11 @@ handleOkByKind env model =
 
                             ( m3, portraitFx ) =
                                 requestPortraits m2
+
+                            ( m4, spriteColorsFx ) =
+                                requestSpriteColors m3
                         in
-                        ( m3, Effect.batch [ previewFx, crossFx, portraitFx ] )
+                        ( m4, Effect.batch [ previewFx, crossFx, portraitFx, spriteColorsFx ] )
 
                     else if Just env.id == model.schemaReq then
                         case Schema.decodeString fc.content of
@@ -4592,6 +4642,22 @@ handleOkByKind env model =
                             |> Result.toMaybe
                             |> Maybe.andThen (\fc -> D.decodeString activeDocsDecoder fc.content |> Result.toMaybe)
                             |> Maybe.withDefault Dict.empty
+                  }
+                , Effect.none
+                )
+
+            else
+                ( model, Effect.none )
+
+        "spriteColors" ->
+            -- 追い越された古い応答は捨てる(開き直しの取り直しが正)。
+            -- ok:false や形違いは空の表 = 従来の仮色に倒す(fail-open)
+            if Just env.id == model.spriteColorsReq then
+                ( { model
+                    | spriteColorsReq = Nothing
+                    , spriteColors =
+                        D.decodeValue Api.spriteColorsDecoder env.body
+                            |> Result.withDefault Dict.empty
                   }
                 , Effect.none
                 )
@@ -4956,6 +5022,15 @@ handleErrByKind env message model =
             -- 印を消すだけで何も言わない(fail-open)
             if Just env.id == model.activeReq then
                 ( { model | activeReq = Nothing, activeDocs = Dict.empty }, Effect.none )
+
+            else
+                ( model, Effect.none )
+
+        "spriteColors" ->
+            -- 実色表が取れないのは致命ではない(仮色で編集は続く)。
+            -- 旧サーバの 404 もここに来るので、赤エラーは出さない(fail-open)
+            if Just env.id == model.spriteColorsReq then
+                ( { model | spriteColorsReq = Nothing }, Effect.none )
 
             else
                 ( model, Effect.none )
@@ -5926,7 +6001,7 @@ viewEditing model =
 
                                                 -- ドット絵は 1 枚のピクセルエディタで完結
                                                 ( _, Just pdoc ) ->
-                                                    [ Html.map PixelMsg (PixelEditor.view pdoc model.pixel) ]
+                                                    [ Html.map PixelMsg (PixelEditor.view model.spriteColors pdoc model.pixel) ]
 
                                                 _ ->
                                                     [ viewVisualCenter model

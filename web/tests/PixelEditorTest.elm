@@ -5,6 +5,7 @@ module PixelEditorTest exposing (suite)
 テストしない。
 -}
 
+import Dict
 import Expect
 import Json.Decode as D
 import Json.Encode as E
@@ -71,7 +72,7 @@ suite =
                         Expect.fail "fixture が読めるべき"
 
                     Just doc ->
-                        ( PixelEditor.palette doc
+                        ( PixelEditor.palette Dict.empty doc
                             |> List.map (\sw -> ( sw.ch, sw.name, sw.css == sw.name ))
                         , PixelEditor.transparentChar doc
                         , doc.sprites |> List.map (\s -> ( s.name, List.map Tuple.first s.frames ))
@@ -81,4 +82,16 @@ suite =
                                 , '.'
                                 , [ ( "hero", [ "idle" ] ) ]
                                 )
+        , test "legend→パレット — サーバの解決表があれば実色が勝ち、無いキーは仮色に倒れる" <|
+            \_ ->
+                case docFixture of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        PixelEditor.palette (Dict.fromList [ ( "hair", "#ffc95e" ) ]) doc
+                            |> List.map (\sw -> ( sw.ch, sw.css ))
+                            |> Expect.equal
+                                -- hex 値の 'a' は素通し、意味色キー 'h' は解決表の実色
+                                [ ( 'a', "#102030" ), ( 'h', "#ffc95e" ) ]
         ]

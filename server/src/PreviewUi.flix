@@ -341,7 +341,8 @@ mod PreviewUi {
 
     /// 色値 ("#rrggbb" | {"hsv":[h,s,v]} | {"rgb":[r,g,b]}) を "#rrggbb" へ。
     /// hsv→rgb の数式はエンジンの Color.hsv に任せる (二重実装を作らない)。
-    def colorHexOf(json: Json): Option[String] =
+    /// SpriteColors (ドット絵の legend 解決) も同じ解釈を使う (色方言を増やさない)。
+    pub def colorHexOf(json: Json): Option[String] =
         match json {
             case JString(s) => normalizeHex(s)
             case JObject(m) => match (Map.get("hsv", m), Map.get("rgb", m)) {

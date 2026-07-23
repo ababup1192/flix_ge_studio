@@ -29,6 +29,7 @@ module Api exposing
     , putFileResultDecoder
     , resourcesDecoder
     , runningGamesDecoder
+    , spriteColorsDecoder
     )
 
 {-| editor_server 応答のデコーダ集。サーバが契約の正で、ずれたらこちらを直す。 -}
@@ -386,6 +387,17 @@ projectSwitchDecoder =
                 else
                     D.map SwitchErr errorTextDecoder
             )
+
+
+{-| POST /sprite/colors の応答(ドット絵 legend の「値 → #rrggbb」の表)。
+ok:false・colors 欠け・形違いは空の表 — 画面側が従来の仮色に倒す(fail-open)。
+-}
+spriteColorsDecoder : D.Decoder (Dict String String)
+spriteColorsDecoder =
+    D.oneOf
+        [ D.field "colors" (D.dict D.string)
+        , D.succeed Dict.empty
+        ]
 
 
 previewResultDecoder : D.Decoder PreviewResult

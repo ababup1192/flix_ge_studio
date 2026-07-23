@@ -145,6 +145,10 @@ mod Editor {
                 let (status, json) = PreviewUi.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)
             })
+            case ("POST", "/sprite/colors") => withProject(selection, exchange, dir -> {
+                let (status, json) = SpriteColors.respond(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("POST", "/preview/hitbox") => withProject(selection, exchange, dir -> {
                 let (status, json) = PreviewHitbox.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)

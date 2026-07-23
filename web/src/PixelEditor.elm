@@ -29,8 +29,9 @@ docText)から導き、一筆(pointerdown〜up)の途中だけ作業コピー(wo
 戻す/やり直すもスナップショットの Edit を同じ経路で流す。
 
 legend の値は意味色キー(テーマが解く名前)のことがあり、ここでは実色に
-解けない。#rrggbb はそのまま、それ以外は名前から区別のつく仮色を導く
-(表示のためだけ。保存される文字には関与しない)。
+解けない。サーバの解決表(POST /sprite/colors の「値 → #rrggbb」)があれば
+それを使い、無い・欠けるキーは #rrggbb 素通し → 名前から導く仮色、の順に
+倒す(表示のためだけ。保存される文字には関与しない)。
 
 -}
 
@@ -526,11 +527,13 @@ type alias Swatch =
     }
 
 
-{-| legend の並びのまま升目にする。名前は legend の値そのもの(名詞を発明しない)。 -}
-palette : Doc -> List Swatch
-palette doc =
+{-| legend の並びのまま升目にする。名前は legend の値そのもの(名詞を発明しない)。
+resolved はサーバの解決表(legend の値 → #rrggbb)。
+-}
+palette : Dict String String -> Doc -> List Swatch
+palette resolved doc =
     doc.legend
-        |> List.map (\( ch, name ) -> { ch = ch, name = name, css = colorCss name })
+        |> List.map (\( ch, name ) -> { ch = ch, name = name, css = colorCss resolved name })
 
 
 {-| 透明を表す文字。実データが使っている非 legend 文字に合わせる('.' 優先)。 -}
@@ -566,14 +569,20 @@ transparentChar doc =
                     '.'
 
 
-colorCss : String -> String
-colorCss value =
-    if isHexColor value then
-        value
+colorCss : Dict String String -> String -> String
+colorCss resolved value =
+    case Dict.get value resolved of
+        Just hex ->
+            -- サーバがゲームと同じ色解決で導いた実色(ゲーム画面と一致する)
+            hex
 
-    else
-        -- 意味色キーはここでは実色に解けない。名前ごとに区別がつけば編集には足りる
-        "hsl(" ++ String.fromInt (hashHue value) ++ " 60% 55%)"
+        Nothing ->
+            if isHexColor value then
+                value
+
+            else
+                -- 解決表に無い意味色キーは実色に解けない。名前ごとに区別がつけば編集には足りる
+                "hsl(" ++ String.fromInt (hashHue value) ++ " 60% 55%)"
 
 
 isHexColor : String -> Bool
@@ -706,8 +715,8 @@ zoomStep dir current =
 -- 表示
 
 
-view : Doc -> Model -> Html Msg
-view doc model =
+view : Dict String String -> Doc -> Model -> Html Msg
+view resolved doc model =
     div [ HA.class "pixel-editor flex min-w-0 flex-1 bg-app" ]
         (case shownGrid doc model of
             Nothing ->
@@ -716,8 +725,8 @@ view doc model =
 
             Just grid ->
                 [ viewTools model
-                , viewCenter doc model grid
-                , viewPalette doc model
+                , viewCenter resolved doc model grid
+                , viewPalette resolved doc model
                 ]
         )
 
@@ -760,8 +769,8 @@ historyButton label msg disabled body =
         [ body ]
 
 
-viewCenter : Doc -> Model -> Edit -> Html Msg
-viewCenter doc model grid =
+viewCenter : Dict String String -> Doc -> Model -> Edit -> Html Msg
+viewCenter resolved doc model grid =
     let
         cols =
             grid.rows |> List.head |> Maybe.map String.length |> Maybe.withDefault 0
@@ -781,7 +790,7 @@ viewCenter doc model grid =
                 (D.succeed { message = Swallowed, stopPropagation = True, preventDefault = True })
             , HE.onMouseLeave GridLeft
             ]
-            [ div [ HA.class "m-auto" ] [ viewGrid doc model grid ] ]
+            [ div [ HA.class "m-auto" ] [ viewGrid resolved doc model grid ] ]
         , viewStatus model cols rowCount
         ]
 
@@ -826,11 +835,11 @@ chip selected msg label =
         [ text label ]
 
 
-viewGrid : Doc -> Model -> Edit -> Html Msg
-viewGrid doc model grid =
+viewGrid : Dict String String -> Doc -> Model -> Edit -> Html Msg
+viewGrid resolved doc model grid =
     let
         colors =
-            palette doc
+            palette resolved doc
                 |> List.map (\sw -> ( sw.ch, sw.css ))
                 |> Dict.fromList
     in
@@ -913,13 +922,13 @@ largestZoom =
     List.head (List.reverse zoomLevels) |> Maybe.withDefault 34
 
 
-viewPalette : Doc -> Model -> Html Msg
-viewPalette doc model =
+viewPalette : Dict String String -> Doc -> Model -> Html Msg
+viewPalette resolved doc model =
     div [ HA.class "px-palette w-56 shrink-0 overflow-y-auto border-l border-edge bg-panel p-3" ]
         ([ div [ HA.class "mb-1.5 text-[11px] text-ink-faint" ] [ text "いまの色" ]
-         , viewCurrentColor doc model
+         , viewCurrentColor resolved doc model
          , div [ HA.class "mt-3 flex flex-wrap gap-1.5" ]
-            ((palette doc |> List.map (viewSwatch doc model))
+            ((palette resolved doc |> List.map (viewSwatch doc model))
                 ++ [ button
                         [ HA.class "btn h-7 rounded-full"
                         , HE.onClick AddColorPressed
@@ -931,8 +940,8 @@ viewPalette doc model =
         )
 
 
-viewCurrentColor : Doc -> Model -> Html Msg
-viewCurrentColor doc model =
+viewCurrentColor : Dict String String -> Doc -> Model -> Html Msg
+viewCurrentColor resolved doc model =
     if model.tool == Eraser then
         div [ HA.class "px-checker flex h-14 items-center justify-center rounded border border-edge" ]
             [ span [ HA.class "rounded bg-app/70 px-1.5 py-0.5 text-[11px] text-ink" ] [ text "透明(消す)" ] ]
@@ -952,7 +961,7 @@ viewCurrentColor doc model =
         div []
             [ div
                 [ HA.class "h-14 rounded border border-edge"
-                , HA.style "background-color" (colorCss name)
+                , HA.style "background-color" (colorCss resolved name)
                 ]
                 []
             , div [ HA.class "mt-1 truncate font-mono text-[11px] text-ink-soft" ]

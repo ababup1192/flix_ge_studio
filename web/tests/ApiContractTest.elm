@@ -5,6 +5,7 @@ module ApiContractTest exposing (suite)
 -}
 
 import Api
+import Dict
 import Expect
 import Json.Decode as D
 import Test exposing (Test, describe, test)
@@ -266,5 +267,18 @@ suite =
                 \_ ->
                     D.decodeString Api.putFileResultDecoder putConflictFixture
                         |> Expect.equal (Ok (Api.PutConflict { currentMtime = 1784274206557 }))
+            ]
+        , describe "/sprite/colors"
+            [ test "ok:true — legend の「値 → #rrggbb」の表が読める。ok:false は空の表(仮色へ fail-open)" <|
+                \_ ->
+                    ( D.decodeString Api.spriteColorsDecoder
+                        """{"ok": true, "colors": {"accent": "#ffc95e"}}"""
+                    , D.decodeString Api.spriteColorsDecoder
+                        """{"ok": false, "error": "JSON parse failed: assets/novel.sprite.json"}"""
+                    )
+                        |> Expect.equal
+                            ( Ok (Dict.fromList [ ( "accent", "#ffc95e" ) ])
+                            , Ok Dict.empty
+                            )
             ]
         ]
