@@ -204,6 +204,10 @@ mod Editor {
                 let (status, json) = Atelier.promptGameJson(dir, params);
                 sendJson(status, json, exchange)
             })
+            case ("GET", "/prompt/extend") => withProject(selection, exchange, dir -> {
+                let (status, json) = Extend.promptJson(dir, params);
+                sendJson(status, json, exchange)
+            })
             case ("POST", "/atelier/copy") => withProject(selection, exchange, dir -> {
                 let (status, json) = Atelier.copy(dir, readBody(exchange));
                 sendJson(status, json, exchange)
