@@ -73,7 +73,8 @@ mod Changes {
         if (Object.isNull(value)) "" else value
 
     def seenOf(state: State, dir: String): Bool \ IO =
-        state.get("${dir}|seen") != "false"
+        let value = state.get("${dir}|seen");
+        seenFromRecord(if (Object.isNull(value)) None else Some(value))
 
     def statusJson(state: State, dir: String, baking: Bool): Json \ IO =
         let entries = entriesOf(listOf(state, dir));
@@ -92,6 +93,15 @@ mod Changes {
         })
 
     // ── 純粋なルール (テスト対象) ──────────────────────────
+
+    /// 既読記録の値から既読かを判定。無記録 (JMap.get の null 由来の None) は
+    /// 「未読の知らせ無し」= 既読に倒す — null をそのまま String 比較へ流すと
+    /// NPE で応答ごと落ちるので、判定へ入る前にここで受け止める。
+    pub def seenFromRecord(value: Option[String]): Bool =
+        match value {
+            case None    => true
+            case Some(v) => v != "false"
+        }
 
     /// この相対パスへの保存が検査 (pump) をその場で蹴る対象か —
     /// 見た目に効き得る素材 (assets/ の JSON) だけ。stale 判定が見るのも assets/ の

@@ -616,8 +616,14 @@ mod Editor {
                 else match FileIndex.writeInside(str = content, dir, relPath) {
                     case Err(message) => sendJson(400, errorJson(message), exchange)
                     case Ok(_)        => {
+                        // fail-open: 検査の起動失敗は保存の失敗ではない — 応答は保存成功のまま返す。
                         if (Changes.kicksPumpOnSave(relPath))
-                            discard Changes.pump(changes, runner, dir)
+                            try {
+                                discard Changes.pump(changes, runner, dir)
+                            } catch {
+                                case e: Exception =>
+                                    println("[studio] 保存後の検査の起動に失敗 (保存は成功): ${e.toString()}")
+                            }
                         else ();
                         sendJson(200, JObject(Map#{
                             "ok"    => JBool(true),

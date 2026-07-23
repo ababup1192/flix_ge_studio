@@ -34,6 +34,16 @@ mod TestChanges {
              Changes.kicksPumpOnSave("golden/title.png"),
              Changes.kicksPumpOnSave("assets/title.png")))
 
+    /// 既読の判定: 無記録 (器の get が null = None) は「未読なし」に倒して落ちない。
+    /// "false" だけが未読で、それ以外の記録は既読。
+    @Test
+    def testSeenFromRecord(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, true),
+            (Changes.seenFromRecord(None),
+             Changes.seenFromRecord(Some("false")),
+             Changes.seenFromRecord(Some("true"))))
+
     /// 記録の読み書き: 追記で後ろに積まれ、同じ場面は最新の 1 件に畳まれる。
     /// 壊れた断片は黙って捨てる (fail-open)。
     @Test
