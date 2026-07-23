@@ -835,6 +835,8 @@ type Msg
     | MiniSceneClicked (Maybe String)
     | MiniStartClicked
     | MiniSwapNoticeExpired
+    | ProjectPickerOpened
+    | BackToEditingClicked
     | NewGameMsg NewGame.Msg
     | ProjectNewPollTick
       -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
@@ -1086,6 +1088,24 @@ update msg model =
 
         MiniSwapNoticeExpired ->
             ( { model | miniSwapNotice = False }, Effect.none )
+
+        ProjectPickerOpened ->
+            -- 上のバーの右端から選択画面へ。編集状態(model)は捨てない —
+            -- 「← いまのゲームに戻る」の戻り道と、実際に別プロジェクトを
+            -- 選んだ時の dirty 関所(selectProject)がそのまま生きるため。
+            -- 封筒は起動時の未選択フォールバックと同じ 2 通
+            let
+                ( m1, c1 ) =
+                    request "projects" (E.object []) { model | screen = Picker }
+
+                ( m2, c2 ) =
+                    request "runningGames" (E.object []) m1
+            in
+            ( m2, Effect.batch [ c1, c2 ] )
+
+        BackToEditingClicked ->
+            -- 何も再読み込みしない — 開いていた編集へそのまま戻るだけ
+            ( { model | screen = Editing }, Effect.none )
 
         NewGameMsg nmsg ->
             let
@@ -4987,7 +5007,8 @@ view model =
                 ]
 
         Picker ->
-            viewPicker model.newGame model.picker
+            -- root が入っている = 編集の状態を保持したまま開いた(戻る道を出す)
+            viewPicker (model.root /= "") model.newGame model.picker
 
         Editing ->
             -- ミニプレイヤー(fixed)はアトリエタブの間だけ右下に居る
@@ -5028,9 +5049,22 @@ viewShell model content =
         [ div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
             [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
             , viewNavTabs model.tab
+            , viewProjectSwitch
             ]
         , content
         ]
+
+
+{-| 上のバーの右端 — プロジェクト選択画面へ戻る道(静かな一言)。
+これが無いと編集に入った後、別のゲームへ移る術が無い(行き止まり)。
+-}
+viewProjectSwitch : Html Msg
+viewProjectSwitch =
+    button
+        [ HA.class "project-switch ml-auto shrink-0 cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+        , HE.onClick ProjectPickerOpened
+        ]
+        [ text "プロジェクトを選ぶ" ]
 
 
 viewNavTabs : Tab -> Html Msg
@@ -5483,8 +5517,8 @@ isRunning runningCwds dir =
     target /= "" && List.any matches runningCwds
 
 
-viewPicker : NewGame.Model -> PickerState -> Html Msg
-viewPicker newGame picker =
+viewPicker : Bool -> NewGame.Model -> PickerState -> Html Msg
+viewPicker canReturn newGame picker =
     let
         busyLabel dir =
             if picker.busy == Just dir then
@@ -5522,7 +5556,19 @@ viewPicker newGame picker =
     in
     div [ HA.class "picker mx-auto mt-12 max-w-xl px-4" ]
         (List.concat
-            [ [ h1 [ HA.class "mb-3 text-sm font-semibold text-ink" ] [ text "プロジェクトを選ぶ" ]
+            [ [ div [ HA.class "mb-3 flex items-baseline gap-3" ]
+                    [ h1 [ HA.class "text-sm font-semibold text-ink" ] [ text "プロジェクトを選ぶ" ]
+                    , if canReturn then
+                        -- 編集中から開いた時だけ。押しても何も再読み込みしない
+                        button
+                            [ HA.class "back-to-editing cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                            , HE.onClick BackToEditingClicked
+                            ]
+                            [ text "← いまのゲームに戻る" ]
+
+                      else
+                        text ""
+                    ]
               , div [ HA.class "picker-open-row mb-5 flex gap-2" ]
                     [ input
                         [ HA.class "field flex-1"
@@ -5718,6 +5764,7 @@ viewTopbar model =
     div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
         , viewNavTabs model.tab
+        , viewProjectSwitch
         , case model.notice of
             Just message ->
                 -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔

@@ -760,6 +760,17 @@ suite =
                     |> ProgramTest.clickButton "ホーム"
                     |> ensureKinds [ "journeyState", "journeyChanges" ]
                     |> ProgramTest.expectViewHasNot [ class "mini-player" ]
+        , test "プロジェクトを選ぶ: 編集中から選択画面を開き、「← いまのゲームに戻る」で編集へ戻れる" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "プロジェクトを選ぶ"
+                    |> ensureKinds [ "projects", "runningGames" ]
+                    |> ProgramTest.ensureViewHas [ class "picker" ]
+                    |> ProgramTest.clickButton "← いまのゲームに戻る"
+                    -- 何も再読み込みしない(封筒ゼロ)。開いていた編集がそのまま生きている
+                    |> ensureKinds []
+                    |> ProgramTest.ensureViewHasNot [ class "picker" ]
+                    |> ProgramTest.expectViewHas [ class "edit-toolbar" ]
         , test "アトリエ: 入口の「ゲームを広げる」から部屋へ、「場面を足す」で下書きが届きコピーが見える" <|
             \() ->
                 landingWith resourcesBody
