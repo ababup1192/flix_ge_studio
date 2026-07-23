@@ -25,6 +25,8 @@ module Atelier exposing
     , chosenPath
     , copyFailed
     , copyRetry
+    , createAnchored
+    , createAnchoredTo
     , createOpen
     , createPaths
     , createSlotsDecoder
@@ -370,6 +372,10 @@ type alias Create =
     -- 「なにをつくる?」で選んだ道。Nothing = まだ選んでいない(選択リストを出す)。
     -- とじる→ひらくでも保持する(入力も同様に消えない)
     , path : Maybe CreatePath
+
+    -- スロット行の「✨ 候補を作る」から開いたか。True の間はパネルを
+    -- 選択中スロットの行の直下に描く(最上段の常設バーは畳んで見せない)
+    , anchored : Bool
     }
 
 
@@ -489,6 +495,7 @@ initCreate =
     , gamePrompt = PromptIdle
     , gameCopied = False
     , path = Nothing
+    , anchored = False
     }
 
 
@@ -764,11 +771,11 @@ update msg model =
             ( switchSection SectionPicks model, OutNone )
 
         CreateForSlotClicked slotFile ->
-            -- スロット行の「✨ 候補を作る」— 既存の候補づくりパネルを
-            -- そのスロット向け(AI・スロット選択済み)に開く。調整の境界の
-            -- 「まず候補を作ります」からも来るのでセクションも素材に合わせる
+            -- スロット行の「✨ 候補を作る」— 候補づくりパネルをそのスロット向け
+            -- (AI・スロット選択済み)にして、押した行の直下に開く(anchored)。
+            -- 調整の境界の「まず候補を作ります」からも来るのでセクションも素材に合わせる
             ( switchSection SectionPicks
-                (mapCreate (\c -> { c | open = Just True, path = Just PathAi, slot = Just slotFile }) model)
+                (mapCreate (\c -> { c | open = Just True, path = Just PathAi, slot = Just slotFile, anchored = True }) model)
             , OutNone
             )
 
@@ -901,7 +908,8 @@ update msg model =
                     ( model, OutNone )
 
         CreateToggled ->
-            ( mapCreate (\c -> { c | open = Just (not (createOpen model)) }) model
+            -- 開閉バーからの操作は常設パネルの流儀に戻す(行への繋留を解く)
+            ( mapCreate (\c -> { c | open = Just (not (createOpen model)), anchored = False }) model
             , OutNone
             )
 
@@ -1261,7 +1269,6 @@ rowTitle title file =
 type alias PickRow =
     { file : String
     , title : String
-    , entityId : Maybe String
     , slot : Maybe Slot
     }
 
@@ -1287,7 +1294,6 @@ pickRows model =
         fromDecl decl =
             { file = decl.file
             , title = rowTitle decl.title decl.file
-            , entityId = decl.entityId
             , slot = candidateSlots |> List.filter (\s -> s.slot == decl.file) |> List.head
             }
 
@@ -1298,7 +1304,6 @@ pickRows model =
                     (\s ->
                         { file = s.slot
                         , title = rowTitle "" s.slot
-                        , entityId = s.entityId
                         , slot = Just s
                         }
                     )
@@ -1823,6 +1828,18 @@ createOpen model =
     Maybe.withDefault False model.create.open
 
 
+{-| パネルをこのスロットの行の直下に描くか(行の「✨ 候補を作る」から開いた時)。 -}
+createAnchoredTo : Model -> String -> Bool
+createAnchoredTo model file =
+    createOpen model && model.create.anchored && model.create.slot == Just file
+
+
+{-| パネルがどこかの行に繋留されているか(その間、最上段の常設パネルは出さない)。 -}
+createAnchored : Model -> Bool
+createAnchored model =
+    createOpen model && model.create.anchored && model.create.slot /= Nothing
+
+
 {-| 画面に映っているプロンプト(テストの覗き窓)。 -}
 shownPrompt : Model -> Maybe String
 shownPrompt model =
@@ -2079,7 +2096,12 @@ view base model =
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
                 [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を切り替える" ] ]
-                , [ viewCreate model ]
+                , if createAnchored model then
+                    -- 行に繋留中は最上段には出さない(パネルの実体は行の直下に 1 つ)
+                    []
+
+                  else
+                    [ viewCreate model ]
                 , case model.data of
                     Ready candidates ->
                         viewBakePanel model candidates
@@ -2577,7 +2599,8 @@ anyPreviewMissing candidates =
 
 {-| 素材スロットの 1 行。見出し(宣言題 + path + いまの素材 vN)、候補のカード
 (無ければ「✨ 候補を作る」への誘い)、行の道具(候補づくり・調整への行き来・
-過去バージョン)。装着・アーカイブ送りの操作は従来のままカードの中。
+過去バージョン)。行から開いた候補づくりパネルはこの行の直下に展開する。
+装着・アーカイブ送りの操作は従来のままカードの中。
 -}
 viewPickRow : String -> Model -> PickRow -> Html Msg
 viewPickRow base model row =
@@ -2587,12 +2610,6 @@ viewPickRow base model row =
                     [ span [ HA.class "text-sm font-semibold text-ink" ] [ text row.title ]
                     , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
                         [ text row.file ]
-                    , case row.entityId of
-                        Just entity ->
-                            span [ HA.class "badge shrink-0" ] [ text entity ]
-
-                        Nothing ->
-                            text ""
                     , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
                         [ text ("いまの素材: v" ++ String.fromInt (slotVersion model row.file)) ]
                     ]
@@ -2633,6 +2650,12 @@ viewPickRow base model row =
                         [ text ("この" ++ row.title ++ "のまま値を変える →") ]
                     ]
               ]
+            , if createAnchoredTo model row.file then
+                -- 行の「✨ 候補を作る」で開いたパネル(実体は共有の 1 つ)
+                [ div [ HA.class "mt-3" ] [ viewCreate model ] ]
+
+              else
+                []
             , case slotPastVersions model row.file of
                 [] ->
                     []
@@ -3146,7 +3169,8 @@ viewLightbox base bust lightbox =
 {-| 「つくる」の畳めるセクション。畳んでいる時は 1 行の帯だけ
 (候補がある時の既定 — えらぶが主役のまま)。開くと「なにをつくる?」の
 選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
-調整でも Main がこれを最上段に描く(創作の入口はどちらのセクションにもある)。
+実体は 1 つで、普段は素材の最上段に、スロット行から開いた時(anchored)は
+その行の直下に描かれる。
 -}
 viewCreate : Model -> Html Msg
 viewCreate model =

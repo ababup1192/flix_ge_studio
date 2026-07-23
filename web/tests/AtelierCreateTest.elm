@@ -84,6 +84,27 @@ suite =
                         |> Tuple.first
                         |> Atelier.createOpen
                         |> Expect.equal True
+            , test "行の「✨ 候補を作る」で開くと押した行にだけ繋留され、最上段には出さない" <|
+                \_ ->
+                    let
+                        opened =
+                            begin withCandidates
+                                |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
+                                |> Tuple.first
+                    in
+                    ( Atelier.createAnchoredTo opened "assets/prologue.sprite.json"
+                    , Atelier.createAnchoredTo opened "assets/prologue.sfx.json"
+                    , Atelier.createAnchored opened
+                    )
+                        |> Expect.equal ( True, False, True )
+            , test "開閉バーの操作で繋留が解ける(閉じた後は常設パネルの流儀に戻る)" <|
+                \_ ->
+                    begin withCandidates
+                        |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
+                        |> step Atelier.CreateToggled
+                        |> Tuple.first
+                        |> (\m -> ( Atelier.createOpen m, Atelier.createAnchored m ))
+                        |> Expect.equal ( False, False )
             ]
         , describe "AIに作らせる(プロンプト)"
             [ test "「プロンプトを作る」で slot・案数・方向性が飛ぶ" <|
