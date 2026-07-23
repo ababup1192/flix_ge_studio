@@ -241,8 +241,8 @@ suite =
                         model =
                             withCandidates
                                 |> Atelier.gotSlots
-                                    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人\u{FF08}主役\u{FF09}", hint = "" }
-                                    , { file = "assets/theme.json", entityId = Nothing, kind = "theme", title = "色", hint = "" }
+                                    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人\u{FF08}主役\u{FF09}" }
+                                    , { file = "assets/theme.json", entityId = Nothing, kind = "theme", title = "色" }
                                     ]
                                 |> Atelier.gotArchive
                                     { history =

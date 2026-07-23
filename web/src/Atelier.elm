@@ -55,7 +55,6 @@ module Atelier exposing
     , promoteFailed
     , promoted
     , promptFailed
-    , selectedSlotHint
     , shownPrompt
     , showAllFiles
     , showArchiver
@@ -276,9 +275,6 @@ type alias CreateSlot =
     , entityId : Maybe String
     , kind : String
     , title : String
-
-    -- このスロットに何を書けばいいかの一言(サーバの案内。欠けは空)
-    , hint : String
     }
 
 
@@ -460,7 +456,6 @@ type Msg
     | LightboxSwapClicked
     | LightboxRollbackClicked
     | CreateToggled
-    | CreateSlotChosen String
     | CreateCountChosen Int
     | CreateDirectionEdited String
     | MakePromptClicked
@@ -725,11 +720,6 @@ update msg model =
         CreateToggled ->
             -- パネル上部の開閉バー(とじる)— 閉じて行への繋留も解く
             ( mapCreate (\c -> { c | open = Just (not (createOpen model)), anchored = False }) model
-            , OutNone
-            )
-
-        CreateSlotChosen slot ->
-            ( mapCreate (\c -> { c | slot = Just slot }) model
             , OutNone
             )
 
@@ -1250,8 +1240,8 @@ cleanReason message =
             message
 
 
-{-| GET /atelier/slots。選択中のスロットがまだ居るなら保ち、
-居なければ先頭を既定にする(ドロップダウンを空のまま迷わせない)。
+{-| GET /atelier/slots。対象スロットはカードを開いた時に決まる(ここでは
+選ばない)。繋留中のスロットが一覧から消えたら選択も畳む。
 -}
 gotSlots : List CreateSlot -> Model -> Model
 gotSlots slots model =
@@ -1259,13 +1249,7 @@ gotSlots slots model =
         (\c ->
             { c
                 | slots = slots
-                , slot =
-                    case Maybe.andThen (\s -> ifTrue (List.any (\x -> x.file == s) slots) s) c.slot of
-                        Just kept ->
-                            Just kept
-
-                        Nothing ->
-                            List.head slots |> Maybe.map .file
+                , slot = Maybe.andThen (\s -> ifTrue (List.any (\x -> x.file == s) slots) s) c.slot
             }
         )
         model
@@ -1470,21 +1454,6 @@ shownPrompt model =
             Nothing
 
 
-{-| いま選んでいるスロット(一覧から引く)。 -}
-selectedCreateSlot : Create -> Maybe CreateSlot
-selectedCreateSlot create =
-    create.slot
-        |> Maybe.andThen (\file -> List.head (List.filter (\s -> s.file == file) create.slots))
-
-
-{-| 選択中スロットの案内(サーバの hint)。空なら出さない(Nothing)。 -}
-selectedSlotHint : Model -> Maybe String
-selectedSlotHint model =
-    selectedCreateSlot model.create
-        |> Maybe.map .hint
-        |> Maybe.andThen (\h -> ifTrue (h /= "") h)
-
-
 {-| プレビュー拡大が開いているか。Main が Esc の購読を生かす条件。 -}
 lightboxOpen : Model -> Bool
 lightboxOpen model =
@@ -1599,12 +1568,11 @@ createSlotsDecoder =
 
 createSlotDecoder : D.Decoder CreateSlot
 createSlotDecoder =
-    D.map5 CreateSlot
+    D.map4 CreateSlot
         (D.field "file" D.string)
         (D.oneOf [ D.field "entityId" (D.map Just D.string), D.succeed Nothing ])
         (D.oneOf [ D.field "kind" D.string, D.succeed "" ])
         (D.oneOf [ D.field "title" D.string, D.succeed "" ])
-        (D.oneOf [ D.field "hint" D.string, D.succeed "" ])
 
 
 {-| GET /game/status → running。壊れた応答は「走っていない」に倒す
@@ -2834,10 +2802,9 @@ viewCreate model =
             ]
             :: (if createOpen model then
                     -- 中身は画面の半分までで内側スクロール — プロンプト箱が育っても
-                    -- 下の編集領域を潰さず、開閉バーは常に見え、常に押せる。
-                    -- フォームは AI 候補づくりに直行(道えらびは挟まない)
+                    -- 下の編集領域を潰さず、開閉バーは常に見え、常に押せる
                     [ div [ HA.class "atelier-create-body max-h-[50vh] overflow-y-auto" ]
-                        [ div [ HA.class "px-4 pb-4" ] [ viewAiCard model.create ] ]
+                        [ div [ HA.class "px-4 pb-4" ] (viewCreateForm model.create) ]
                     ]
 
                 else
@@ -2846,71 +2813,44 @@ viewCreate model =
         )
 
 
-{-| 「AIに作らせる」— プロンプトを組んでコピーする道。作るのは AI(外)で、
-候補が atelier/ に置かれた瞬間からこの画面が拾う(watchFile と同じ約束)。
+{-| 候補づくりフォーム。対象はカードを開いた時点で確定している(ヘッダが
+語っている)ので、中で選び直させない — 方向性・案の数・「プロンプトを作る」
+だけの平らな形。作るのは AI(外)で、候補が atelier/ に置かれた瞬間から
+この画面が拾う(watchFile と同じ約束)。
 -}
-viewAiCard : Create -> Html Msg
-viewAiCard create =
-    div [ HA.class "atelier-create-ai min-w-[280px] flex-1 rounded-lg border border-edge bg-black/20 p-4" ]
-        (div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "🤖 AIに作らせる" ]
-            :: (if List.isEmpty create.slots then
-                    [ div [ HA.class "text-[11px] text-ink-faint" ]
-                        [ text "素材スロット一覧を取得できませんでした(サーバが古い可能性があります)" ]
+viewCreateForm : Create -> List (Html Msg)
+viewCreateForm create =
+    List.concat
+        [ [ Html.textarea
+                [ HA.class "field h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                , HA.rows 3
+                , HA.placeholder "方向性: この素材で何を、どんな雰囲気にしたいかを書きます"
+                , HA.value create.direction
+                , HE.onInput CreateDirectionEdited
+                ]
+                []
+          , div [ HA.class "mt-2 flex items-center gap-2" ]
+                (span [ HA.class "text-[11px] text-ink-soft" ] [ text "案をいくつ作るか" ]
+                    :: List.map (viewCountButton create.count) [ 1, 2, 3, 4, 5 ]
+                )
+          , div [ HA.class "mt-3" ]
+                [ button
+                    [ HA.class "btn btn-primary"
+                    , HA.disabled (create.prompt == PromptLoading)
+                    , HE.onClick MakePromptClicked
                     ]
+                    [ text
+                        (if create.prompt == PromptLoading then
+                            "作っています…"
 
-                else
-                    List.concat
-                        [ [ viewSlotSelect create
-                          , viewSlotHint create
-                          , div [ HA.class "mt-2 flex items-center gap-2" ]
-                                (span [ HA.class "text-[11px] text-ink-soft" ] [ text "案をいくつ作るか" ]
-                                    :: List.map (viewCountButton create.count) [ 1, 2, 3, 4, 5 ]
-                                )
-                          , Html.textarea
-                                [ HA.class "field mt-2 h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
-                                , HA.rows 3
-                                , HA.placeholder "方向性: この素材スロットで何を、どんな雰囲気にしたいかを書きます"
-                                , HA.value create.direction
-                                , HE.onInput CreateDirectionEdited
-                                ]
-                                []
-                          , div [ HA.class "mt-3" ]
-                                [ button
-                                    [ HA.class "btn btn-primary"
-                                    , HA.disabled (create.prompt == PromptLoading)
-                                    , HE.onClick MakePromptClicked
-                                    ]
-                                    [ text
-                                        (if create.prompt == PromptLoading then
-                                            "作っています…"
-
-                                         else
-                                            "プロンプトを作る"
-                                        )
-                                    ]
-                                ]
-                          ]
-                        , viewPromptBox create
-                        ]
-               )
-        )
-
-
-{-| 選択中スロットの案内(hint)。何を書けばいいかをドロップダウンの直下で
-そっと教える。空なら何も出さない(古いサーバでも欠けない)。
--}
-viewSlotHint : Create -> Html Msg
-viewSlotHint create =
-    case selectedCreateSlot create |> Maybe.map .hint of
-        Just hint ->
-            if hint == "" then
-                text ""
-
-            else
-                div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-faint" ] [ text hint ]
-
-        Nothing ->
-            text ""
+                         else
+                            "プロンプトを作る"
+                        )
+                    ]
+                ]
+          ]
+        , viewPromptBox create
+        ]
 
 
 viewCountButton : Int -> Int -> Html Msg
@@ -2923,33 +2863,6 @@ viewCountButton current n =
         , HE.onClick (CreateCountChosen n)
         ]
         [ text (String.fromInt n) ]
-
-
-viewSlotSelect : Create -> Html Msg
-viewSlotSelect create =
-    Html.select
-        [ HA.class "field w-full text-xs"
-        , HE.onInput CreateSlotChosen
-        ]
-        (List.map
-            (\slot ->
-                Html.option
-                    [ HA.value slot.file
-                    , HA.selected (create.slot == Just slot.file)
-                    ]
-                    [ text (slotLabel slot) ]
-            )
-            create.slots
-        )
-
-
-slotLabel : CreateSlot -> String
-slotLabel slot =
-    if slot.title == "" then
-        slot.file
-
-    else
-        slot.title ++ "(" ++ baseName slot.file ++ ")"
 
 
 viewPromptBox : Create -> List (Html Msg)

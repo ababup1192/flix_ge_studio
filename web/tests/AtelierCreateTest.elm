@@ -19,8 +19,8 @@ import Test.Html.Selector as Selector
 
 slots : List Atelier.CreateSlot
 slots =
-    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人の見た目", hint = "村人の歩き・持ち物の見た目" }
-    , { file = "assets/prologue.sfx.json", entityId = Nothing, kind = "sound", title = "効果音", hint = "" }
+    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人の見た目" }
+    , { file = "assets/prologue.sfx.json", entityId = Nothing, kind = "sound", title = "効果音" }
     ]
 
 
@@ -124,11 +124,23 @@ suite =
                             , Query.has [ Selector.text "プロンプトを作る" ]
                             , Query.hasNot [ Selector.text "なにをつくる?" ]
                             ]
+            , test "カードから開いたフォームに対象セレクタは無い(対象はカードで確定 — 選び直させない)" <|
+                \_ ->
+                    let
+                        opened =
+                            begin withCandidates
+                                |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
+                                |> Tuple.first
+                    in
+                    Atelier.viewCreate opened
+                        |> Query.fromHtml
+                        |> Query.hasNot [ Selector.tag "select" ]
             ]
-        , describe "AIに作らせる(プロンプト)"
-            [ test "「プロンプトを作る」で slot・案数・方向性が飛ぶ" <|
+        , describe "プロンプトを作る(対象はカードで確定)"
+            [ test "「プロンプトを作る」でカードのスロット・案数・方向性が飛ぶ" <|
                 \_ ->
                     begin fresh
+                        |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
                         |> step (Atelier.CreateCountChosen 5)
                         |> step (Atelier.CreateDirectionEdited " 冬らしく ")
                         |> step Atelier.MakePromptClicked
@@ -145,6 +157,7 @@ suite =
                     let
                         model =
                             begin fresh
+                                |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
                                 |> step Atelier.MakePromptClicked
                                 |> Tuple.first
                                 |> Atelier.gotPrompt "描いてください"
@@ -156,6 +169,7 @@ suite =
             , test "取り寄せ中の二度押しは送らない" <|
                 \_ ->
                     begin fresh
+                        |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
                         |> step Atelier.MakePromptClicked
                         |> step Atelier.MakePromptClicked
                         |> Tuple.second
@@ -216,17 +230,6 @@ suite =
                             , False
                             )
             ]
-        , describe "スロットの案内(hint)"
-            [ test "hint はスロットに追随し、空なら出さない(fail-open)" <|
-                \_ ->
-                    ( Atelier.selectedSlotHint fresh
-                    , begin fresh
-                        |> step (Atelier.CreateSlotChosen "assets/prologue.sfx.json")
-                        |> Tuple.first
-                        |> Atelier.selectedSlotHint
-                    )
-                        |> Expect.equal ( Just "村人の歩き・持ち物の見た目", Nothing )
-            ]
         , describe "/atelier/slots の橋渡し"
             [ test "壊れた JSON は空(fail-open — カードが準備中になるだけ)" <|
                 \_ ->
@@ -239,8 +242,8 @@ suite =
                         "{\"slots\":[{\"file\":\"a.json\"},{\"file\":\"b.json\",\"title\":\"音\",\"kind\":\"sfx\",\"entityId\":\"e\"}]}"
                         |> Expect.equal
                             (Ok
-                                [ { file = "a.json", entityId = Nothing, kind = "", title = "", hint = "" }
-                                , { file = "b.json", entityId = Just "e", kind = "sfx", title = "音", hint = "" }
+                                [ { file = "a.json", entityId = Nothing, kind = "", title = "" }
+                                , { file = "b.json", entityId = Just "e", kind = "sfx", title = "音" }
                                 ]
                             )
             ]
