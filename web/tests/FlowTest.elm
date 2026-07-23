@@ -291,8 +291,9 @@ runningGamesBody cwds =
         ]
 
 
-{-| GET /atelier/slots の応答(素材スロット 1 件)。行の「✨ 候補を作る」は
-スロット行にしか無いので、素材セクションの検査はこれを流してから行う。
+{-| GET /atelier/slots の応答(素材スロット 1 件)。スロットのカード
+(atelier-slot)はこの宣言から生えるので、素材セクションの検査はこれを
+流してから行う。
 -}
 atelierSlotsBody : E.Value
 atelierSlotsBody =
@@ -749,7 +750,7 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "パラメータを変える" ]
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
                     |> ProgramTest.clickButton "素材を切り替える"
-                    |> ProgramTest.ensureViewHas [ text "✨ 候補を作る" ]
+                    |> ProgramTest.ensureViewHas [ class "atelier-slot" ]
                     |> ProgramTest.clickButton "← アトリエ"
                     |> ProgramTest.expectViewHas [ class "atelier-landing" ]
         , test "アトリエ: 入口の「ゲームを広げる」から部屋へ、「場面を足す」で下書きが届きコピーが見える" <|
@@ -780,7 +781,7 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
                     |> ProgramTest.ensureViewHasNot [ text "別のレベルに切り替える(まず候補を作ります)→" ]
                     -- 素材スロットの宣言が届いたら、同じファイルは行き来リンクに変わる
-                    -- (題は宣言題の括弧前だけを織り込む)
+                    -- (題は宣言題の括弧前だけを織り込む — 実際の宣言題は全角括弧)
                     |> respondOk 0
                         "atelierSlots"
                         (E.object
@@ -788,7 +789,7 @@ suite =
                               , E.list identity
                                     [ E.object
                                         [ ( "file", E.string "assets/level.json" )
-                                        , ( "title", E.string "レベル(調整卓)" )
+                                        , ( "title", E.string "レベル\u{FF08}調整卓\u{FF09}" )
                                         ]
                                     ]
                               )
@@ -796,6 +797,29 @@ suite =
                         )
                     |> ProgramTest.ensureViewHasNot [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
                     |> ProgramTest.expectViewHas [ text "別のレベルに切り替える(まず候補を作ります)→" ]
+        , test "素材のカード: 押すと開いて候補づくりが見え、ヘッダの再クリックで閉じる" <|
+            \() ->
+                landingWith resourcesBody
+                    |> respondOk 0 "atelierSlots" atelierSlotsBody
+                    |> ProgramTest.clickButton "素材を切り替える"
+                    |> ProgramTest.ensureViewHasNot [ class "atelier-create" ]
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "atelier-slot" ])
+                        ( "click", E.object [] )
+                    |> ProgramTest.ensureViewHas [ class "atelier-create" ]
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "atelier-slot-head" ])
+                        ( "click", E.object [] )
+                    |> ProgramTest.expectViewHasNot [ class "atelier-create" ]
+        , test "🗂 すべてのファイル: 着地の見出しも「🗂 すべてのファイル」になり、戻すと ⚙️ に戻る" <|
+            \() ->
+                booted
+                    |> ProgramTest.ensureViewHas [ text "⚙️ パラメータを変える" ]
+                    |> ProgramTest.clickButton "🗂 すべてのファイル"
+                    |> ProgramTest.ensureViewHasNot [ text "⚙️ パラメータを変える" ]
+                    |> ProgramTest.ensureViewHas [ text "🗂 すべてのファイル" ]
+                    |> ProgramTest.clickButton "宣言された素材だけに戻す"
+                    |> ProgramTest.expectViewHas [ text "⚙️ パラメータを変える" ]
         , test "ホーム: pick(候補を比べて選ぼう)は入口を挟まず素材セクションへ直行する" <|
             \() ->
                 bootedWith resourcesBody
@@ -806,7 +830,7 @@ suite =
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
                     |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
-                    |> ProgramTest.expectViewHas [ text "✨ 候補を作る" ]
+                    |> ProgramTest.expectViewHas [ class "atelier-slot" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted
@@ -987,7 +1011,7 @@ suite =
                     |> respondOk 7 "getFile" (fileBody "hitbox.json" "{ \"b\": 2 }")
                     |> ProgramTest.ensureViewHasNot [ text "未保存" ]
                     |> expectKinds []
-        , test "保存成功: 宣言リソースのファイルは watchFile 即反映の文言が出る" <|
+        , test "保存成功: 宣言リソースのファイルは即反映の文言が出る" <|
             \() ->
                 openedLevel
                     |> typeNumberBox "72"
@@ -998,7 +1022,7 @@ suite =
                     |> ProgramTest.clickButton "保存"
                     |> ensureKinds [ "putFile" ]
                     |> respondOk 10 "putFile" putOkBody
-                    |> ProgramTest.expectViewHas [ text "保存しました — 走るゲームに watchFile で即反映されます" ]
+                    |> ProgramTest.expectViewHas [ text "保存しました — 走るゲームに即反映されます" ]
         , test "保存成功: 宣言に無いファイルは素の「保存しました」(即反映は謳わない)" <|
             \() ->
                 dirtyHitbox
@@ -1027,7 +1051,7 @@ suite =
         , test "dirty のままウィザードへ: 破棄を選ぶとウィザードが開く" <|
             \() ->
                 dirtyHitbox
-                    |> ProgramTest.clickButton "+ 新規リソース"
+                    |> ProgramTest.clickButton "+ 新しいファイル"
                     |> ProgramTest.ensureViewHas [ text discardDialogText ]
                     |> ProgramTest.clickButton "破棄して開く"
                     |> ProgramTest.expectViewHas [ text "確認と生成" ]

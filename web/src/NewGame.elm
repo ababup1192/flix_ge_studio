@@ -287,7 +287,7 @@ submit model =
                     )
     in
     if name == "" then
-        ( { model | error = Just "なまえを入れてください(半角の小文字。例: block_breaker2)" }, OutNone )
+        ( { model | error = Just "なまえを入れてください(半角の小文字)" }, OutNone )
 
     else
         case nameError name of
@@ -335,7 +335,7 @@ nameError name =
         Nothing
 
     else
-        Just "半角の小文字で始め、a-z 0-9 _ だけが使えます(例: block_breaker2)"
+        Just "半角の小文字で始め、a-z 0-9 _ だけが使えます"
 
 
 isValidName : String -> Bool
@@ -676,7 +676,7 @@ viewStarterForm model =
     [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
     , input
         [ HA.class "field mt-1 w-full font-mono text-xs"
-        , HA.placeholder "block_breaker2"
+        , HA.placeholder "半角の小文字の名前"
         , HA.value model.name
         , HE.onInput NameEdited
         ]
@@ -690,7 +690,7 @@ viewStarterForm model =
     , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "題名" ]
     , input
         [ HA.class "field mt-1 w-full text-xs"
-        , HA.placeholder "くずしブロック2"
+        , HA.placeholder "日本語でかまいません"
         , HA.value model.title
         , HE.onInput TitleEdited
         ]
@@ -720,7 +720,7 @@ viewPromptConfirm : Family -> Model -> List (Html Msg)
 viewPromptConfirm family model =
     div [ HA.class "text-[11px] leading-relaxed text-ink-soft" ]
         [ span [ HA.class "font-semibold text-ink" ] [ text family.name ]
-        , text " — このジャンルのテンプレートは公式プロンプトから生まれます。骨格と合格条件は焼き込み済み — 下の「あなたの言葉」を書き換えて、詳細を詰めてから渡して構いません。"
+        , text " — このジャンルのテンプレートは公式プロンプトから生まれます。骨格と合格条件は組み込み済み — 下の「あなたの言葉」を書き換えて、詳細を詰めてから渡して構いません。"
         ]
         :: viewGenesisPrompt model
         ++ [ div [ HA.class "mt-2 text-[10px] leading-relaxed text-ink-faint" ]
@@ -739,7 +739,7 @@ viewFreeConfirm family model =
     , Html.textarea
         [ HA.class "field mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
         , HA.rows 2
-        , HA.placeholder "例: 猫が屋根を跳びわたって、街で魚を集めるゲーム"
+        , HA.placeholder "どんな世界で、何をして遊ぶゲームかを言葉で書きます"
         , HA.value model.freeDirection
         , HE.onInput FreeDirectionEdited
         ]
@@ -828,7 +828,7 @@ viewForm model =
     [ div [ HA.class "mt-1 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
     , input
         [ HA.class "field mt-1 w-full font-mono text-xs"
-        , HA.placeholder "block_breaker2"
+        , HA.placeholder "半角の小文字の名前"
         , HA.value model.name
         , HE.onInput NameEdited
         ]
@@ -842,7 +842,7 @@ viewForm model =
     , div [ HA.class "mt-3 text-[11px] text-ink-soft" ] [ text "題名" ]
     , input
         [ HA.class "field mt-1 w-full text-xs"
-        , HA.placeholder "くずしブロック2"
+        , HA.placeholder "日本語でかまいません"
         , HA.value model.title
         , HE.onInput TitleEdited
         ]

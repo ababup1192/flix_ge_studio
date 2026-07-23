@@ -239,10 +239,10 @@ validate existingPaths draft =
 idErrors : String -> List String
 idErrors id =
     if id == "" then
-        [ "リソース名(id)を入力してください" ]
+        [ "名前(id)を入力してください" ]
 
     else if not (isAsciiName id) then
-        [ "リソース名(id)は半角英数で入力してください(先頭は英字): " ++ id ]
+        [ "名前(id)は半角英数で入力してください(先頭は英字): " ++ id ]
 
     else
         []

@@ -399,7 +399,7 @@ type PreviewState
     | PreviewFailed String
 
 
--- 新規リソースウィザード
+-- 「+ 新しいファイル」ウィザード
 
 
 type WizardStep
@@ -550,7 +550,7 @@ type alias Model =
     -- docEdit を出さない — 焼き直しは mouseup 後の反映 1 回に任せる
     , drag : Maybe DragState
 
-    -- 「+ 新規リソース」ウィザード(Just = 3 ペインの代わりに表示中)
+    -- 「+ 新しいファイル」ウィザード(Just = 3 ペインの代わりに表示中)
     , wizard : Maybe WizardState
 
     -- 使用箇所一覧を開いている id("セクション/id"。Nothing = 閉じている)
@@ -978,16 +978,6 @@ update msg model =
                     request "promptExtend"
                         (E.object [ ( "kind", E.string kind ) ])
                         m1
-
-                Atelier.OutOpenWizard ->
-                    -- 広げるの部屋の「+ 新規リソース」。ウィザードは編集画面の上に
-                    -- 出る(Atelier 側が調整セクションへ切り替え済み)。dirty の
-                    -- 関所は WizardOpened と同じ
-                    if m1.dirty then
-                        ( { m1 | pendingNav = Just NavWizard }, Effect.none )
-
-                    else
-                        ( { m1 | wizard = Just emptyWizard }, Effect.none )
 
                 Atelier.OutCopyPrompt prompt ->
                     -- クリップボードへ(JS 側で解決するローカルな封筒)
@@ -2787,7 +2777,7 @@ savedNotice : Model -> String
 savedNotice model =
     case currentGroup model of
         Just _ ->
-            "保存しました — 走るゲームに watchFile で即反映されます"
+            "保存しました — 走るゲームに即反映されます"
 
         Nothing ->
             "保存しました"
@@ -5412,9 +5402,20 @@ viewEditing model =
             div [ HA.class "app flex h-screen flex-col" ]
                 [ viewTopbar model
 
-                -- 調整セクションの最上段 — 「← アトリエ」で入口へ戻れる
+                -- 調整セクションの最上段 — 「← アトリエ」で入口へ戻れる。
+                -- 全ファイル表示の間は見出しも「🗂 すべてのファイル」— 押した
+                -- リンクの言葉と着地の見出しを一致させる
                 , div [ HA.class "flex h-8 shrink-0 items-center border-b border-edge bg-panel px-3" ]
-                    [ Html.map AtelierMsg (Atelier.viewSectionTop "⚙️ パラメータを変える") ]
+                    [ Html.map AtelierMsg
+                        (Atelier.viewSectionTop
+                            (if Atelier.showAllFiles model.atelier then
+                                "🗂 すべてのファイル"
+
+                             else
+                                "⚙️ パラメータを変える"
+                            )
+                        )
+                    ]
 
                 -- 開いたファイルの道具は編集枠の直上に(対象のそばに道具を置く)
                 , viewEditToolbar model
@@ -5841,7 +5842,14 @@ viewFilePane model =
                     rows
                )
             ++ filesToggle
-            ++ [ button [ HA.class "new-resource btn mx-3 mt-3", HE.onClick WizardOpened ] [ text "+ 新規リソース" ] ]
+            ++ -- 手でファイルを作る道。すべてのファイル表示の中だけに置く
+               -- (宣言がまだ無いプロジェクトでは素の一覧に出す — 最初の 1 個への道を塞がない)
+               (if showAll || List.isEmpty model.groups then
+                    [ button [ HA.class "new-resource btn mx-3 mt-3", HE.onClick WizardOpened ] [ text "+ 新しいファイル" ] ]
+
+                else
+                    []
+               )
         )
 
 
@@ -6573,7 +6581,7 @@ viewKindGuide model =
 
             else if enginePreviewKind model == Nothing then
                 [ div [ HA.class "kind-guide live-game mt-2.5 rounded border border-edge bg-well/40 px-3 py-2 text-[11px] leading-relaxed text-ink-faint" ]
-                    [ text "🎮 走るゲームが本番プレビュー。このファイルは走るゲームが watchFile で見ているので、保存すると即反映されます。" ]
+                    [ text "🎮 走るゲームが本番プレビュー。このファイルは走るゲームが見ているので、保存すると即反映されます。" ]
                 ]
 
             else
@@ -7623,7 +7631,7 @@ viewControl model path control =
                     , input
                         [ HA.class "field min-w-0 flex-1"
                         , HA.type_ "text"
-                        , HA.placeholder "assets/…ui.json"
+                        , HA.placeholder "ui.json のパス"
                         , HA.value (draftTextFor model.activeDraft path docValue)
                         , HE.onFocus (DraftStarted seed)
                         , HE.onInput (DraftTyped seed)
@@ -8175,7 +8183,7 @@ viewSelect path choices selected =
         )
 
 
--- 新規リソースウィザード(3 ペインの代わりに出す切替画面)
+-- 「+ 新しいファイル」ウィザード(3 ペインの代わりに出す切替画面)
 
 
 viewWizard : Model -> WizardState -> Html Msg
@@ -8183,7 +8191,7 @@ viewWizard model w =
     div [ HA.class "wizard flex-1 overflow-y-auto px-6 py-4" ]
         (List.concat
             [ [ div [ HA.class "wizard-head mb-4 flex items-center gap-3" ]
-                    [ h2 [ HA.class "m-0 text-[13px] font-semibold" ] [ text "+ 新規リソース" ]
+                    [ h2 [ HA.class "m-0 text-[13px] font-semibold" ] [ text "+ 新しいファイル" ]
                     , viewWizardSteps w.step
                     , span [ HA.class "spacer flex-1" ] []
                     , button
@@ -8246,13 +8254,13 @@ viewWizardSteps current =
 
 viewWizardBasics : Wizard.Draft -> List (Html Msg)
 viewWizardBasics draft =
-    [ viewWizardRow "リソース名 (id・半角英数)" <|
+    [ viewWizardRow "名前 (id・半角英数)" <|
         input
-            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "enemies", HA.value draft.id, HE.onInput WizardIdChanged ]
+            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "半角英数の名前", HA.value draft.id, HE.onInput WizardIdChanged ]
             []
     , viewWizardRow "タイトル (日本語可・任意)" <|
         input
-            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "敵図鑑", HA.value draft.title, HE.onInput WizardTitleChanged ]
+            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "画面に出る名前", HA.value draft.title, HE.onInput WizardTitleChanged ]
             []
     , viewWizardRow "置き場所" <|
         input
@@ -8260,9 +8268,9 @@ viewWizardBasics draft =
             []
     , viewWizardRow "形" <|
         div [ HA.class "shape-cards flex gap-2" ]
-            [ viewShapeCard draft.shape Wizard.ShapeCatalog "catalog" "名前で引く一覧。例: 敵図鑑・アイテム表(エントリ名がキー)"
-            , viewShapeCard draft.shape Wizard.ShapeList "list" "並び順に意味がある列。例: 出現テーブル・ウェーブ構成"
-            , viewShapeCard draft.shape Wizard.ShapeRecord "record" "1 個だけの設定まとまり。例: メタ設定・全体パラメータ"
+            [ viewShapeCard draft.shape Wizard.ShapeCatalog "catalog" "名前で引く一覧(エントリ名がキー)"
+            , viewShapeCard draft.shape Wizard.ShapeList "list" "並び順に意味がある列"
+            , viewShapeCard draft.shape Wizard.ShapeRecord "record" "1 個だけの設定まとまり"
             ]
     ]
 
@@ -8332,7 +8340,7 @@ viewWizardFieldRow total i f =
         , input
             [ HA.class "f-label field w-[150px] shrink-0"
             , HA.type_ "text"
-            , HA.placeholder "label (日本語)"
+            , HA.placeholder "表示名(日本語)"
             , HA.value f.label
             , HE.onInput (\s -> WizardFieldChanged i { f | label = s })
             ]
@@ -8388,7 +8396,7 @@ viewFieldExtra i f =
                 [ input
                     [ HA.class "field min-w-0 flex-1"
                     , HA.type_ "text"
-                    , HA.placeholder "値をカンマ区切り(例: small,big)"
+                    , HA.placeholder "値をカンマ区切りで並べます"
                     , HA.value f.enumValues
                     , HE.onInput (\s -> WizardFieldChanged i { f | enumValues = s })
                     ]
@@ -8399,7 +8407,7 @@ viewFieldExtra i f =
                 [ input
                     [ HA.class "field min-w-0 flex-1"
                     , HA.type_ "text"
-                    , HA.placeholder "参照先セクション名(例: routes)"
+                    , HA.placeholder "参照先のセクション名"
                     , HA.value f.refTarget
                     , HE.onInput (\s -> WizardFieldChanged i { f | refTarget = s })
                     ]
@@ -8662,7 +8670,7 @@ viewAddDialog dialog =
                 , ( "invalid border-danger", dialog.error /= Nothing )
                 ]
             , HA.type_ "text"
-            , HA.placeholder "new_id"
+            , HA.placeholder "新しい id"
             , HA.value dialog.text
             , HE.onInput AddIdTyped
             , commitCancelKeys AddConfirmed AddCancelled

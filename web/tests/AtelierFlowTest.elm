@@ -241,7 +241,7 @@ suite =
                         model =
                             withCandidates
                                 |> Atelier.gotSlots
-                                    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人(主役)", hint = "" }
+                                    [ { file = "assets/prologue.sprite.json", entityId = Just "villager", kind = "sprite", title = "村人\u{FF08}主役\u{FF09}", hint = "" }
                                     , { file = "assets/theme.json", entityId = Nothing, kind = "theme", title = "色", hint = "" }
                                     ]
                                 |> Atelier.gotArchive
@@ -260,8 +260,14 @@ suite =
                                 , Atelier.slotVersion model row.file
                                 )
                             )
-                        -- 題は宣言題の括弧前。候補ゼロのスロットも行として残り、履歴なしは v1
-                        |> Expect.equal [ ( "村人", 2, 3 ), ( "色", 0, 1 ) ]
+                        -- ヘッダの題は宣言題そのまま(全角括弧も切らない)。
+                        -- 候補ゼロのスロットも行として残り、履歴なしは v1
+                        |> Expect.equal [ ( "村人\u{FF08}主役\u{FF09}", 2, 3 ), ( "色", 0, 1 ) ]
+            , test "文章に織り込む題(titleBeforeParen)は全角・半角どちらの括弧でも前だけ残す" <|
+                \_ ->
+                    [ "ドット絵\u{FF08}額縁\u{FF09}", "レベル(調整卓)", "色" ]
+                        |> List.map Atelier.titleBeforeParen
+                        |> Expect.equal [ "ドット絵", "レベル", "色" ]
             ]
         , describe "アーカイバ(何も捨てない置き場)"
             [ test "🗃 でアーカイブ送りの便りが飛び、飛行中の二度押しは送らない" <|

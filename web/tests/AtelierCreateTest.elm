@@ -77,7 +77,7 @@ suite =
                 \_ ->
                     Atelier.createOpen withCandidates
                         |> Expect.equal False
-            , test "行の「✨ 候補を作る」で開くと押した行にだけ繋留される(候補があっても開いたまま)" <|
+            , test "境界リンク(CreateForSlotClicked)で開くと押したカードにだけ繋留される(候補があっても開いたまま)" <|
                 \_ ->
                     let
                         opened =
@@ -90,7 +90,24 @@ suite =
                     , Atelier.createAnchored opened
                     )
                         |> Expect.equal ( True, False, True )
-            , test "パネルの開閉バー(とじる)で閉じ、行への繋留も解ける" <|
+            , test "スロットカード: ヘッダで開くと候補づくりがそのカードに繋留され、再クリックで閉じる" <|
+                \_ ->
+                    let
+                        opened =
+                            begin withCandidates
+                                |> step (Atelier.SlotRowToggled "assets/prologue.sprite.json")
+                                |> Tuple.first
+
+                        closed =
+                            begin opened
+                                |> step (Atelier.SlotRowToggled "assets/prologue.sprite.json")
+                                |> Tuple.first
+                    in
+                    ( Atelier.createAnchoredTo opened "assets/prologue.sprite.json"
+                    , ( Atelier.createOpen closed, Atelier.createAnchored closed )
+                    )
+                        |> Expect.equal ( True, ( False, False ) )
+            , test "パネルの開閉バー(とじる)で閉じ、カードへの繋留も解ける" <|
                 \_ ->
                     begin withCandidates
                         |> step (Atelier.CreateForSlotClicked "assets/prologue.sprite.json")
@@ -274,7 +291,7 @@ suite =
                             , False
                             )
             ]
-        , describe "スロットの案内(hint)と方向性の例"
+        , describe "スロットの案内(hint)"
             [ test "hint はスロットに追随し、空なら出さない(fail-open)" <|
                 \_ ->
                     ( Atelier.selectedSlotHint fresh
@@ -284,14 +301,6 @@ suite =
                         |> Atelier.selectedSlotHint
                     )
                         |> Expect.equal ( Just "村人の歩き・持ち物の見た目", Nothing )
-            , test "方向性の例はスロットの kind で切り替わり、不明は汎用に倒れる" <|
-                \_ ->
-                    List.map Atelier.directionPlaceholder [ "sprite", "sound", "nazo" ]
-                        |> Expect.equal
-                            [ "例: 冬支度の村人。網で虫を追いかける子供"
-                            , "例: 短く鋭い斧の音。夕暮れのひぐらし"
-                            , "例: イナゴやトンボが飛び、網で虫を追いかける子供がいる晩夏の情景"
-                            ]
             ]
         , describe "新しい種類の素材/設定を足す(scaffold)"
             [ test "名前が規則(^[a-z][a-z0-9_]*$)に合わないと送らず、理由がその場に出る" <|

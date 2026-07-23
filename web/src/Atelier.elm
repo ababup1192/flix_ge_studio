@@ -30,7 +30,6 @@ module Atelier exposing
     , createOpen
     , createPaths
     , createSlotsDecoder
-    , directionPlaceholder
     , extendPromptFailed
     , gameLogDecoder
     , gameStartFailed
@@ -373,8 +372,8 @@ type alias Create =
     -- とじる→ひらくでも保持する(入力も同様に消えない)
     , path : Maybe CreatePath
 
-    -- スロット行の「✨ 候補を作る」から開いたか。True の間はパネルを
-    -- 選択中スロットの行の直下に描く(パネルが画面に出るのはこの時だけ)
+    -- スロットカードを開いて(または境界リンクから)繋留されたか。True の間は
+    -- パネルを選択中スロットのカードの中に描く(パネルが画面に出るのはこの時だけ)
     , anchored : Bool
     }
 
@@ -616,10 +615,10 @@ type Msg
     | OpenExtend
     | OpenArchiver
     | CreateForSlotClicked String
+    | SlotRowToggled String
     | ExtendKindClicked String
     | ExtendWordsEdited String
     | CopyExtendPromptClicked
-    | NewResourceClicked
     | ComboTrialClicked
     | AuditionClicked
     | ArchiveClicked String
@@ -672,7 +671,6 @@ type Out
     | OutFetchPrompt { slot : String, count : Int, direction : String }
     | OutFetchGamePrompt String
     | OutFetchExtendPrompt String
-    | OutOpenWizard
     | OutCopyPrompt String
     | OutCopyFile { slot : String, name : String }
     | OutEditFile String
@@ -771,13 +769,24 @@ update msg model =
             ( switchSection SectionPicks model, OutNone )
 
         CreateForSlotClicked slotFile ->
-            -- スロット行の「✨ 候補を作る」— 候補づくりパネルをそのスロット向け
-            -- (AI・スロット選択済み)にして、押した行の直下に開く(anchored)。
-            -- 調整の境界の「まず候補を作ります」からも来るのでセクションも素材に合わせる
+            -- 候補づくりパネルをそのスロット向け(AI・スロット選択済み)にして、
+            -- そのスロットのカードを開く(anchored)。調整の境界の
+            -- 「まず候補を作ります」からも来るのでセクションも素材に合わせる
             ( switchSection SectionPicks
                 (mapCreate (\c -> { c | open = Just True, path = Just PathAi, slot = Just slotFile, anchored = True }) model)
             , OutNone
             )
+
+        SlotRowToggled slotFile ->
+            -- スロットカードのヘッダ。閉じていれば開く(候補づくりパネルを
+            -- その行に繋留)、開いていれば閉じる(繋留も解く)。
+            if createAnchoredTo model slotFile then
+                ( mapCreate (\c -> { c | open = Just False, anchored = False }) model
+                , OutNone
+                )
+
+            else
+                update (CreateForSlotClicked slotFile) model
 
         OpenExtend ->
             -- 前の失敗文言は持ち越さない(届いた下書きは残す — 書きかけを消さない)
@@ -818,11 +827,6 @@ update msg model =
 
                 _ ->
                     ( model, OutNone )
-
-        NewResourceClicked ->
-            -- 新規リソースのウィザードは Main の持ち物で、編集画面の上に出る。
-            -- 先に調整セクションへ切り替えてから開いてもらう(黙った死にボタンにしない)
-            ( switchSection SectionStorehouse model, OutOpenWizard )
 
         ComboTrialClicked ->
             ( model, OutToast "これから: 複数の候補を、何も書き換えずに組み合わせて走らせて比べられるようになります" )
@@ -1016,9 +1020,10 @@ update msg model =
             )
 
         EditCandidateClicked file ->
-            -- 候補カードの「✏️ 手直し」— 調整(エディタ)でその atelier/ の
-            -- ファイルを開く(開くのは Main の仕事なので値で返す)
-            ( switchSection SectionStorehouse model, OutEditFile file )
+            -- 候補カードの「✏️ 手直し」や行の「値を変える」— 調整(エディタ)で
+            -- そのファイルを開く(開くのは Main の仕事なので値で返す)。
+            -- 一覧は既定(宣言された素材だけ)に戻し、着地の見出しを押した言葉に合わせる
+            ( switchSection SectionStorehouse { model | allFiles = False }, OutEditFile file )
 
         CopyCurrentClicked slotFile ->
             -- 「いまの見た目」の「✏️ 写しを作って直す」— 名前は自動採番
@@ -1055,12 +1060,12 @@ update msg model =
                         String.trim model.create.scaffold.kind
                 in
                 if kind == "" then
-                    ( mapScaffold (\s -> { s | error = Just "種類の名前を入れてください(半角の小文字。例: enemy)" }) model
+                    ( mapScaffold (\s -> { s | error = Just "種類の名前を入れてください(半角の小文字)" }) model
                     , OutNone
                     )
 
                 else if not (isValidKindName kind) then
-                    ( mapScaffold (\s -> { s | error = Just "半角の小文字で始め、a-z 0-9 _ だけが使えます(例: enemy_wave)" }) model
+                    ( mapScaffold (\s -> { s | error = Just "半角の小文字で始め、a-z 0-9 _ だけが使えます" }) model
                     , OutNone
                     )
 
@@ -1244,6 +1249,8 @@ showAllFiles model =
 
 {-| 宣言題の括弧前を機械的に切る(「ドット絵(額縁)」→「ドット絵」)。
 言い換え・意訳はしない — UI に出る名詞はゲームが宣言した題だけ。
+全角の括弧(U+FF08)と半角の両方で切る — 宣言題は全角括弧が普通なので、
+半角だけ見ると括弧付きのまま文章に織り込まれてしまう。
 -}
 titleBeforeParen : String -> String
 titleBeforeParen title =
@@ -1251,10 +1258,10 @@ titleBeforeParen title =
         cut sep s =
             String.split sep s |> List.head |> Maybe.withDefault s
     in
-    String.trim (cut "(" (cut "(" title))
+    String.trim (cut "(" (cut "\u{FF08}" title))
 
 
-{-| 行の見出しに使う題。宣言題(括弧前)、無ければファイル名(名詞を発明しない)。 -}
+{-| 文章に織り込む時の題。宣言題(括弧前)、無ければファイル名(名詞を発明しない)。 -}
 rowTitle : String -> String -> String
 rowTitle title file =
     case titleBeforeParen title of
@@ -1263,6 +1270,19 @@ rowTitle title file =
 
         cut ->
             cut
+
+
+{-| 行の見出しに使う題。宣言題はそのまま(括弧も切らない)、無ければファイル名。
+括弧前に切るのは文章に織り込む時(rowTitle)だけ。
+-}
+headTitle : String -> String -> String
+headTitle title file =
+    case String.trim title of
+        "" ->
+            baseName file
+
+        t ->
+            t
 
 
 {-| 素材セクションの 1 行 = 1 素材スロット。slot は候補のある列(無ければ Nothing)。 -}
@@ -1293,7 +1313,7 @@ pickRows model =
 
         fromDecl decl =
             { file = decl.file
-            , title = rowTitle decl.title decl.file
+            , title = headTitle decl.title decl.file
             , slot = candidateSlots |> List.filter (\s -> s.slot == decl.file) |> List.head
             }
 
@@ -1303,7 +1323,7 @@ pickRows model =
                 |> List.map
                     (\s ->
                         { file = s.slot
-                        , title = rowTitle "" s.slot
+                        , title = headTitle "" s.slot
                         , slot = Just s
                         }
                     )
@@ -1828,7 +1848,7 @@ createOpen model =
     Maybe.withDefault False model.create.open
 
 
-{-| パネルをこのスロットの行の直下に描くか(行の「✨ 候補を作る」から開いた時)。 -}
+{-| このスロットのカードが開いているか(= パネルをこのカードの中に描くか)。 -}
 createAnchoredTo : Model -> String -> Bool
 createAnchoredTo model file =
     createOpen model && model.create.anchored && model.create.slot == Just file
@@ -1866,26 +1886,6 @@ selectedSlotHint model =
     selectedCreateSlot model.create
         |> Maybe.map .hint
         |> Maybe.andThen (\h -> ifTrue (h /= "") h)
-
-
-{-| 方向性の書き出し例。スロットの kind で切り替える(不明は汎用の一言)。 -}
-directionPlaceholder : String -> String
-directionPlaceholder kind =
-    case kind of
-        "theme" ->
-            "例: 晩夏の乾いた草の色。赤とんぼの夕暮れの空気"
-
-        "sprite" ->
-            "例: 冬支度の村人。網で虫を追いかける子供"
-
-        "sound" ->
-            "例: 短く鋭い斧の音。夕暮れのひぐらし"
-
-        "shader" ->
-            "例: 夕凪の静かな水面。おだやかな揺れ"
-
-        _ ->
-            "例: イナゴやトンボが飛び、網で虫を追いかける子供がいる晩夏の情景"
 
 
 {-| プレビュー拡大が開いているか。Main が Esc の購読を生かす条件。 -}
@@ -2091,7 +2091,7 @@ cardAction model info =
 Doc エディタもそのタブ群もここには出ない)。1 行 = 1 素材スロット
 (role:material の宣言全部)で、候補はスロット別にその行へ付く。
 候補が届く前(Loading 等)でも行は出す(空の画面で待たせない)。
-候補づくりのパネルは各行の「✨ 候補を作る」からその行の直下に開く
+行はカードで、押すと開いて候補づくりのパネルがその中に出る
 (最上段の常設バーは置かない)。
 -}
 view : String -> Model -> Html Msg
@@ -2264,10 +2264,10 @@ viewExtend model =
                         (List.map (viewExtendKind model.extendPrompt) extendKinds)
                   ]
                 , viewExtendPromptBox model
-                , [ div [ HA.class "mt-6 flex items-center justify-between" ]
-                        [ button [ HA.class "new-resource btn", HE.onClick NewResourceClicked ]
-                            [ text "+ 新規リソース" ]
-                        , button
+                , -- 手でファイルを作る道は「すべてのファイル」側の
+                  -- 「+ 新しいファイル」に一本化(二重の入口を作らない)
+                  [ div [ HA.class "mt-6 flex items-center justify-end" ]
+                        [ button
                             [ HA.class "atelier-extend-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
                             , HE.onClick OpenAllFiles
                             ]
@@ -2595,82 +2595,127 @@ anyPreviewMissing candidates =
         candidates.slots
 
 
-{-| 素材スロットの 1 行。見出し(宣言題 + path + いまの素材 vN)、候補のカード
-(無ければ「✨ 候補を作る」への誘い)、行の道具(候補づくり・調整への行き来・
-過去バージョン)。行から開いた候補づくりパネルはこの行の直下に展開する。
-装着・アーカイブ送りの操作は従来のままカードの中。
+{-| 素材スロットの 1 枚 = 開閉するカード。閉じた既定はヘッダ
+(宣言題 + path + いまの素材 vN + 候補の件数)だけで、カード全体が押せる。
+押すと開き、候補のカード列 / 候補づくりパネル(候補ゼロならこれが主役)/
+過去バージョン / 調整への行き来リンクが現れる。開いた状態でヘッダを押すと
+閉じる(パネル内の「閉じる」でも閉じる)。装着・アーカイブ送りの操作は
+従来のまま候補カードの中。
 -}
 viewPickRow : String -> Model -> PickRow -> Html Msg
 viewPickRow base model row =
-    div [ HA.class "atelier-slot mb-5 rounded-lg border border-edge/60 bg-panel/40 p-4" ]
-        (List.concat
-            [ [ div [ HA.class "flex flex-wrap items-center gap-2" ]
-                    [ span [ HA.class "text-sm font-semibold text-ink" ] [ text row.title ]
-                    , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
-                        [ text row.file ]
-                    , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
-                        [ text ("いまの素材: v" ++ String.fromInt (slotVersion model row.file)) ]
+    let
+        isOpen =
+            createAnchoredTo model row.file
+
+        rowCandidateCount =
+            row.slot |> Maybe.map (\s -> List.length s.candidates) |> Maybe.withDefault 0
+
+        -- ヘッダの中身(開閉どちらも同じ)。閉じた時はカード全体が押せるので
+        -- クリックは外側に置き、開いた時だけヘッダ自身に置く(二重発火させない)
+        headerRow =
+            div
+                (HA.class "atelier-slot-head flex cursor-pointer flex-wrap items-center gap-2"
+                    :: (if isOpen then
+                            [ HE.onClick (SlotRowToggled row.file) ]
+
+                        else
+                            []
+                       )
+                )
+                (List.concat
+                    [ [ span [ HA.class "text-sm font-semibold text-ink" ] [ text row.title ]
+                      , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
+                            [ text row.file ]
+                      , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
+                            [ text ("いまの素材: v" ++ String.fromInt (slotVersion model row.file)) ]
+                      ]
+                    , if rowCandidateCount > 0 then
+                        [ span [ HA.class "atelier-slot-count badge shrink-0" ]
+                            [ text ("候補 " ++ String.fromInt rowCandidateCount ++ " 件") ]
+                        ]
+
+                      else
+                        []
+                    , [ span [ HA.class "ml-auto shrink-0 text-[11px] text-ink-faint" ]
+                            [ text
+                                (if isOpen then
+                                    "▾"
+
+                                 else
+                                    "▸"
+                                )
+                            ]
+                      ]
                     ]
-              ]
-            , case row.slot of
-                Just slot ->
-                    div [ HA.class "mt-3 flex flex-wrap gap-2" ]
-                        (viewCurrentCard base model (isBaking model) slot
-                            :: List.map (viewCard base model (isBaking model) slot.slot) slot.candidates
-                        )
-                        :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
-                           (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
-                                viewGate model
+                )
 
-                            else
-                                []
-                           )
+        openBody =
+            List.concat
+                [ case row.slot of
+                    Just slot ->
+                        div [ HA.class "mt-3 flex flex-wrap gap-2" ]
+                            (viewCurrentCard base model (isBaking model) slot
+                                :: List.map (viewCard base model (isBaking model) slot.slot) slot.candidates
+                            )
+                            :: -- ゲーム未起動の案内は、選んだカードのあるスロットの直下に出す
+                               (if model.gate && Maybe.map .slot model.selected == Just slot.slot then
+                                    viewGate model
 
-                Nothing ->
-                    if model.data == Loading then
-                        -- 候補の一覧がまだ届いていない — 「まだ無い」とは言わない
+                                else
+                                    []
+                               )
+
+                    Nothing ->
+                        -- 候補ゼロ(まだ届いていない時も)— 下の候補づくりパネルが主役
+                        []
+                , -- 候補づくりパネル(実体は共有の 1 つ。開いたカードに繋留)
+                  [ div [ HA.class "mt-3" ] [ viewCreate model ] ]
+                , case slotPastVersions model row.file of
+                    [] ->
                         []
 
-                    else
-                        [ div [ HA.class "atelier-slot-empty mt-3 text-[11px] text-ink-faint" ]
-                            [ text "候補はまだありません — 「✨ 候補を作る」から AI に依頼できます" ]
+                    versions ->
+                        [ button
+                            [ HA.class "atelier-slot-history mt-2 block cursor-pointer text-left text-[11px] text-ink-faint hover:text-ink-soft"
+                            , HE.onClick OpenArchiver
+                            ]
+                            [ text
+                                ("🗃️ 過去バージョン: "
+                                    ++ (versions |> List.map (\v -> "v" ++ String.fromInt v) |> String.join " / ")
+                                    ++ "(戻せます)"
+                                )
+                            ]
                         ]
-            , [ div [ HA.class "mt-3 flex flex-wrap items-center gap-3" ]
-                    [ button
-                        [ HA.class "atelier-slot-create btn btn-mini"
-                        , HE.onClick (CreateForSlotClicked row.file)
-                        ]
-                        [ text "✨ 候補を作る" ]
-                    , button
-                        [ HA.class "atelier-slot-tune cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , -- 題を文章に織り込むので括弧前だけ(rowTitle)
+                  [ button
+                        [ HA.class "atelier-slot-tune mt-2 block cursor-pointer text-left text-[11px] text-ink-faint hover:text-ink-soft"
                         , HE.onClick (EditCandidateClicked row.file)
                         ]
-                        [ text ("この" ++ row.title ++ "のまま値を変える →") ]
-                    ]
-              ]
-            , if createAnchoredTo model row.file then
-                -- 行の「✨ 候補を作る」で開いたパネル(実体は共有の 1 つ)
-                [ div [ HA.class "mt-3" ] [ viewCreate model ] ]
-
-              else
-                []
-            , case slotPastVersions model row.file of
-                [] ->
+                        [ text ("この" ++ rowTitle row.title row.file ++ "のまま値を変える →") ]
+                  ]
+                ]
+    in
+    div
+        (HA.classList
+            [ ( "atelier-slot mb-5 rounded-lg border bg-panel/40 p-4 transition-colors", True )
+            , ( "atelier-slot-open border-edge", isOpen )
+            , ( "cursor-pointer border-edge/60 hover:border-ink-faint hover:bg-white/5", not isOpen )
+            ]
+            :: (if isOpen then
                     []
 
-                versions ->
-                    [ button
-                        [ HA.class "atelier-slot-history mt-2 block cursor-pointer text-left text-[11px] text-ink-faint hover:text-ink-soft"
-                        , HE.onClick OpenArchiver
-                        ]
-                        [ text
-                            ("🗃️ 過去バージョン: "
-                                ++ (versions |> List.map (\v -> "v" ++ String.fromInt v) |> String.join " / ")
-                                ++ "(戻せます)"
-                            )
-                        ]
-                    ]
-            ]
+                else
+                    [ HE.onClick (SlotRowToggled row.file) ]
+               )
+        )
+        (headerRow
+            :: (if isOpen then
+                    openBody
+
+                else
+                    []
+               )
         )
 
 
@@ -3060,7 +3105,7 @@ viewOverlay overlay =
                 ]
                 [ if overlay.gameWasRunning then
                     div [ HA.class "text-sm font-semibold text-ok" ]
-                        [ text "✓ 走っているゲームに反映されました(watchFile)" ]
+                        [ text "✓ 走っているゲームに反映されました" ]
 
                   else
                     div [ HA.class "text-xs text-ink-soft" ]
@@ -3166,8 +3211,8 @@ viewLightbox base bust lightbox =
 
 {-| 「つくる」の畳めるセクション。開くと「なにをつくる?」の
 選択リスト(優先度順の 1 問)を出し、選んだ 1 つのフォームだけを見せる。
-実体は 1 つで、スロット行の「✨ 候補を作る」から開いた時(anchored)にだけ
-その行の直下に描かれる(最上段の常設バーは置かない)。
+実体は 1 つで、スロットカードが開いた時(anchored)にだけ
+そのカードの中に描かれる(最上段の常設バーは置かない)。
 -}
 viewCreate : Model -> Html Msg
 viewCreate model =
@@ -3286,7 +3331,7 @@ viewAiCard create =
                         [ [ viewSlotSelect create
                           , viewSlotHint create
                           , div [ HA.class "mt-2 flex items-center gap-2" ]
-                                (span [ HA.class "text-[11px] text-ink-soft" ] [ text "案数" ]
+                                (span [ HA.class "text-[11px] text-ink-soft" ] [ text "案をいくつ作るか" ]
                                     :: List.map (viewCountButton create.count) [ 1, 2, 3, 4, 5 ]
                                 )
                           , Html.textarea
@@ -3297,12 +3342,7 @@ viewAiCard create =
                                     -- いれば、素材の方向性にも同じ軸を提案する
                                     (case essenceOf create of
                                         "" ->
-                                            "方向性 "
-                                                ++ directionPlaceholder
-                                                    (selectedCreateSlot create
-                                                        |> Maybe.map .kind
-                                                        |> Maybe.withDefault ""
-                                                    )
+                                            "方向性: この素材スロットで何を、どんな雰囲気にしたいかを書きます"
 
                                         essence ->
                                             "方向性: エッセンス『" ++ essence ++ "』"
@@ -3447,7 +3487,7 @@ viewGameCard starterFresh create =
                     , options = moverOptions
                     , pick = create.gameMoverPick
                     , text_ = create.gameMoverText
-                    , placeholder = "言葉で(例: 傘をさしたおじいさん)"
+                    , placeholder = "言葉で書くと、そちらが答えになります"
                     , onPick = GameMoverPicked
                     , onEdit = GameMoverEdited
                     }
@@ -3456,7 +3496,7 @@ viewGameCard starterFresh create =
                     , options = endOptions
                     , pick = create.gameEndPick
                     , text_ = create.gameEndText
-                    , placeholder = "言葉で(例: 3回落としたら終わり)"
+                    , placeholder = "言葉で書くと、そちらが答えになります"
                     , onPick = GameEndPicked
                     , onEdit = GameEndEdited
                     }
@@ -3470,10 +3510,10 @@ viewGameCard starterFresh create =
                     , HA.rows 2
                     , HA.placeholder
                         (if starterFresh then
-                            "自由に書き足す(例: 面は5つ。だんだん狭くなる)"
+                            "自由に書き足す(細かい注文があれば)"
 
                          else
-                            "どう変えたい?(例: 冬の夜だけ現れる行商人を足す)"
+                            "どう変えたいかを言葉で書きます"
                         )
                     , HA.value create.gameDirection
                     , HE.onInput GameDirectionEdited
@@ -3559,7 +3599,7 @@ viewEssenceRow create =
         [ div [ HA.class "text-[11px] text-ink-soft" ] [ text "あなたのエッセンスを、ひとこと" ]
         , Html.input
             [ HA.class "field mt-1 w-full text-xs"
-            , HA.placeholder "例: 夜だけの世界"
+            , HA.placeholder "世界ぜんたいに効かせたい一言(下の言葉を押しても入ります)"
             , HA.value create.gameEssence
             , HE.onInput GameEssenceEdited
             ]
@@ -3612,7 +3652,7 @@ viewGamePromptBox create =
                     ]
                 ]
             , div [ HA.class "mt-2 text-[11px] leading-relaxed text-ink-faint" ]
-                [ text "AIに貼ると、ルールとテストとbakeまで作ります。できたら、ホームに知らせが届きます" ]
+                [ text "AIに貼ると、ルールとテストまで作ります。できたら、ホームに知らせが届きます" ]
             ]
 
 
@@ -3626,14 +3666,14 @@ viewScaffoldCard scaffold =
             [ [ div [ HA.class "mb-2 text-xs font-semibold text-ink" ] [ text "📦 新しい種類の素材/設定を足す" ]
               , Html.input
                     [ HA.class "field w-full font-mono text-xs"
-                    , HA.placeholder "種類の名前(例: enemy_wave)"
+                    , HA.placeholder "種類の名前(半角の小文字)"
                     , HA.value scaffold.kind
                     , HE.onInput ScaffoldKindEdited
                     ]
                     []
               , Html.input
                     [ HA.class "field mt-2 w-full text-xs"
-                    , HA.placeholder "表示名(例: 敵の波)"
+                    , HA.placeholder "表示名(日本語でかまいません)"
                     , HA.value scaffold.title
                     , HE.onInput ScaffoldTitleEdited
                     ]
