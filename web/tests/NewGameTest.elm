@@ -281,7 +281,7 @@ suite =
         ]
 
 
-{-| 家族の札のサンプル(starter 有り / 無し / free)。 -}
+{-| ジャンルの札のサンプル(starter 有り / 無し / free)。 -}
 genesisFamilies : List NewGame.Family
 genesisFamilies =
     [ { id = "action", name = "アクション", verb = "走って、跳んで、壊す", includes = "ブロック崩し", controls = "←→ + スペース", starter = "templates/game-starter" }

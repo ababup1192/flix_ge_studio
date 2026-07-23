@@ -1,9 +1,9 @@
 module AtelierFlowTest exposing (suite)
 
-{-| アトリエの装着(swap)の「規則」のテスト。
+{-| アトリエの採用(swap)の「規則」のテスト。
 
 見た目(カードの並び・オーバーレイの文言送り)は焼かない — ここで守るのは、
-何を選べたら装着でき、成功・失敗・未起動で何が起きるか、という規則だけ。
+何を選べたら採用でき、成功・失敗・未起動で何が起きるか、という規則だけ。
 
 -}
 
@@ -13,7 +13,7 @@ import Json.Decode as D
 import Test exposing (Test, describe, test)
 
 
-{-| 候補が届いた初期状態(スロット 1 つ: 新候補 a と退避版 prev)。 -}
+{-| 候補が届いた初期状態(スロット 1 つ: 新候補 a と過去バージョン prev)。 -}
 withCandidates : Atelier.Model
 withCandidates =
     Atelier.init
@@ -73,7 +73,7 @@ candidatePreview =
     }
 
 
-{-| 退避(prev)版のプレビューを押した時の中身。 -}
+{-| 過去バージョン(prev)のプレビューを押した時の中身。 -}
 prevPreview : { file : String, note : Maybe String, compareWith : Maybe String, isPrev : Bool }
 prevPreview =
     { file = "atelier/prev-1.villager.sprite.json"

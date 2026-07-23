@@ -1000,7 +1000,7 @@ update msg model =
                         m1
 
                 Atelier.OutClosed ->
-                    -- 装着の祝いを閉じた。世界が変わったので候補と提案を取り直す。
+                    -- 採用の祝いを閉じた。世界が変わったので候補と提案を取り直す。
                     -- 見た目の検査は裏で自動に進み、変わればホームに知らせが立つ
                     let
                         ( m2, toastFx ) =
@@ -4766,7 +4766,7 @@ handleErrByKind env message model =
             showToast "コピーできませんでした(手で選択してコピーしてください)" model
 
         "gameStatus" ->
-            -- 状態が取れないのは致命ではない(装着前に起動の案内が挟まるだけ)
+            -- 状態が取れないのは致命ではない(採用前に起動の案内が挟まるだけ)
             ( model, Effect.none )
 
         "gameStart" ->
@@ -8720,7 +8720,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- 装着オーバーレイの段送り(装着しました → 反映の報せ)。待ちの間だけ生きる
+        -- 採用オーバーレイの段送り(採用しました → 反映の報せ)。待ちの間だけ生きる
         , if Atelier.needsTick model.atelier then
             Time.every 1000 (\_ -> AtelierOverlayTick)
 

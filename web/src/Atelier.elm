@@ -78,7 +78,7 @@ module Atelier exposing
 {-| アトリエの「候補選び」— 生成された見た目候補を見比べて、ゲームで使う(採用する)。
 
 アトリエタブは入口(viewLanding)から始まり、行き先は
-素材(候補選び+つくるバー)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
+素材(候補選び+候補づくり)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
 アーカイブの 4 つ。どれを描くかは Main が showLanding / showArchiver /
 showPicks / showExtend で判定し、各セクションの最上段の
 「← アトリエ」(viewSectionTop)で入口へ戻る。
@@ -86,11 +86,11 @@ showPicks / showExtend で判定し、各セクションの最上段の
 サーバ往復は持たない(封筒は Main が発行し、応答をここへ流し込む)。
 送りたい事は update の戻り値 Out で Main へ返す(Journey と同じ流儀)。
 エンドポイント未実装のサーバでは候補の一覧が出ないだけ(fail-open —
-つくるバーも調整(Doc エディタ)もそのまま生きる)。候補ゼロのスロットはサーバが
+候補づくりも調整(Doc エディタ)もそのまま生きる)。候補ゼロのスロットはサーバが
 返さない契約だが、来ても捨てる(防御 — ファイル名の羅列で画面を埋めない)。
 
-装着の瞬間はこの画面の見せ場。成功はオーバーレイで大きく祝い、
-前のバージョンの退避先を必ず添える — 戻せると分かっていれば装着は怖くない。
+採用の瞬間はこの画面の見せ場。成功はオーバーレイで大きく祝い、
+前のバージョンのアーカイブ先を必ず添える — 戻せると分かっていれば切り替えは怖くない。
 
 -}
 
@@ -144,7 +144,7 @@ type Data
 
 
 {-| アトリエタブのセクション。Landing(入口)から
-Picks(素材 = 候補選び+つくる)/ Storehouse(調整 = Doc エディタ)/
+Picks(素材 = 候補選び+候補づくり)/ Storehouse(調整 = Doc エディタ)/
 Extend(広げる = 依頼文の下書き)/ Archiver(アーカイブ)へ入る。
 -}
 type Section
@@ -208,15 +208,15 @@ type alias Selection =
     }
 
 
-{-| 装着(Swap)か巻き戻し(Rollback)か。オーバーレイの文言が変わるだけで、
-サーバへの頼み事はどちらも同じ promote(戻すのも「前のバージョンを装着する」)。
+{-| 採用(Swap)か巻き戻し(Rollback)か。オーバーレイの文言が変わるだけで、
+サーバへの頼み事はどちらも同じ promote(戻すのも「前のバージョンを採用する」)。
 -}
 type Mode
     = Swap
     | Rollback
 
 
-{-| オーバーレイの段。Placed(装着しました)→ 1 秒 → Settled(反映・退避の報せ)。 -}
+{-| オーバーレイの段。Placed(採用しました)→ 1 秒 → Settled(反映・アーカイブの報せ)。 -}
 type Phase
     = Placed
     | Settled
@@ -232,7 +232,7 @@ type alias Lightbox =
     , note : Maybe String
     , compareWith : Maybe String
 
-    -- 退避(prev)版か — 決めた瞬間のボタンが「装着」でなく「戻す」になる
+    -- 過去バージョン(prev)か — 決めた瞬間のボタンが「これを使う」でなく「戻す」になる
     , isPrev : Bool
 
     -- 「いまの見た目」側を映しているか(A/B トグル)
@@ -245,7 +245,7 @@ type alias Overlay =
     , retired : Maybe String
     , phase : Phase
 
-    -- 装着した瞬間にゲームが走っていたか(Settled の祝い文言用)
+    -- 採用した瞬間にゲームが走っていたか(Settled の祝い文言用)
     , gameWasRunning : Bool
     }
 
@@ -269,7 +269,7 @@ type alias GameLog =
     }
 
 
-{-| 「つくる」の素材スロット(GET /atelier/slots — material 役だけ来る契約)。 -}
+{-| 候補づくりの素材スロット(GET /atelier/slots — material 役だけ来る契約)。 -}
 type alias CreateSlot =
     { file : String
     , entityId : Maybe String
@@ -286,7 +286,7 @@ type PromptState
     | PromptFailed String
 
 
-{-| 「つくる」(創作の第一幕)。open = Nothing は既定(畳む)に従う —
+{-| 候補づくり(「候補を作る」パネル)。open = Nothing は既定(畳む)に従う —
 開くのは手だけ。
 -}
 type alias Create =
@@ -329,7 +329,7 @@ type alias Model =
     , create : Create
     , selected : Maybe Selection
 
-    -- Nothing = /game/status 未着(不明)。不明のうちは装着前に起動の案内を挟む
+    -- Nothing = /game/status 未着(不明)。不明のうちは採用前に起動の案内を挟む
     , gameRunning : Maybe Bool
 
     -- 「ゲームが起きていません」の案内カードを開いているか
@@ -505,7 +505,7 @@ update msg model =
                         promote Swap sel model
 
                     else
-                        -- 起きていない(または不明)。装着は今すぐできるが、
+                        -- 起きていない(または不明)。切り替えは今すぐできるが、
                         -- 変化をその場で見るには起動が要る — 両方を差し出す
                         ( { model | gate = True }, OutNone )
 
@@ -691,7 +691,7 @@ update msg model =
             )
 
         LightboxSwapClicked ->
-            -- 拡大で「これだ」と決めた瞬間に装着へ(閉じる→選ぶ→装着の 3 手を 1 手に)。
+            -- 拡大で「これだ」と決めた瞬間に採用へ(閉じる→選ぶ→採用の 3 手を 1 手に)。
             -- ライトボックスを畳み、その候補を選択にした上で既存の SwapClicked に
             -- 委譲する — 未起動の案内(gate)も二度押し防止もそのまま効く
             case Maybe.andThen (\lb -> Maybe.map (Tuple.pair lb) lb.compareWith) model.lightbox of
@@ -704,11 +704,11 @@ update msg model =
                         }
 
                 Nothing ->
-                    -- 「いまの見た目」には装着する物がない(ボタンも出ない防御)
+                    -- 「いまの見た目」には採用する物がない(ボタンも出ない防御)
                     ( model, OutNone )
 
         LightboxRollbackClicked ->
-            -- 退避バージョンの拡大からの「vN に戻す」— 既存のロールバック経路に委譲
+            -- 過去バージョンの拡大からの「vN に戻す」— 既存のロールバック経路に委譲
             case Maybe.andThen (\lb -> Maybe.map (Tuple.pair lb) lb.compareWith) model.lightbox of
                 Just ( lightbox, slot ) ->
                     update (RollbackClicked slot lightbox.file)
@@ -811,7 +811,7 @@ promote mode sel model =
 
 
 {-| GET /atelier/candidates。焼き待ちの間は 2 秒毎に取り直すので、
-選択は「同じファイルがまだ居るなら」保つ(装着や退避で消えていたら畳む)。
+選択は「同じファイルがまだ居るなら」保つ(採用やアーカイブ送りで消えていたら畳む)。
 候補ゼロのスロットは捨てる(サーバは返さない契約だが、来ても描かない防御)。
 キャッシュ避け(bust)は中身が変わった取得でだけ進める —
 焼き上がりでプレビューが差し替わった瞬間だけ img を取り直させる。
@@ -1041,7 +1041,7 @@ materialTitleOf model file =
         |> Maybe.map (\s -> rowTitle s.title s.file)
 
 
-{-| スロットの候補の数(退避 prev 札は数えない)。境界の「候補 N 件」の材料。 -}
+{-| スロットの候補の数(過去バージョン prev の札は数えない)。境界の「候補 N 件」の材料。 -}
 slotCandidateCount : Model -> String -> Int
 slotCandidateCount model slotFile =
     case model.data of
@@ -1576,7 +1576,7 @@ createSlotDecoder =
 
 
 {-| GET /game/status → running。壊れた応答は「走っていない」に倒す
-(起動の案内が出るだけで、装着自体は妨げない)。
+(起動の案内が出るだけで、採用自体は妨げない)。
 -}
 statusDecoder : D.Decoder Bool
 statusDecoder =
@@ -1630,7 +1630,7 @@ showExtend model =
 
 
 {-| カードの中に出す決めボタン(導線の規則)。選んだカードにだけ出る —
-候補なら装着(Swap)、退避(prev)版なら戻す(Rollback)。未選択は何も出ない
+候補なら採用(Swap)、過去バージョン(prev)なら戻す(Rollback)。未選択は何も出ない
 (クリック → その場にボタン出現、が導線)。
 -}
 cardAction : Model -> { slot : String, file : String, isPrev : Bool } -> Maybe Mode
@@ -1789,7 +1789,7 @@ landingCard info =
         ]
 
 
-{-| 入口カードのチップに出す候補の総数(prev の退避札は数えない)。 -}
+{-| 入口カードのチップに出す候補の総数(過去バージョン prev の札は数えない)。 -}
 candidateCount : Model -> Int
 candidateCount model =
     case model.data of
@@ -2164,7 +2164,7 @@ anyPreviewMissing candidates =
 (宣言題 + path + いまの素材 vN + 候補の件数)だけで、カード全体が押せる。
 押すと開き、候補のカード列 / 候補づくりパネル(候補ゼロならこれが主役)/
 過去バージョン / 調整への行き来リンクが現れる。開いた状態でヘッダを押すと
-閉じる(パネル内の「閉じる」でも閉じる)。装着・アーカイブ送りの操作は
+閉じる(パネル内の「閉じる」でも閉じる)。採用・アーカイブ送りの操作は
 従来のまま候補カードの中。
 -}
 viewPickRow : String -> Model -> PickRow -> Html Msg
@@ -2284,7 +2284,7 @@ viewPickRow base model row =
         )
 
 
-{-| 「いまの見た目」の参照カード — 装着中の姿を並べて見比べる基準。
+{-| 「いまの見た目」の参照カード — 採用中の姿を並べて見比べるための参照。
 押せない(候補ではない)ので、枠も落ち着かせる。
 -}
 viewCurrentCard : String -> Model -> Bool -> Slot -> Html Msg
@@ -2542,7 +2542,7 @@ slotKind model file =
 
 
 {-| ゲーム未起動の案内カード(選んだカードのあるスロットの直下)。
-起動と「そのまま装着」の両方を差し出す。
+起動と「そのまま切り替える」の両方を差し出す。
 -}
 viewGate : Model -> List (Html Msg)
 viewGate model =
@@ -2645,7 +2645,7 @@ viewLoose loose =
         ]
 
 
-{-| 装着の瞬間のオーバーレイ。段送り(Placed → Settled)は CSS の遷移で
+{-| 採用の瞬間のオーバーレイ。段送り(Placed → Settled)は CSS の遷移で
 ふわりと出す(prefers-reduced-motion では即時)。
 -}
 viewOverlay : Overlay -> Html Msg
@@ -2738,14 +2738,14 @@ viewLightbox base bust lightbox =
                 [ case lightbox.compareWith of
                     Just _ ->
                         -- 見比べて「これだ」の瞬間にその場で決められる —
-                        -- 候補は装着、退避(prev)版は戻す(既存経路に委譲)
+                        -- 候補は採用、過去バージョン(prev)は戻す(既存経路に委譲)
                         if lightbox.isPrev then
                             button [ HA.class "btn btn-mini", stopClick LightboxRollbackClicked ]
                                 [ text "↩ このバージョンに戻す" ]
 
                         else
                             button [ HA.class "btn btn-primary btn-mini", stopClick LightboxSwapClicked ]
-                                [ text "🔄 この案を使う" ]
+                                [ text "🔄 これを使う" ]
 
                     Nothing ->
                         text ""
@@ -2771,11 +2771,11 @@ viewLightbox base bust lightbox =
 
 
 
--- つくる(創作の第一幕)
+-- 候補を作る(候補づくりパネル)
 
 
-{-| 「つくる」の畳めるセクション。開くと、そのスロット向けの
-AI 候補づくりフォームに直行する(道えらびは挟まない — あそび・新種は
+{-| 「候補を作る」の畳めるセクション。開くと、そのスロット向けの
+AI 候補づくりフォームに直行する(道えらびは挟まない — 仕組みや素材の種類を足すのは
 「ゲームを広げる」の役割)。実体は 1 つで、スロットカードが開いた時
 (anchored)にだけそのカードの中に描かれる(最上段の常設バーは置かない)。
 -}
@@ -2915,7 +2915,7 @@ baseName path =
         |> Maybe.withDefault path
 
 
-{-| 退避バージョンの札。ファイル名の "prev-N" から N を拾う(見つからなければ「退避」)。 -}
+{-| 過去バージョン(prev)の札のラベル。ファイル名の "prev-N" から N を拾う。 -}
 prevTag : String -> String
 prevTag file =
     case String.indexes "prev-" file of
