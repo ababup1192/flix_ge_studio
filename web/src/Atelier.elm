@@ -29,6 +29,7 @@ module Atelier exposing
     , createPaths
     , createSlotsDecoder
     , directionPlaceholder
+    , extendPromptFailed
     , gameLogDecoder
     , gameStartFailed
     , gameStarted
@@ -37,6 +38,7 @@ module Atelier exposing
     , gotCandidates
     , gotGameLog
     , gamePromptErrorShown
+    , gotExtendPrompt
     , gotGamePrompt
     , gamePromptFailed
     , gotGameStatus
@@ -66,6 +68,7 @@ module Atelier exposing
     , shownWirePrompt
     , shownPrompt
     , showArchiver
+    , showExtend
     , showLanding
     , showPicks
     , slotsFailed
@@ -74,6 +77,7 @@ module Atelier exposing
     , view
     , viewArchiver
     , viewCreate
+    , viewExtend
     , viewLanding
     , viewSectionTop
     )
@@ -81,9 +85,10 @@ module Atelier exposing
 {-| アトリエの「候補選び」— 生成された見た目候補を見比べて、ゲームで使う(採用する)。
 
 アトリエタブは入口(viewLanding)から始まり、行き先は
-素材(候補選び+つくるバー)/ 調整(Doc エディタ)/ アーカイブの 3 つ。
-どれを描くかは Main が showLanding / showArchiver / showPicks で判定し、
-各セクションの最上段の「← アトリエ」(viewSectionTop)で入口へ戻る。
+素材(候補選び+つくるバー)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
+アーカイブの 4 つ。どれを描くかは Main が showLanding / showArchiver /
+showPicks / showExtend で判定し、各セクションの最上段の
+「← アトリエ」(viewSectionTop)で入口へ戻る。
 
 サーバ往復は持たない(封筒は Main が発行し、応答をここへ流し込む)。
 送りたい事は update の戻り値 Out で Main へ返す(Journey と同じ流儀)。
@@ -147,13 +152,24 @@ type Data
 
 {-| アトリエタブのセクション。Landing(入口)から
 Picks(素材 = 候補選び+つくる)/ Storehouse(調整 = Doc エディタ)/
-Archiver(アーカイブ)へ入る。
+Extend(広げる = 依頼文の下書き)/ Archiver(アーカイブ)へ入る。
 -}
 type Section
     = SectionLanding
     | SectionPicks
     | SectionStorehouse
+    | SectionExtend
     | SectionArchiver
+
+
+{-| 「ゲームを広げる」の下書き(GET /prompt/extend)の進み。
+Loading は押した口の kind を持つ(押した札に ⏳ を出す)。
+-}
+type ExtendPrompt
+    = ExtendIdle
+    | ExtendLoading String
+    | ExtendReady { title : String, prompt : String }
+    | ExtendFailed String
 
 
 {-| 切り替えで積まれたバージョン 1 枚(atelier/archive/<base>.vN.<kind>.json)。
@@ -488,8 +504,13 @@ type alias Model =
     , pending : Maybe Mode
     , overlay : Maybe Overlay
 
-    -- いま開いているセクション(入口 / 素材 / 調整 / アーカイブ)
+    -- いま開いているセクション(入口 / 素材 / 調整 / 広げる / アーカイブ)
     , section : Section
+
+    -- 「ゲームを広げる」の下書きと、仕上げに足すあなたの言葉
+    , extendPrompt : ExtendPrompt
+    , extendWords : String
+    , extendCopied : Bool
 
     -- アーカイブの中身(GET /atelier/archive)
     , archive : ArchiveData
@@ -538,6 +559,9 @@ init =
     , pending = Nothing
     , overlay = Nothing
     , section = SectionLanding
+    , extendPrompt = ExtendIdle
+    , extendWords = ""
+    , extendCopied = False
     , archive = ArchiveLoading
     , archivePending = Nothing
     , restorePending = Nothing
@@ -569,7 +593,12 @@ type Msg
     | OpenLanding
     | OpenStorehouse
     | OpenPicks
+    | OpenExtend
     | OpenArchiver
+    | ExtendKindClicked String
+    | ExtendWordsEdited String
+    | CopyExtendPromptClicked
+    | NewResourceClicked
     | ComboTrialClicked
     | AuditionClicked
     | ArchiveClicked String
@@ -621,6 +650,8 @@ type Out
     | OutToast String
     | OutFetchPrompt { slot : String, count : Int, direction : String }
     | OutFetchGamePrompt String
+    | OutFetchExtendPrompt String
+    | OutOpenWizard
     | OutCopyPrompt String
     | OutCopyFile { slot : String, name : String }
     | OutEditFile String
@@ -708,8 +739,50 @@ update msg model =
         OpenPicks ->
             ( switchSection SectionPicks model, OutNone )
 
+        OpenExtend ->
+            -- 前の失敗文言は持ち越さない(届いた下書きは残す — 書きかけを消さない)
+            ( switchSection SectionExtend
+                (case model.extendPrompt of
+                    ExtendFailed _ ->
+                        { model | extendPrompt = ExtendIdle }
+
+                    _ ->
+                        model
+                )
+            , OutNone
+            )
+
         OpenArchiver ->
             ( switchSection SectionArchiver model, OutNone )
+
+        ExtendKindClicked kind ->
+            -- 押した瞬間に ⏳(飛行中の二度押しは送らない)
+            case model.extendPrompt of
+                ExtendLoading _ ->
+                    ( model, OutNone )
+
+                _ ->
+                    ( { model | extendPrompt = ExtendLoading kind, extendCopied = False }
+                    , OutFetchExtendPrompt kind
+                    )
+
+        ExtendWordsEdited text_ ->
+            ( { model | extendWords = text_ }, OutNone )
+
+        CopyExtendPromptClicked ->
+            case model.extendPrompt of
+                ExtendReady draft ->
+                    ( { model | extendCopied = True }
+                    , OutCopyPrompt (extendClipboard draft.prompt model.extendWords)
+                    )
+
+                _ ->
+                    ( model, OutNone )
+
+        NewResourceClicked ->
+            -- 新規リソースのウィザードは Main の持ち物で、編集画面の上に出る。
+            -- 先に調整セクションへ切り替えてから開いてもらう(黙った死にボタンにしない)
+            ( switchSection SectionStorehouse model, OutOpenWizard )
 
         ComboTrialClicked ->
             ( model, OutToast "これから: 複数の候補を、何も書き換えずに組み合わせて走らせて比べられるようになります" )
@@ -895,7 +968,8 @@ update msg model =
                     ( model, OutNone )
 
         CopyResetTick ->
-            ( mapCreate (\c -> { c | copied = False, gameCopied = False }) model
+            ( { model | extendCopied = False }
+                |> mapCreate (\c -> { c | copied = False, gameCopied = False })
                 |> mapScaffold (\s -> { s | copied = False })
             , OutNone
             )
@@ -1360,6 +1434,31 @@ gamePromptFailed message model =
     mapCreate (\c -> { c | gamePrompt = PromptFailed (cleanReason message) }) model
 
 
+{-| GET /prompt/extend 成功。届いた下書きは読み取り専用の枠に出る。 -}
+gotExtendPrompt : { title : String, prompt : String } -> Model -> Model
+gotExtendPrompt draft model =
+    { model | extendPrompt = ExtendReady draft, extendCopied = False }
+
+
+{-| GET /prompt/extend の失敗。理由だけをカードの下に出す(404 は Main が
+「準備中」の文言に均してから呼ぶ)。
+-}
+extendPromptFailed : String -> Model -> Model
+extendPromptFailed message model =
+    { model | extendPrompt = ExtendFailed (cleanReason message) }
+
+
+{-| コピーする本文 — 下書きに「あなたの言葉」を続ける(空なら下書きだけ)。 -}
+extendClipboard : String -> String -> String
+extendClipboard draft words =
+    case String.trim words of
+        "" ->
+            draft
+
+        written ->
+            draft ++ "\n" ++ written
+
+
 {-| 画面に映っているゲームプロンプト(テストの覗き窓)。 -}
 shownGamePrompt : Model -> Maybe String
 shownGamePrompt model =
@@ -1552,7 +1651,7 @@ scaffoldResultDecoder =
 -}
 needsCopyReset : Model -> Bool
 needsCopyReset model =
-    model.create.copied || model.create.gameCopied || model.create.scaffold.copied
+    model.create.copied || model.create.gameCopied || model.create.scaffold.copied || model.extendCopied
 
 
 {-| 「つくる」パネルが開いているか。手で触っていなければ畳む。 -}
@@ -1777,6 +1876,12 @@ showArchiver model =
     model.section == SectionArchiver
 
 
+{-| アトリエタブで「ゲームを広げる」を描くべきか。 -}
+showExtend : Model -> Bool
+showExtend model =
+    model.section == SectionExtend
+
+
 {-| カードの中に出す決めボタン(導線の規則)。選んだカードにだけ出る —
 候補なら装着(Swap)、退避(prev)版なら戻す(Rollback)。未選択は何も出ない
 (クリック → その場にボタン出現、が導線)。
@@ -1810,7 +1915,7 @@ view base model =
     div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
-                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を作る" ] ]
+                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を切り替える" ] ]
                 , [ viewCreate model ]
                 , case model.data of
                     Ready candidates ->
@@ -1860,7 +1965,9 @@ viewSectionTop place =
 
 
 {-| アトリエの入口。行き先の大きなカード 2 枚(初期表示で両方見える大きさ)と、
-アーカイブへの控えめな入口。生まれたてはパラメータ側を推す。
+下段に横長で控えめな「ゲームを広げる」(構造が変わる依頼 — 上 2 枚と同格に
+並べない)、その下に小さなリンク 2 つ(アーカイブ / すべてのファイル)。
+生まれたてはパラメータ側を推す。
 -}
 viewLanding : Model -> Html Msg
 viewLanding model =
@@ -1869,7 +1976,7 @@ viewLanding model =
             [ landingCard
                 { icon = "⚙️"
                 , title = "パラメータを変える"
-                , body = "ゲームのパラメータを変えられます。保存した瞬間、走っているゲームに反映されます。"
+                , body = "ゲームのパラメータを変えます。保存した瞬間、走っているゲームに反映されます。"
                 , chip =
                     if model.starterFresh then
                         Just "おすすめ"
@@ -1880,8 +1987,8 @@ viewLanding model =
                 }
             , landingCard
                 { icon = "🎨"
-                , title = "素材を作る"
-                , body = "見た目や音の候補を AI に作らせて、選んで使う。あそびを大きく変えるのもここから。"
+                , title = "素材を切り替える"
+                , body = "いまの素材を、別の素材と見比べて切り替えます。候補は AI に頼んで作れます。前の素材はバージョンで残り、いつでも戻せます。"
                 , chip =
                     case candidateCount model of
                         0 ->
@@ -1892,15 +1999,33 @@ viewLanding model =
                 , msg = OpenPicks
                 }
             ]
-        , if archiveAvailable model then
-            button
-                [ HA.class "atelier-landing-archive mt-6 cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                , HE.onClick OpenArchiver
+        , button
+            [ HA.class "atelier-landing-extend mt-4 w-full max-w-2xl cursor-pointer rounded-lg border border-edge/60 bg-panel/60 px-5 py-3 text-left transition-colors hover:border-ink-faint hover:bg-white/5"
+            , HE.onClick OpenExtend
+            ]
+            [ div [ HA.class "flex items-center gap-2.5" ]
+                [ span [ HA.class "text-base leading-none" ] [ text "🧩" ]
+                , span [ HA.class "text-xs font-semibold text-ink" ] [ text "ゲームを広げる" ]
                 ]
-                [ text (archiverLabel model) ]
+            , div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-soft" ]
+                [ text "いまのゲームに無いものを足します — 新しい場面、新しい仕組み、新しい種類の素材。" ]
+            ]
+        , div [ HA.class "mt-6 flex items-center gap-5" ]
+            [ if archiveAvailable model then
+                button
+                    [ HA.class "atelier-landing-archive cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                    , HE.onClick OpenArchiver
+                    ]
+                    [ text (archiverLabel model) ]
 
-          else
-            text ""
+              else
+                text ""
+            , button
+                [ HA.class "atelier-landing-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HE.onClick OpenStorehouse
+                ]
+                [ text "🗂 すべてのファイル" ]
+            ]
         ]
 
 
@@ -1946,6 +2071,121 @@ archiverLabel model =
 
         n ->
             "🗃️ アーカイブ(" ++ String.fromInt n ++ ")"
+
+
+{-| 「ゲームを広げる」のセクション。足したいものを選ぶと、AI に渡す依頼文の
+下書きが届く(GET /prompt/extend)。Studio は手を動かさない — 下書きに
+あなたの言葉を足してコピーし、AI に渡すところまでがこの部屋の仕事。
+-}
+viewExtend : Model -> Html Msg
+viewExtend model =
+    div [ HA.class "atelier-extend min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
+        [ div [ HA.class "mx-auto w-full max-w-3xl" ]
+            (List.concat
+                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🧩 ゲームを広げる" ]
+                  , div [ HA.class "mb-4 text-[11px] leading-relaxed text-ink-soft" ]
+                        [ text "足したいものを選ぶと、AI に渡す依頼文の下書きができます。あなたの言葉を足して仕上げてください。" ]
+                  , div [ HA.class "flex flex-col gap-3 sm:flex-row" ]
+                        (List.map (viewExtendKind model.extendPrompt) extendKinds)
+                  ]
+                , viewExtendPromptBox model
+                , [ div [ HA.class "mt-6 flex items-center justify-between" ]
+                        [ button [ HA.class "new-resource btn", HE.onClick NewResourceClicked ]
+                            [ text "+ 新規リソース" ]
+                        , button
+                            [ HA.class "atelier-extend-files cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                            , HE.onClick OpenStorehouse
+                            ]
+                            [ text "🗂 すべてのファイル" ]
+                        ]
+                  ]
+                ]
+            )
+        ]
+
+
+{-| 広げ方の 3 口。id はサーバの kind(GET /prompt/extend?kind=…)。
+説明は普遍的に書く(具体物の例を焼き込まない — サーバの依頼文と同じ規約)。
+-}
+extendKinds : List { id : String, title : String, body : String }
+extendKinds =
+    [ { id = "scene", title = "場面を足す", body = "ゲームの進行に新しい場面が増えます。" }
+    , { id = "mechanic", title = "仕組みを足す", body = "ゲームに新しいルールや機能が入ります。" }
+    , { id = "material", title = "素材の種類を足す", body = "切り替えられる素材の種類が増えます。" }
+    ]
+
+
+{-| 広げ方 1 枚のカード。押した瞬間に ⏳(取得中でも黙らせない)。 -}
+viewExtendKind : ExtendPrompt -> { id : String, title : String, body : String } -> Html Msg
+viewExtendKind prompt kind =
+    button
+        [ HA.class "atelier-extend-kind flex-1 cursor-pointer rounded-lg border border-edge bg-panel p-4 text-left transition-colors hover:border-ink-faint hover:bg-white/5"
+        , HE.onClick (ExtendKindClicked kind.id)
+        ]
+        [ div [ HA.class "text-xs font-semibold text-ink" ]
+            [ text
+                (if prompt == ExtendLoading kind.id then
+                    "⏳ " ++ kind.title
+
+                 else
+                    kind.title
+                )
+            ]
+        , div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-soft" ] [ text kind.body ]
+        ]
+
+
+{-| 下書きの箱。届いたら読み取り専用の下書き+「あなたの言葉」+コピー。
+コピーは下書きとあなたの言葉を結合して渡す(仕上げてから AI に貼る)。
+-}
+viewExtendPromptBox : Model -> List (Html Msg)
+viewExtendPromptBox model =
+    case model.extendPrompt of
+        ExtendIdle ->
+            []
+
+        ExtendLoading _ ->
+            [ div [ HA.class "atelier-extend-loading mt-3 text-[11px] text-ink-soft" ]
+                [ text "⏳ 下書きを作っています…" ]
+            ]
+
+        ExtendFailed reason ->
+            [ div [ HA.class "atelier-extend-error mt-3 text-[11px] text-danger" ]
+                [ text ("下書きを作れませんでした — " ++ reason) ]
+            ]
+
+        ExtendReady draft ->
+            [ div [ HA.class "atelier-extend-draft mt-4 rounded-lg border border-edge bg-black/20 p-4" ]
+                [ div [ HA.class "text-xs font-semibold text-ink" ] [ text draft.title ]
+                , Html.textarea
+                    [ HA.class "atelier-extend-prompt mt-2 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                    , HA.readonly True
+                    , HA.value draft.prompt
+                    ]
+                    []
+                , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "あなたの言葉" ]
+                , Html.textarea
+                    [ HA.class "field mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                    , HA.rows 2
+                    , HA.value model.extendWords
+                    , HE.onInput ExtendWordsEdited
+                    ]
+                    []
+                , div [ HA.class "mt-2" ]
+                    [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyExtendPromptClicked ]
+                        [ text
+                            (if model.extendCopied then
+                                "✓ コピーしました"
+
+                             else
+                                "📋 プロンプトをコピー"
+                            )
+                        ]
+                    ]
+                , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ]
+                    [ text "Claude Code などの AI に貼ると、足す作業が始まります。" ]
+                ]
+            ]
 
 
 {-| アーカイブのセクション。使っていない候補と昔のバージョンの置き場 —
@@ -2708,7 +2948,7 @@ viewCreate model =
             [ HA.class "atelier-create-bar flex w-full cursor-pointer items-center gap-2 rounded-lg px-4 py-2.5 text-left text-sm font-semibold text-ink transition-colors hover:bg-white/5"
             , HE.onClick CreateToggled
             ]
-            [ span [] [ text "✨ 新しい素材を作る" ]
+            [ span [] [ text "✨ 候補を作る" ]
             , span [ HA.class "flex-1" ] []
 
             -- 開閉できる事が言葉で分かる目印(バー全体が押せる — これは chip)

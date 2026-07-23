@@ -979,6 +979,22 @@ update msg model =
                         (E.object [ ( "direction", E.string direction ) ])
                         m1
 
+                Atelier.OutFetchExtendPrompt kind ->
+                    -- 「ゲームを広げる」の依頼文の下書き(genesisPrompt と同じ流儀)
+                    request "promptExtend"
+                        (E.object [ ( "kind", E.string kind ) ])
+                        m1
+
+                Atelier.OutOpenWizard ->
+                    -- 広げるの部屋の「+ 新規リソース」。ウィザードは編集画面の上に
+                    -- 出る(Atelier 側が調整セクションへ切り替え済み)。dirty の
+                    -- 関所は WizardOpened と同じ
+                    if m1.dirty then
+                        ( { m1 | pendingNav = Just NavWizard }, Effect.none )
+
+                    else
+                        ( { m1 | wizard = Just emptyWizard }, Effect.none )
+
                 Atelier.OutCopyPrompt prompt ->
                     -- クリップボードへ(JS 側で解決するローカルな封筒)
                     request "copyClipboard" (E.object [ ( "text", E.string prompt ) ]) m1
@@ -3620,6 +3636,14 @@ previewHit model point =
             Nothing
 
 
+{-| GET /prompt/extend の本文({title, prompt})。 -}
+extendPromptDecoder : D.Decoder { title : String, prompt : String }
+extendPromptDecoder =
+    D.map2 (\title prompt -> { title = title, prompt = prompt })
+        (D.field "title" D.string)
+        (D.field "prompt" D.string)
+
+
 handleOk : Api.Envelope -> Model -> ( Model, Effect )
 handleOk env model =
     case wizardAdvance env model of
@@ -3926,6 +3950,14 @@ handleOkByKind env model =
 
                 Err _ ->
                     ( { model | newGame = NewGame.genesisPromptFailed "応答が読めませんでした" model.newGame }, Effect.none )
+
+        "promptExtend" ->
+            case D.decodeValue extendPromptDecoder env.body of
+                Ok draft ->
+                    ( { model | atelier = Atelier.gotExtendPrompt draft model.atelier }, Effect.none )
+
+                Err _ ->
+                    ( { model | atelier = Atelier.extendPromptFailed "応答が読めませんでした" model.atelier }, Effect.none )
 
         "projectNew" ->
             -- 202(受理)。応答の dir(産まれるゲームの絶対パス)を覚え、
@@ -4582,6 +4614,14 @@ handleErrByKind env message model =
             else
                 ( { model | newGame = NewGame.genesisPromptFailed message model.newGame }, Effect.none )
 
+        "promptExtend" ->
+            -- 404(旧サーバ)は「準備中」、400 は日本語の理由をその場に出す
+            if String.contains "404" message then
+                ( { model | atelier = Atelier.extendPromptFailed "準備中 — このサーバはまだ対応していません" model.atelier }, Effect.none )
+
+            else
+                ( { model | atelier = Atelier.extendPromptFailed message model.atelier }, Effect.none )
+
         "projectNew" ->
             -- 404(旧サーバ)は「準備中」に倒す。400/409 は日本語の理由をその場に出す
             if String.contains "404" message then
@@ -4949,12 +4989,15 @@ view model =
                         viewShell model (viewHome model)
 
                     AtelierTab ->
-                        -- 入口から素材 / 調整 / アーカイブへ。調整は従来の Doc エディタ
+                        -- 入口から素材 / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ
                         if Atelier.showLanding model.atelier then
                             viewShell model (Html.map AtelierMsg (Atelier.viewLanding model.atelier))
 
                         else if Atelier.showArchiver model.atelier then
                             viewShell model (Html.map AtelierMsg (Atelier.viewArchiver model.atelier))
+
+                        else if Atelier.showExtend model.atelier then
+                            viewShell model (Html.map AtelierMsg (Atelier.viewExtend model.atelier))
 
                         else if Atelier.showPicks model.atelier then
                             viewShell model (Html.map AtelierMsg (Atelier.view model.serverBase model.atelier))

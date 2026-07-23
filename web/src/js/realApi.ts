@@ -200,6 +200,11 @@ export function realApi(base: string): Api {
           if (direction !== "") q.set("direction", direction);
           return getJson(`${base}/prompt/genesis?${q}`);
         }
+        case "promptExtend": {
+          // 「ゲームを広げる」の依頼文の下書き。404(旧サーバ)は Elm 側が「準備中」に倒す
+          const q = new URLSearchParams({ kind: String(payload.kind) });
+          return getJson(`${base}/prompt/extend?${q}`);
+        }
         case "projectNew":
           // 202 が契約。400/409 は {ok:false, error:日本語} — raiseHttpError が
           // " — 理由" の形で投げ、Elm 側が理由だけ表示する

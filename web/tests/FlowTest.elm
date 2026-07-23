@@ -727,10 +727,28 @@ suite =
                 landingWith resourcesBody
                     |> ProgramTest.ensureViewHas [ class "atelier-landing" ]
                     |> ProgramTest.ensureViewHas [ text "パラメータを変える" ]
-                    |> ProgramTest.clickButton "素材を作る"
-                    |> ProgramTest.ensureViewHas [ text "✨ 新しい素材を作る" ]
+                    |> ProgramTest.clickButton "素材を切り替える"
+                    |> ProgramTest.ensureViewHas [ text "✨ 候補を作る" ]
                     |> ProgramTest.clickButton "← アトリエ"
                     |> ProgramTest.expectViewHas [ class "atelier-landing" ]
+        , test "アトリエ: 入口の「ゲームを広げる」から部屋へ、「場面を足す」で下書きが届きコピーが見える" <|
+            \() ->
+                landingWith resourcesBody
+                    |> ProgramTest.clickButton "ゲームを広げる"
+                    |> ProgramTest.ensureViewHas [ text "足したいものを選ぶと、AI に渡す依頼文の下書きができます。あなたの言葉を足して仕上げてください。" ]
+                    |> ProgramTest.clickButton "場面を足す"
+                    -- 押した瞬間に反応(取得中でも黙らせない)
+                    |> ProgramTest.ensureViewHas [ text "⏳ 下書きを作っています…" ]
+                    |> ensureKinds [ "promptExtend" ]
+                    |> respondOk 4
+                        "promptExtend"
+                        (E.object
+                            [ ( "title", E.string "場面を足す" )
+                            , ( "prompt", E.string "このゲームに新しい場面を 1 つ足してください。" )
+                            ]
+                        )
+                    |> ProgramTest.ensureViewHas [ class "atelier-extend-draft" ]
+                    |> ProgramTest.expectViewHas [ text "📋 プロンプトをコピー" ]
         , test "ホーム: pick(候補を比べて選ぼう)は入口を挟まず素材セクションへ直行する" <|
             \() ->
                 bootedWith resourcesBody
@@ -740,7 +758,7 @@ suite =
                     |> ProgramTest.clickButton "アトリエへ"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive" ]
                     |> ProgramTest.ensureViewHasNot [ class "atelier-landing" ]
-                    |> ProgramTest.expectViewHas [ text "✨ 新しい素材を作る" ]
+                    |> ProgramTest.expectViewHas [ text "✨ 候補を作る" ]
         , test "起動中: 走っているゲームの cwd が候補 dir と一致すると『● 起動中』が出る" <|
             \() ->
                 pickerBooted
