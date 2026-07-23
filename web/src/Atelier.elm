@@ -388,8 +388,7 @@ type alias Model =
     , lightbox : Maybe Lightbox
 
     -- 生まれたてのテンプレートプロジェクトか(journey の hasStarterDoc。Main が入れる)。
-    -- 真の間だけ、インタビューに「テンプレートのまま」前提のチップ(パドル等)を出す —
-    -- 育ったゲームでブロック崩しの言葉が並ぶのは無意味なので隠す
+    -- 真の間だけ、入口の「パラメータを変える」カードに「おすすめ」チップを出す
     , starterFresh : Bool
     }
 

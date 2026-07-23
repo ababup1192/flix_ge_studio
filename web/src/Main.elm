@@ -4906,7 +4906,7 @@ view model =
 
         NoServer ->
             div [ HA.class "center-screen flex h-screen flex-col items-center justify-center gap-3 text-ink-soft" ]
-                [ text "editor_server に繋がりません (port 8787)"
+                [ text "Studio の中の処理に繋がりません。アプリを開き直してください。"
                 , button [ HA.class "btn", HE.onClick RetryClicked ] [ text "再試行" ]
                 ]
 
@@ -5083,7 +5083,7 @@ viewDrawingLine model =
         div [ HA.class "drawing-line mx-auto mt-3 w-full max-w-lg px-4" ]
             [ div [ HA.class "flex items-center gap-2 text-[11px] text-ink-faint" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
-                , text "エンジンが全場面を描き出しています…"
+                , text "全場面の絵を描き直しています…"
                 ]
             ]
 

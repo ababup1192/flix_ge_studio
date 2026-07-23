@@ -528,11 +528,11 @@ logDecoder =
 -- 画面
 
 
-{-| ジャンルの相場観をチップの説明で与える(よこ長=村、たて長=崩し等)。 -}
+{-| 画面の縦横比が向く遊び方をチップの説明で与える(ジャンル名は出さない)。 -}
 presets : List { w : Int, h : Int, label : String, genre : String }
 presets =
-    [ { w = 480, h = 300, label = "よこ長 480×300", genre = "村・見下ろし向き" }
-    , { w = 240, h = 320, label = "たて長 240×320", genre = "ブロック崩し・シューティング向き" }
+    [ { w = 480, h = 300, label = "よこ長 480×300", genre = "横に広く動く遊び向き" }
+    , { w = 240, h = 320, label = "たて長 240×320", genre = "縦に落ちる・積む遊び向き" }
     , { w = 320, h = 320, label = "ましかく 320×320", genre = "" }
     ]
 
@@ -549,10 +549,10 @@ view model =
             , span [ HA.class "rounded border border-edge px-2 py-0.5 text-[12px] font-normal text-ink-soft" ]
                 [ text
                     (if model.open then
-                        "▾ とじる"
+                        "▾ 閉じる"
 
                      else
-                        "▸ ひらく"
+                        "▸ 開く"
                     )
                 ]
             ]
@@ -724,7 +724,7 @@ viewPromptConfirm family model =
         ]
         :: viewGenesisPrompt model
         ++ [ div [ HA.class "mt-2 text-[10px] leading-relaxed text-ink-faint" ]
-                [ text "良いテンプレートが生まれたら templates/ に昇格 — 次からこのジャンルは公式テンプレートつきになります。" ]
+                [ text "良いテンプレートが生まれたら公式テンプレートになります — 次からこのジャンルは名前を決めるだけではじめられます。" ]
            ]
 
 
