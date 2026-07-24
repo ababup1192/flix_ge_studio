@@ -51,7 +51,7 @@ mod Genesis {
             includes = "見下ろしサーキット・ラジコン風ドリフト",
             controls = "←→(ハンドル)",
             skeleton = "見下ろしコースを ←→ で曲がる / ライバル2台(速さは Doc)。終わり: 3周先にゴール(周回数は Doc)",
-            starter = "" }
+            starter = "templates/race-starter" }
        :: { id = "puzzle",  name = "パズル",
             verb = "積んで、そろえて、消す",
             includes = "落ち物パズル・同色そろえ・連鎖",
