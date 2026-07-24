@@ -71,10 +71,22 @@ mod SpriteColors {
     def overlay(winner: Map[String, String], base: Map[String, String]): Map[String, String] =
         Map.foldLeftWithKey((acc, name, hex) -> Map.insert(name, hex, acc), base, winner)
 
-    /// テーマのトップレベルから、色として読めるフィールドだけを "#rrggbb" で拾う
+    /// テーマから色として読めるフィールドだけを "#rrggbb" で拾う
     /// (note や rainCount のような色でない値はここで落ちる)。
+    /// テーマは 2 形ある: 色がトップレベルにフラット (engine の rpg/novel/tetris テンプレ) と、
+    /// 色を "colors": {...} の入れ子に持つ形 (村の prologue.theme.json 等・engine loader も
+    /// Map.get("colors", root) で読む)。両方に対応する — 入れ子の色を優先で重ねる。
     pub def colorFieldsOf(top: Map[String, Json]): Map[String, String] =
-        top |> Map.toList
+        let flat = colorFieldsFlat(top);
+        let nested = Map.get("colors", top)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.map(colorFieldsFlat)
+            |> Option.getWithDefault(Map.empty());
+        overlay(nested, flat)
+
+    /// object の直下から色として読めるフィールドだけを拾う (入れ子は降りない)。
+    def colorFieldsFlat(obj: Map[String, Json]): Map[String, String] =
+        obj |> Map.toList
             |> List.filterMap(entry -> {
                 let (name, json) = entry;
                 PreviewUi.colorHexOf(json) |> Option.map(hex -> (name, hex))

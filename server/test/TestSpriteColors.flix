@@ -32,6 +32,16 @@ mod TestSpriteColors {
             SpriteColors.tableOf(theme :: Nil, Map.empty(),
                 "#A0B1C2" :: "accent" :: "@ink" :: "accentLight" :: "note" :: Nil))
 
+    /// テーマは色を "colors": {...} の入れ子に持つ形もある (村の prologue.theme.json 等)。
+    /// トップレベルのフラット色 (engine テンプレ) と入れ子の色 (村) の両方が legend の解決に使える。
+    @Test
+    def testTableOfNestedColors(): Unit \ Assert =
+        let theme = topOf("{\"note\": \"words\", \"colors\": {\"skin\": \"#EEC39A\", \"body\": \"#5B6EE1\", \"hair\": \"#2E241E\"}}");
+        Assert.assertEq(
+            expected = Map#{"skin" => "#eec39a", "body" => "#5b6ee1", "hair" => "#2e241e"},
+            SpriteColors.tableOf(theme :: Nil, Map.empty(),
+                "skin" :: "body" :: "hair" :: Nil))
+
     /// 勝ち順: 先のテーマ < 後のテーマ (同名テーマを最後に回す並び) < doc 自身の palette。
     @Test
     def testTableOfPrecedence(): Unit \ Assert =
