@@ -69,7 +69,7 @@ mod Genesis {
             includes = "生き物や選手の育成・街づくり",
             controls = "選ぶだけ",
             skeleton = "毎日選ぶ → 数値が育つ(伸びは Doc)/ ときどきイベント。終わり: N 日目の発表会(N は Doc)",
-            starter = "" }
+            starter = "templates/raise-starter" }
        :: { id = "novel",   name = "ノベル・推理",
             verb = "読んで、選んで、たどり着く",
             includes = "事件を追う推理もの・分岐するノベル",
