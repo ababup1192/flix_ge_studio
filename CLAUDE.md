@@ -52,7 +52,8 @@ engine の 0.7.1 fpkg は `server/lib/` に同梱済み（オフラインでビ�
 
 - **server だけ変えた**: `make swap-jar` … jar を焼き直し、インストール済みの全 `.app`
   （`/Applications` とビルド先の両方）の同梱 jar を差し替え + 再署名する。
-- **web / UI も変えた**: `make app` … jar+web+jre を束ね直して `.app` を作る。
+- **web / UI だけ変えた**: `make swap-web` … dist を焼き直し、全 `.app` の同梱 dist を差し替え + 再署名。
+- **両方変えた / JRE も**: `make app` … jar+web+jre を束ね直して `.app` を作り直す（フルビルド）。
 
 どちらの後も Studio を **Cmd+Q で完全終了**してから開き直す（ウィンドウを閉じるだけだと中の
 java サーバが残り、古いままに見える）。

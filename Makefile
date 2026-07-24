@@ -68,6 +68,25 @@ swap-jar: jar
 	done
 	@echo "==> [swap-jar] 完了。Studio を Cmd+Q → 開き直しで反映されます（server 変更のみ）。"
 
+# --- swap-web: 動いている .app に web(UI)変更を反映（web だけ変えたとき）---
+# web/dist も .app に同梱される。make web で dist を焼き直し、全 .app の同梱 dist を
+# 差し替えて再署名する。server も変えたなら swap-jar と両方、あるいは make app（束ね直し）。
+.PHONY: swap-web
+swap-web: web
+	@for app in \
+	  "$(APP_BUNDLE)" \
+	  "/Applications/Flix GE Studio.app" \
+	  "$(HOME)/Applications/Flix GE Studio.app"; do \
+	    if [ -d "$$app" ]; then \
+	      rm -rf "$$app/Contents/Resources/dist" \
+	        && cp -R "$(WEB_DIST)" "$$app/Contents/Resources/dist" \
+	        && codesign --force --deep -s - "$$app" >/dev/null 2>&1 \
+	        && echo "==> [swap-web] 差し替え+署名: $$app" \
+	        || echo "!! [swap-web] 失敗: $$app"; \
+	    fi; \
+	done
+	@echo "==> [swap-web] 完了。Studio を Cmd+Q → 開き直しで反映されます（web 変更のみ）。"
+
 # --- web: Vite build ---
 # devbox 経由 (nodejs@22 + elm)。npm 直呼びは環境が揃わないので使わない。
 web:

@@ -27,6 +27,8 @@ import EntryOps
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
+import Svg
+import Svg.Attributes as SA
 import Journey
 import Json.Decode as D
 import Json.Encode as E
@@ -6466,9 +6468,31 @@ viewResourceWarnings warnings =
         ]
 
 
+{-| ファイル行の頭に置く書類アイコン(currentColor で行の色に追従)。
+「これは開けるファイル」を一目で示し、見出し(下の eyebrow)と区別する。 -}
+fileIcon : Html Msg
+fileIcon =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24"
+        , SA.width "13"
+        , SA.height "13"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.7"
+        , SA.strokeLinecap "round"
+        , SA.strokeLinejoin "round"
+        , SA.class "shrink-0 opacity-70"
+        ]
+        [ Svg.path [ SA.d "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" ] []
+        , Svg.path [ SA.d "M14 3v5h5" ] []
+        ]
+
+
+{-| 見出し(グループの題)。クリックできる行と紛れないよう、字間を広げた小さな
+eyebrow ラベルにする — 選択不可・上に間を空け、下のファイル行(アイコン付き)と役割を分ける。 -}
 viewGroupHeading : String -> Html Msg
 viewGroupHeading label =
-    div [ HA.class "file-group px-3 pt-2 pb-1 text-[10px] font-semibold tracking-[0.12em] text-ink-faint" ]
+    div [ HA.class "file-group select-none px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint" ]
         [ text label ]
 
 
@@ -6497,7 +6521,8 @@ viewFileRow model path =
             )
         , HE.onClick (FileClicked path)
         ]
-        [ span [ HA.class "min-w-0 flex-1 truncate" ] [ text path ]
+        [ fileIcon
+        , span [ HA.class "min-w-0 flex-1 truncate" ] [ text path ]
         , if isActive then
             -- ダークテーマで暗く沈む素の絵文字でなく、緑系バッジで「表示中」と一目に
             span
