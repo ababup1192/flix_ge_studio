@@ -134,8 +134,27 @@ mod Genesis {
         match starter {
             case None => None
             case Some(path) =>
-                let file = new JFile("${Scaffold.engineDir()}/${path}/golden/title.png");
-                if (file.isFile()) Some(Files.readAllBytes(file.toPath())) else None
+                let base = "${Scaffold.engineDir()}/${path}/golden";
+                let title = new JFile("${base}/title.png");
+                let pick = if (title.isFile()) Some(title) else firstGoldenPng(base);
+                match pick {
+                    case Some(file) => Some(Files.readAllBytes(file.toPath()))
+                    case None       => None
+                }
+        }
+
+    /// golden/ の中の絵。title.png が無い starter でも最初の .png（名前順）を顔にして、
+    /// 空絵に倒れないための安全網（新テンプレで title.png を焼き忘れても札が絵を持つ）。
+    /// 名前取り出し（getName は IO）は先に済ませ、並べ替えは純粋な文字列で行う。
+    def firstGoldenPng(dir: String): Option[JFile] \ IO =
+        let entries = new JFile(dir).listFiles();
+        if (Object.isNull(entries)) None
+        else {
+            let named = Array.toList(entries)
+                |> List.filter(file -> file.isFile())
+                |> List.map(file -> (file.getName(), file))
+                |> List.filter(pair -> String.endsWith(suffix = ".png", fst(pair)));
+            named |> List.sortBy(fst) |> List.map(snd) |> List.head
         }
 
     def promptOk(text: String): Json =

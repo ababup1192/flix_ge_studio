@@ -48,6 +48,26 @@ jar:
 	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) build-fatjar
 	@test -f $(JAR) && echo "==> [jar] OK: $(JAR)" || (echo "!! jar が出力されませんでした" && exit 1)
 
+# --- swap-jar: 動いている .app に server 変更を反映（server だけ変えたとき）---
+# .app は editor_server.jar を「自分の中に」同梱して起動する。だから make jar だけでは
+# 動いている .app に効かない。ここで jar を焼き直し、インストール済みの全 .app（/Applications と
+# ビルド先）の同梱 jar を差し替えて再署名する。web / UI も変えたなら make app（束ね直し）。
+# 反映は Studio を Cmd+Q で完全終了 → 開き直し（ウィンドウを閉じるだけだと中の java が残る）。
+.PHONY: swap-jar
+swap-jar: jar
+	@for app in \
+	  "$(APP_BUNDLE)" \
+	  "/Applications/Flix GE Studio.app" \
+	  "$(HOME)/Applications/Flix GE Studio.app"; do \
+	    if [ -d "$$app" ]; then \
+	      cp "$(JAR)" "$$app/Contents/Resources/editor_server.jar" \
+	        && codesign --force --deep -s - "$$app" >/dev/null 2>&1 \
+	        && echo "==> [swap-jar] 差し替え+署名: $$app" \
+	        || echo "!! [swap-jar] 失敗: $$app"; \
+	    fi; \
+	done
+	@echo "==> [swap-jar] 完了。Studio を Cmd+Q → 開き直しで反映されます（server 変更のみ）。"
+
 # --- web: Vite build ---
 # devbox 経由 (nodejs@22 + elm)。npm 直呼びは環境が揃わないので使わない。
 web:

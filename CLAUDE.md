@@ -44,6 +44,30 @@
 Flix コンパイラは engine リポの `bin/flix` ラッパ経由で呼ぶ（`ENGINE=` で場所を変えられる）。
 engine の 0.7.1 fpkg は `server/lib/` に同梱済み（オフラインでビルドできる）。
 
+### 動いている .app に server 変更を反映する（重要・ハマりどころ）
+
+`.app` は `editor_server.jar` を **自分の中に同梱**して起動する。だから server を直しても
+`make jar` で `server/artifact/server.jar` を焼き直すだけでは **動いている .app には効かない**
+（古い同梱 jar のまま）。
+
+- **server だけ変えた**: `make swap-jar` … jar を焼き直し、インストール済みの全 `.app`
+  （`/Applications` とビルド先の両方）の同梱 jar を差し替え + 再署名する。
+- **web / UI も変えた**: `make app` … jar+web+jre を束ね直して `.app` を作る。
+
+どちらの後も Studio を **Cmd+Q で完全終了**してから開き直す（ウィンドウを閉じるだけだと中の
+java サーバが残り、古いままに見える）。
+
+server が裏で叩く engine は `EDITOR_ENGINE`（既定 `$HOME/Desktop/flix_game_engine`）。
+`make new-game` / bake はそこの Makefile を使う（Studio のビルド依存 fpkg とは別物）。
+
+### ジャンルとテンプレ（Genesis）
+
+「新しいゲーム」のジャンル 9 枚は `server/src/Genesis.flix` の families。`starter` が非空の
+ジャンルは複製で始まり（`templates/<name>` を engine の `make new-game`）、札のサムネは
+その `golden/title.png`（無ければ golden の最初の絵に倒れる安全網あり）。テンプレを足す
+全手順は engine の CLAUDE.md「テンプレートを足す・更新する」に集約。足したら Studio 側で
+`starter` を差して **`make swap-jar`**。
+
 ### テスト
 
 - **web**: `elm-test`（Elm ロジック）と `vitest`（TS）。
