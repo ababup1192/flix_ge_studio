@@ -51,7 +51,7 @@ mod Genesis {
             includes = "見下ろしサーキット・ラジコン風ドリフト",
             controls = "←→(ハンドル)",
             skeleton = "見下ろしコースを ←→ で曲がる / ライバル2台(速さは Doc)。終わり: 3周先にゴール(周回数は Doc)",
-            starter = "templates/race-starter" }
+            starter = "" }
        :: { id = "puzzle",  name = "パズル",
             verb = "積んで、そろえて、消す",
             includes = "落ち物パズル・同色そろえ・連鎖",
@@ -63,13 +63,13 @@ mod Genesis {
             includes = "横スクロール・縦スクロール",
             controls = "←→ + スペース",
             skeleton = "縦スクロール / ←→で動きスペースで撃つ / 敵の波(並びは Doc の rows)。終わり: 全波を全滅",
-            starter = "templates/shooter-starter" }
+            starter = "" }
        :: { id = "raise",   name = "育成・シミュレーション",
             verb = "育てて、見守る",
             includes = "生き物や選手の育成・街づくり",
             controls = "選ぶだけ",
             skeleton = "毎日選ぶ → 数値が育つ(伸びは Doc)/ ときどきイベント。終わり: N 日目の発表会(N は Doc)",
-            starter = "templates/raise-starter" }
+            starter = "" }
        :: { id = "novel",   name = "ノベル・推理",
             verb = "読んで、選んで、たどり着く",
             includes = "事件を追う推理もの・分岐するノベル",
