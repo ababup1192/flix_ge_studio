@@ -61,9 +61,9 @@ mod Genesis {
        :: { id = "shooter", name = "シューティング",
             verb = "よけて、撃つ",
             includes = "横スクロール・縦スクロール",
-            controls = "←→↑↓ + スペース",
-            skeleton = "横スクロール / ←→↑↓ + スペースで撃つ / 敵の波(並びは Doc の rows)。終わり: ボスを倒す",
-            starter = "" }
+            controls = "←→ + スペース",
+            skeleton = "縦スクロール / ←→で動きスペースで撃つ / 敵の波(並びは Doc の rows)。終わり: 全波を全滅",
+            starter = "templates/shooter-starter" }
        :: { id = "raise",   name = "育成・シミュレーション",
             verb = "育てて、見守る",
             includes = "生き物や選手の育成・街づくり",
