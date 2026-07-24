@@ -55,9 +55,9 @@ mod Genesis {
        :: { id = "puzzle",  name = "パズル",
             verb = "積んで、そろえて、消す",
             includes = "落ち物パズル・同色そろえ・連鎖",
-            controls = "←→ + ↓",
-            skeleton = "上からピースが落ちる / ←→ + ↓ / そろうと消える(そろい方は Doc)。終わり: 積み上がったら負け",
-            starter = "" }
+            controls = "←→ + ↓ + 回転",
+            skeleton = "上からピースが落ちる / ←→ で寄せ ↓ で落とし回して積む / 一列そろうと消える(落下速度・得点は Doc)。終わり: 積み上がったら負け",
+            starter = "templates/tetris-starter" }
        :: { id = "shooter", name = "シューティング",
             verb = "よけて、撃つ",
             includes = "横スクロール・縦スクロール",

@@ -25,23 +25,24 @@ mod TestGenesis {
              status(Map#{"family" => "free"}),
              status(Map#{"family" => "free", "direction" => "猫が魚を集める"})))
 
-    /// 公式テンプレートの登録: action / novel / rpg は starter 持ち、free は持たない。
+    /// 公式テンプレートの登録: action / novel / rpg / puzzle は starter 持ち、free は持たない。
     @Test
     def testStarters(): Unit \ Assert =
         let starterOf = id -> Genesis.families()
             |> List.filter(f -> f#id == id) |> List.head
             |> Option.map(f -> f#starter != "");
         Assert.assertEq(
-            expected = (Some(true), Some(true), Some(true), Some(false)),
-            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("free")))
+            expected = (Some(true), Some(true), Some(true), Some(true), Some(false)),
+            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("puzzle"), starterOf("free")))
 
     /// 複製元の白名簿: 登録済みテンプレートだけ通す(空・未知・似た経路は弾く)。
     @Test
     def testIsStarter(): Unit \ Assert =
         Assert.assertEq(
-            expected = (true, true, false, false, false),
+            expected = (true, true, true, false, false, false),
             (Genesis.isStarter("templates/novel-starter"),
              Genesis.isStarter("templates/rpg-starter"),
+             Genesis.isStarter("templates/tetris-starter"),
              Genesis.isStarter(""),
              Genesis.isStarter("templates/unknown"),
              Genesis.isStarter("../templates/novel-starter")))
