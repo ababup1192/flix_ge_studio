@@ -186,6 +186,25 @@ suite =
                                 MapEditor.layerAlpha MapEditor.TerrainLayer selected |> Expect.within (Expect.Absolute 0.001) 0.45
                             ]
                             ()
+        , test "文字格子の判定 — トップに rows があれば開ける。ドット絵(sprites.frames の下)は掛からない" <|
+            \_ ->
+                let
+                    course =
+                        MapEditor.fromDoc Nothing (parse """{ "version": 1, "rows": [ "..##..", "..##.." ] }""")
+
+                    sprite =
+                        MapEditor.fromDoc Nothing
+                            (parse """{ "sprites": { "hero": { "frames": { "idle": [ "..ii..", ".iiii." ] } } } }""")
+
+                    emptyRows =
+                        MapEditor.fromDoc Nothing (parse """{ "rows": [] }""")
+                in
+                Expect.all
+                    [ \_ -> course |> Maybe.map (.rows >> List.length) |> Expect.equal (Just 2)
+                    , \_ -> sprite |> Expect.equal Nothing
+                    , \_ -> emptyRows |> Expect.equal Nothing
+                    ]
+                    ()
         , test "地形パレット — 仮色は並び順から色相を離して導く(少数の候補どうしが必ず見分けられる)。'.' は無彩色の暗色" <|
             \_ ->
                 let

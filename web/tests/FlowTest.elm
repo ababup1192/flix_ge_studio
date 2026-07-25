@@ -150,6 +150,15 @@ resourcesBody =
         ]
 
 
+{-| GET /changes の応答(パス → mtime)。開いているファイルの鮮度だけ見る。 -}
+changesBody : String -> Int -> E.Value
+changesBody path mtime =
+    E.object
+        [ ( "token", E.string ("t" ++ String.fromInt mtime) )
+        , ( "files", E.object [ ( path, E.int mtime ) ] )
+        ]
+
+
 fileBody : String -> String -> E.Value
 fileBody path content =
     -- mtime はサーバが常に添える(保存の ifMtime の種)
@@ -477,6 +486,20 @@ lightSchemaText =
     """{"sections": {
          "darkness": {"kind": "value", "type": "float", "label": "暗幕の濃さ", "min": 0, "max": 1, "default": 0.85},
          "rim": {"kind": "record", "fields": {"alpha": {"type": "float", "label": "縁の濃さ"}}}}}"""
+
+
+{-| group で束ねる単一値だけのスキーマ(タブ 2 枚に畳まれる)。 -}
+groupedSchemaText : String
+groupedSchemaText =
+    """{"sections": {
+         "darkness": {"kind": "value", "type": "float", "group": "明かり"},
+         "rimAlpha": {"kind": "value", "type": "float", "group": "明かり"},
+         "volume": {"kind": "value", "type": "float", "group": "音"}}}"""
+
+
+groupedDocText : String
+groupedDocText =
+    """{"darkness": 0.55, "rimAlpha": 0.2, "volume": 0.8}"""
 
 
 lightDocText : String
@@ -1322,9 +1345,8 @@ suite =
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" lightDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" lightSchemaText)
-                    -- 単一値セクションもタブに並ぶ(先頭なので既定で開いている)
-                    |> ProgramTest.ensureViewHas [ text "darkness" ]
-                    |> ProgramTest.ensureViewHas [ text "暗幕の濃さ" ]
+                    -- 単一値は group 未指定なので「基本」タブへ束ねる(値ごとにタブを割らない)
+                    |> ProgramTest.ensureViewHas [ text "基本" ]
                     |> typeNumberBox "0.7"
                     |> keydownOn [ class "number-box" ] "Enter"
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
@@ -1333,17 +1355,49 @@ suite =
                             (D.at [ "payload", "value" ] D.float)
                         )
                         (Expect.equal [ ( [ "darkness" ], 0.7 ) ])
-        , test "セクションタブ: label があれば表示名・無ければキー名で出る" <|
+        , test "外部変更の見張り: 打ちかけが無ければ黙って読み直す" <|
+            \() ->
+                openedLevel
+                    |> respondOk 0 "changes" (changesBody "assets/level.json" 222)
+                    -- 取り直しの getFile が飛ぶ(何もしなくても最新になる)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.at [ "kind" ] D.string)
+                        (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [ "getFile" ])
+        , test "外部変更の見張り: mtime が同じなら何も起きない" <|
+            \() ->
+                openedLevel
+                    |> respondOk 0 "changes" (changesBody "assets/level.json" 111)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.at [ "kind" ] D.string)
+                        (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [])
+        , test "外部変更の見張り: 打ちかけがあれば読み直さず帯で知らせる" <|
+            \() ->
+                dirtyHitbox
+                    |> respondOk 0 "changes" (changesBody "hitbox.json" 222)
+                    -- 勝手に取り直さない(打ちかけを捨てない)
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        (D.at [ "kind" ] D.string)
+                        (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [])
+                    |> ProgramTest.expectViewHas [ text "このファイルは外で変わりました" ]
+        , test "セクションタブ: 一覧を持つ種類は label があれば表示名・無ければキー名で出る" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
                     |> ProgramTest.clickButton "assets/b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" lightDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" lightSchemaText)
-                    -- darkness は label「暗幕の濃さ」でタブに出る(キー名 darkness は出さない)
-                    |> ProgramTest.ensureViewHas [ text "暗幕の濃さ" ]
-                    -- rim は label 無し → キー名 rim がタブに出る
+                    -- rim(record)は label 無し → キー名 rim がタブに出る
                     |> ProgramTest.expectViewHas [ text "rim" ]
+        , test "group: 同じ group の単一値は 1 枚のタブに束ねる(値ごとにタブを割らない)" <|
+            \() ->
+                bootedWith dungeonDeclaredSchemaBody
+                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" groupedDocText)
+                    |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" groupedSchemaText)
+                    -- 3 つの値が「明かり」と「音」の 2 枚に畳まれる(既定の「基本」は出ない)
+                    |> ProgramTest.ensureViewHas [ text "明かり" ]
+                    |> ProgramTest.expectViewHas [ text "音" ]
         , test "ペイン幅は可動域に丸まる(左 160..480・右 240..640)" <|
             \() ->
                 [ Main.clampPaneWidth Main.LeftPane 20

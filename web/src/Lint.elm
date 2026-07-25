@@ -43,8 +43,37 @@ check =
 -}
 checkAcross : List Sources.SourceDoc -> Schema.Schema -> D.Value -> List Problem
 checkAcross others schema doc =
-    schema.sections
+    (schema.sections
         |> List.concatMap (\( key, section ) -> checkSection others doc key section)
+    )
+        ++ rootKeyProblems schema doc
+
+
+{-| 文書直下のキーのうち、どのセクションにも対応しない物。
+
+セクションを 1 つ書き忘れると、その設定は**ファイルには残るのにエディタから触れなく
+なる**。中身の検査はセクションごとに走るが、直下は誰も見ていなかったので
+気付けなかった。version と note（人と AI のためのメモ）は規約で認めた物なので数えない。
+-}
+rootKeyProblems : Schema.Schema -> D.Value -> List Problem
+rootKeyProblems schema doc =
+    let
+        declared =
+            List.map Tuple.first schema.sections
+
+        allowed k =
+            List.member k declared || k == "version" || k == "note" || String.startsWith "//" k
+    in
+    entryKeys doc
+        |> List.filter (\k -> not (allowed k))
+        |> List.map
+            (\k ->
+                { sectionKey = k
+                , entry = Nothing
+                , field = Nothing
+                , message = "スキーマが \"" ++ k ++ "\" を宣言していません（エディタから触れません）"
+                }
+            )
 
 
 checkSection : List Sources.SourceDoc -> D.Value -> String -> Schema.Section -> List Problem

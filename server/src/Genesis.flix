@@ -48,10 +48,10 @@ mod Genesis {
             starter = "" }
        :: { id = "race",    name = "レース",
             verb = "追い抜いて、一位に",
-            includes = "見下ろしサーキット・ラジコン風ドリフト",
-            controls = "←→(ハンドル)",
-            skeleton = "見下ろしコースを ←→ で曲がる / ライバル2台(速さは Doc)。終わり: 3周先にゴール(周回数は Doc)",
-            starter = "" }
+            includes = "疑似3Dホバーレース・高速コース・ジャンプ",
+            controls = "←→ + アクセル / ブレーキ + ブースト",
+            skeleton = "4:3の後方視点で大きなカーブを読む / ブレーキ旋回・加速帯・ジャンプ台 / 壁で反発してエネルギー0なら爆発 / 速度追従の駆動音。終わり: 規定周回で順位と時間を表示(周回数は Doc)",
+            starter = "templates/midnight-apex-starter" }
        :: { id = "puzzle",  name = "パズル",
             verb = "積んで、そろえて、消す",
             includes = "落ち物パズル・同色そろえ・連鎖",

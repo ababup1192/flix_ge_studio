@@ -8,6 +8,7 @@ module PixelEditor exposing
     , fromDoc
     , goldenHue
     , init
+    , isPlaying
     , paintAt
     , palette
     , pickAt
@@ -58,8 +59,17 @@ type alias Doc =
 
 type alias Sprite =
     { name : String
+
+    -- 種別(*.sprite.json の sprites[].group)。19 体を 1 列に並べると探せないので、
+    -- 束ねて見出しを付ける。宣言が無ければ「その他」へ。
+    , group : String
     , frames : List ( String, List String )
     }
+
+
+defaultGroup : String
+defaultGroup =
+    "その他"
 
 
 {-| 編集 1 件 = 1 コマの rows 丸ごと。 -}
@@ -128,7 +138,13 @@ cleanSprite ( name, value ) =
                         Nothing
 
                     else
-                        Just { name = name, frames = frames }
+                        Just
+                            { name = name
+                            , group =
+                                D.decodeValue (D.field "group" D.string) value
+                                    |> Result.withDefault defaultGroup
+                            , frames = frames
+                            }
                 )
 
 
@@ -202,6 +218,9 @@ type alias Model =
     , working : Maybe Edit
     , undo : List Snapshot
     , redo : List Snapshot
+
+    -- コマ送りで動きを見せている最中か。編集を始めたら止める
+    , playing : Bool
     }
 
 
@@ -217,6 +236,7 @@ init =
     , working = Nothing
     , undo = []
     , redo = []
+    , playing = False
     }
 
 
@@ -231,7 +251,44 @@ strokeActive model =
 -}
 release : Model -> Model
 release model =
-    { model | stroke = Nothing, working = Nothing, hover = Nothing }
+    { model | stroke = Nothing, working = Nothing, hover = Nothing, playing = False }
+
+
+{-| コマ送り中か(親が時計を購読する間だけ True)。 -}
+isPlaying : Model -> Bool
+isPlaying model =
+    model.playing
+
+
+{-| いまの絵の次のコマ。最後まで来たら先頭へ戻る。 -}
+nextFrameKey : Doc -> Model -> Maybe String
+nextFrameKey doc model =
+    case selectedSprite doc model of
+        Nothing ->
+            model.frameKey
+
+        Just sprite ->
+            let
+                names =
+                    List.map Tuple.first sprite.frames
+
+                current =
+                    model.frameKey |> Maybe.withDefault (List.head names |> Maybe.withDefault "")
+
+                after =
+                    names
+                        |> List.drop 1
+                        |> List.map2 (\a b -> ( a, b )) names
+                        |> List.filter (\( a, _ ) -> a == current)
+                        |> List.head
+                        |> Maybe.map Tuple.second
+            in
+            case after of
+                Just next ->
+                    Just next
+
+                Nothing ->
+                    List.head names
 
 
 
@@ -244,6 +301,8 @@ type Msg
     | AddColorPressed
     | SpriteChosen String
     | FrameChosen String
+    | PlayToggled
+    | PlayTicked
     | ZoomStepped Int
     | CellPressed Int Int Int
     | CellEntered Int Int
@@ -292,6 +351,13 @@ update doc msg model =
             , Silent
             )
 
+        PlayToggled ->
+            ( { model | playing = not model.playing }, Silent )
+
+        PlayTicked ->
+            -- 次のコマへ。最後まで来たら先頭へ戻る(輪にして動きとして見せる)
+            ( { model | frameKey = nextFrameKey doc model, working = Nothing }, Silent )
+
         FrameChosen name ->
             ( { model | frameKey = Just name, working = Nothing, stroke = Nothing }, Silent )
 
@@ -314,7 +380,8 @@ update doc msg model =
             ( { model | hover = Nothing }, Silent )
 
         CellPressed x y buttonId ->
-            press doc ( x, y ) buttonId model
+            -- 動いている絵に描くと狙いが外れるので、描き始めたらコマ送りを止める
+            press doc ( x, y ) buttonId { model | playing = False }
 
         StrokeEnded ->
             endStroke model
@@ -832,14 +899,22 @@ viewChips doc model grid =
             selectedSprite doc model
                 |> Maybe.map .frames
                 |> Maybe.withDefault []
+
+        groupRow ( name, sprites ) =
+            div [ HA.class "flex items-start gap-2" ]
+                [ span [ HA.class "mt-1 w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text name ]
+                , div [ HA.class "flex flex-wrap items-center gap-1" ] (List.map spriteChip sprites)
+                ]
     in
     div [ HA.class "px-chips shrink-0 border-b border-edge bg-panel px-3 py-1.5" ]
-        (div [ HA.class "flex flex-wrap items-center gap-1" ]
-            (List.map spriteChip doc.sprites)
+        (div [ HA.class "flex flex-col gap-1" ] (groupsOf doc |> List.map groupRow)
             :: (if List.length frameChips > 1 then
                     [ div [ HA.class "mt-1 flex flex-wrap items-center gap-1" ]
-                        (frameChips
-                            |> List.map (\( name, _ ) -> chip (name == grid.frame) (FrameChosen name) name)
+                        (span [ HA.class "w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text "コマ" ]
+                            :: (frameChips
+                                    |> List.map (\( name, _ ) -> chip (name == grid.frame) (FrameChosen name) name)
+                               )
+                            ++ [ viewPlayButton model ]
                         )
                     ]
 
@@ -847,6 +922,53 @@ viewChips doc model grid =
                     []
                )
         )
+
+
+{-| 種別 → その中のスプライト。並びは *.sprite.json に書いた順(発明しない)。 -}
+groupsOf : Doc -> List ( String, List Sprite )
+groupsOf doc =
+    doc.sprites
+        |> List.foldl
+            (\sprite acc ->
+                if List.any (\( name, _ ) -> name == sprite.group) acc then
+                    acc |> List.map
+                        (\( name, xs ) ->
+                            if name == sprite.group then
+                                ( name, sprite :: xs )
+
+                            else
+                                ( name, xs )
+                        )
+
+                else
+                    ( sprite.group, [ sprite ] ) :: acc
+            )
+            []
+        |> List.map (\( name, xs ) -> ( name, List.reverse xs ))
+        |> List.reverse
+
+
+{-| コマ送りの入/切。動きは 1 コマずつ眺めても分からないので、並べて見るのではなく
+実際に回して確かめられるようにする。編集を始めたら自動で止まる。
+-}
+viewPlayButton : Model -> Html Msg
+viewPlayButton model =
+    button
+        [ HA.classList
+            [ ( "chip btn rounded-full", True )
+            , ( "border-transparent bg-accent text-white hover:bg-accent", model.playing )
+            ]
+        , HA.title "コマ送りで動きを確かめる"
+        , HE.onClick PlayToggled
+        ]
+        [ text
+            (if model.playing then
+                "⏸ 止める"
+
+             else
+                "▶ 動かす"
+            )
+        ]
 
 
 chip : Bool -> Msg -> String -> Html Msg

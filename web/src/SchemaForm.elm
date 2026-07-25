@@ -18,6 +18,8 @@ import Widgets.Weights as Weights
 type alias Row =
     { name : String
     , label : String
+    , unit : Maybe String
+    , hint : Maybe String
     , required : Bool
     , control : Control
 
@@ -100,6 +102,8 @@ row : Context -> Section -> D.Value -> String -> Field -> Row
 row ctx section entry name field =
     { name = name
     , label = Maybe.withDefault name field.label
+    , unit = field.unit
+    , hint = field.hint
     , required = field.required
     , control = control ctx entry name field
     , condition = field.enabledWhen |> Maybe.map (condition section entry)

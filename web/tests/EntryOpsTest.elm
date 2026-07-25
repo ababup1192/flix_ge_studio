@@ -47,6 +47,8 @@ emptyField : FieldType -> Schema.Field
 emptyField type_ =
     { type_ = type_
     , label = Nothing
+    , unit = Nothing
+    , hint = Nothing
     , order = Nothing
     , widget = Nothing
     , required = False
@@ -68,6 +70,7 @@ routesSection : Schema.Section
 routesSection =
     { kind = Schema.Catalog
     , label = Nothing
+    , group = Nothing
     , fields =
         [ ( "type", emptyField (TEnum [ "straight", "sine" ]) )
         , ( "speed", emptyField TFloat |> withDefault (E.float 60) )
@@ -80,6 +83,7 @@ spawnsSection : Schema.Section
 spawnsSection =
     { kind = Schema.ListKind
     , label = Nothing
+    , group = Nothing
     , fields =
         [ ( "atX", emptyField TInt )
         , ( "name", emptyField TText )

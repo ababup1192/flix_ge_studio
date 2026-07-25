@@ -531,6 +531,11 @@ type alias Model =
     -- currentMtime は今ディスクに居る版 — 「構わず上書き」はこの版までしか潰さない
     , conflict : Maybe { currentMtime : Maybe Int }
 
+    -- 開いているファイルがディスクで変わった印(Just = 今ディスクに居る版の mtime)。
+    -- 保存時の 409 は最後の砦で、こちらは「編集を始める前に気付く」ための見張り。
+    -- 打ちかけが無ければ黙って読み直し、あるときだけ帯を出して選ばせる
+    , staleMtime : Maybe Int
+
     -- スキーマ駆動フォーム(右ペイン)
     , schemaState : SchemaState
     , schemaReq : Maybe Int
@@ -716,6 +721,7 @@ init _ =
         , putReq = Nothing
         , savingText = Nothing
         , conflict = Nothing
+        , staleMtime = Nothing
         , schemaState = SchemaNone
         , schemaReq = Nothing
         , sectionKey = Nothing
@@ -847,6 +853,9 @@ type Msg
     | TabClicked Tab
     | JourneyMsg Journey.Msg
     | ChangesPollTick
+    | ReloadClicked
+    | StaleDismissed
+    | FileWatchTick
     | ChangesNextClicked
     | ChangesModalClosed
     | ScenesOpened
@@ -1292,18 +1301,19 @@ update msg model =
 
         ReloadChosen ->
             -- 409 応答はサーバ側の本文を含まないので、開き直しの getFile で取り直す
-            case model.current of
-                Just path ->
-                    let
-                        ( m1, cmd ) =
-                            request "getFile"
-                                (E.object [ ( "path", E.string path ) ])
-                                { model | conflict = Nothing, savingText = Nothing, activeDraft = Nothing }
-                    in
-                    ( { m1 | loadReq = Just m1.reqCounter }, cmd )
+            reloadCurrent model
 
-                Nothing ->
-                    ( { model | conflict = Nothing, savingText = Nothing }, Effect.none )
+        ReloadClicked ->
+            -- 手で読み直す。ディスクの版を素直に取り直すだけ(打ちかけは捨てる)
+            reloadCurrent model
+
+        StaleDismissed ->
+            -- 「このまま続ける」。帯は畳むが、保存は ifMtime で 409 に弾かれる
+            ( { model | staleMtime = Nothing }, Effect.none )
+
+        FileWatchTick ->
+            -- 開いている間だけの見張り。全ファイルの mtime を 1 回で貰う
+            ( model, requestInfo "changes" )
 
         OverwriteChosen ->
             -- 409 が伝えた「今ディスクに居る版」を ifMtime に使う — ダイアログ表示中に
@@ -3104,22 +3114,20 @@ pixelPayload edit =
     }
 
 
-{-| 開いているファイルがマップ(パスが .map.json で終わり、rows が文字列配列)
-なら、その読み取り結果。読めない文書は Nothing — 従来のフォーム/コード表示へ
-静かに倒れる(spriteDocCurrent と同じ流儀。毎回引くのも同じ理由)。
+{-| 開いている文書がトップに rows(文字列の配列)を持つなら、その読み取り結果。
+判定にファイル名を使わないのは、文字格子がマップ以外にも使われるから(コース・
+波・盤面…)。名前で縛ると、同じ形の文書なのに塗って直せる物と直せない物が出る。
+
+ドット絵(\*.sprite.json)は文字格子でも rows をトップに持たない
+(sprites.<名前>.frames の下)ので、ここには掛からずピクセルエディタのままになる。
+
+読めない文書は Nothing — 従来のフォーム/コード表示へ静かに倒れる
+(spriteDocCurrent と同じ流儀。毎回引くのも同じ理由)。
 -}
 mapDocCurrent : Model -> Maybe MapEditor.Doc
 mapDocCurrent model =
-    case ( model.current, parsedDoc model ) of
-        ( Just path, Just doc ) ->
-            if String.endsWith ".map.json" path then
-                MapEditor.fromDoc (terrainDocCurrent model) doc
-
-            else
-                Nothing
-
-        _ ->
-            Nothing
+    parsedDoc model
+        |> Maybe.andThen (MapEditor.fromDoc (terrainDocCurrent model))
 
 
 {-| 地形パレットの素になる terrain Doc。editor.resources に宣言された
@@ -3191,9 +3199,17 @@ currentSection model =
                 key =
                     activeSectionKey schema model
             in
-            schema.sections
-                |> List.filter (\( k, _ ) -> k == key)
-                |> List.head
+            case activeTab schema model of
+                Just tab ->
+                    case tab.sections of
+                        [ only ] ->
+                            Just only
+
+                        _ ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
 
         _ ->
             Nothing
@@ -3991,6 +4007,28 @@ handleOkByKind env model =
                     -- 契約とずれた応答(旧サーバ等)も「準備中」の 1 枚に倒す(落とさない)
                     ( { model | journey = Journey.failed "契約とずれた応答" }, Effect.none )
 
+        "changes" ->
+            -- 開いているファイルの mtime だけ見る。変わっていて打ちかけが無ければ
+            -- 黙って読み直す(何もしなくても最新になる)。打ちかけがあるときだけ帯を出す
+            case ( model.current, D.decodeValue diskMtimesDecoder env.body ) of
+                ( Just path, Ok mtimes ) ->
+                    case ( Dict.get path mtimes, model.mtime ) of
+                        ( Just disk, Just known ) ->
+                            if disk == known then
+                                ( { model | staleMtime = Nothing }, Effect.none )
+
+                            else if model.dirty || model.savingText /= Nothing then
+                                ( { model | staleMtime = Just disk }, Effect.none )
+
+                            else
+                                reloadCurrent model
+
+                        _ ->
+                            ( model, Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
         "journeyChanges" ->
             case D.decodeValue Journey.changesDecoder env.body of
                 Ok changes ->
@@ -4430,9 +4468,31 @@ handleOkByKind env model =
                                         , spriteColorsReq = Nothing
                                         , mapEd = MapEditor.init
 
-                                        -- ジャンプで開いた時だけ選択が乗る(普段は Nothing のまま)
-                                        , sectionKey = model.pendingJump |> Maybe.map .sectionKey
-                                        , entrySel = model.pendingJump |> Maybe.map .entry
+                                        -- ジャンプで開いた時だけ選択が乗る。同じファイルの
+                                        -- 読み直しでは開いている場所を保つ(読み直すたびに
+                                        -- 先頭タブへ飛ぶと、作業の続きに戻れない)
+                                        , sectionKey =
+                                            case model.pendingJump of
+                                                Just jump ->
+                                                    Just jump.sectionKey
+
+                                                Nothing ->
+                                                    if model.current == Just fc.path then
+                                                        model.sectionKey
+
+                                                    else
+                                                        Nothing
+                                        , entrySel =
+                                            case model.pendingJump of
+                                                Just jump ->
+                                                    Just jump.entry
+
+                                                Nothing ->
+                                                    if model.current == Just fc.path then
+                                                        model.entrySel
+
+                                                    else
+                                                        Nothing
                                         , pendingJump = Nothing
                                     }
 
@@ -5195,6 +5255,38 @@ request kind payload model =
     ( { model | reqCounter = id }
     , Effect.SendApi { id = id, kind = kind, payload = payload }
     )
+
+
+{-| 開いているファイルをディスクから取り直す。打ちかけ・保存待ち・競合の印は畳む。
+409 のダイアログからも手の「読み直す」からも同じ道を通す(道が 2 本あると片方が腐る)。
+-}
+reloadCurrent : Model -> ( Model, Effect )
+reloadCurrent model =
+    case model.current of
+        Just path ->
+            let
+                ( m1, cmd ) =
+                    request "getFile"
+                        (E.object [ ( "path", E.string path ) ])
+                        { model
+                            | conflict = Nothing
+                            , staleMtime = Nothing
+                            , savingText = Nothing
+                            , activeDraft = Nothing
+                        }
+            in
+            ( { m1 | loadReq = Just m1.reqCounter }, cmd )
+
+        Nothing ->
+            ( { model | conflict = Nothing, staleMtime = Nothing, savingText = Nothing }, Effect.none )
+
+
+{-| GET /changes の files(パス → mtime ミリ秒)。token は使わない — 見たいのは
+「開いているファイルが変わったか」の 1 点だけなので、集計より個別の方が素直。
+-}
+diskMtimesDecoder : D.Decoder (Dict.Dict String Int)
+diskMtimesDecoder =
+    D.field "files" (D.dict (D.map round D.float))
 
 
 {-| 読み取り専用(ホームの提案・知らせ等)の封筒。応答は kind で受けるので、
@@ -6056,11 +6148,11 @@ viewEditing model =
 {-| kind value/field(セクション = 単一の値)を行フォーム機構に乗せる変換。
 「文書全体を entry・セクション名をフィールド名」と見なすと、既存の行
 (draft・min/max・スライダー)がそのまま使え、書き戻し先も文書直下の
-[セクション名] になる。
+[セクション名] になる。同じタブに束ねた複数の値も、まとめて 1 枚の表になる。
 -}
-valueSectionAsRecord : String -> Schema.Field -> Schema.Section
-valueSectionAsRecord key field =
-    { kind = Schema.RecordKind, label = Nothing, fields = [ ( key, field ) ] }
+valueSectionsAsRecord : List ( String, Schema.Field ) -> Schema.Section
+valueSectionsAsRecord fields =
+    { kind = Schema.RecordKind, label = Nothing, group = Nothing, fields = fields }
 
 
 {-| ペイン境界のつまみ(縦帯)。ドラッグで隣のペインの幅を変える。
@@ -6174,6 +6266,28 @@ viewEditToolbar model =
 
             Nothing ->
                 text ""
+        , case model.staleMtime of
+            -- 外で変わったのに手元に打ちかけがある。保存は 409 で弾かれるので
+            -- 黙って潰れることは無いが、気付くのは早い方がよい
+            Just _ ->
+                span
+                    [ HA.class "stale flex shrink-0 items-center gap-1.5 rounded-sm bg-amber-500/20 px-1.5 py-px text-[11px] text-amber-300 ring-1 ring-amber-400/40" ]
+                    [ text "このファイルは外で変わりました"
+                    , button
+                        [ HA.class "cursor-pointer underline underline-offset-2"
+                        , HE.onClick ReloadClicked
+                        ]
+                        [ text "読み直す" ]
+                    , button
+                        [ HA.class "cursor-pointer text-amber-300/70 hover:text-amber-300"
+                        , HA.title "帯を畳む(保存しようとすると、それでも止まります)"
+                        , HE.onClick StaleDismissed
+                        ]
+                        [ text "×" ]
+                    ]
+
+            Nothing ->
+                text ""
         , if model.dirty then
             span [ HA.class "dirty flex shrink-0 items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "inline-block h-1.5 w-1.5 rounded-full bg-accent" ] []
@@ -6183,6 +6297,13 @@ viewEditToolbar model =
           else
             text ""
         , span [ HA.class "spacer flex-1" ] []
+        , button
+            [ HA.class "btn"
+            , HA.title "ディスクの今の中身を取り直す(手元の打ちかけは捨てる)"
+            , HA.disabled (model.current == Nothing)
+            , HE.onClick ReloadClicked
+            ]
+            [ text "読み直す" ]
         , button
             [ HA.classList
                 [ ( "live-toggle btn", True )
@@ -6972,14 +7093,151 @@ viewEditorPane model =
 -- ビジュアルモード(テーブル+フォームで完結する既定画面)
 
 
-{-| タブの実効キー(未クリックは先頭セクション)。update 側の currentSection と
+{-| タブ 1 枚。単一値のセクションは複数まとまって 1 枚になるので、タブとセクションは
+1 対 1 ではない。key はクリックで開く識別子(group 名 または セクションキー)。
+-}
+type alias FormTab =
+    { key : String
+    , label : String
+    , sections : List ( String, Schema.Section )
+    }
+
+
+defaultTabLabel : String
+defaultTabLabel =
+    "基本"
+
+
+{-| 文書のメモ(規約で認めた note)。どの Doc でも同じ名前・同じ位置(いちばん最後)に
+置く — 書いた順のままだと先頭に来ることが多く、開いた人が「まず何をすればいいか」を
+見失う。 -}
+noteKey : String
+noteKey =
+    "note"
+
+
+noteTabLabel : String
+noteTabLabel =
+    "メモ"
+
+
+{-| セクション列をタブへ束ねる。単一値(value/field)だけが束ね対象 —
+一覧や入れ子を持つ種類は、操作(追加・削除・並べ替え)がタブ単位なので混ぜない。
+束ね先は宣言した group、書いていなければ「基本」。並びは書いた順のまま。
+-}
+tabsOf : Schema.Schema -> List FormTab
+tabsOf schema =
+    let
+        tabOf ( key, section ) =
+            case section.kind of
+                Schema.ValueKind _ ->
+                    if key == noteKey then
+                        ( noteTabLabel, noteTabLabel )
+
+                    else
+                        ( Maybe.withDefault defaultTabLabel section.group
+                        , Maybe.withDefault defaultTabLabel section.group
+                        )
+
+                _ ->
+                    ( key, Maybe.withDefault key section.label )
+
+        add pair tabs =
+            let
+                ( tabKey, tabLabel ) =
+                    tabOf pair
+            in
+            if List.any (\t -> t.key == tabKey) tabs then
+                tabs
+                    |> List.map
+                        (\t ->
+                            if t.key == tabKey then
+                                { t | sections = pair :: t.sections }
+
+                            else
+                                t
+                        )
+
+            else
+                { key = tabKey, label = tabLabel, sections = [ pair ] } :: tabs
+    in
+    let
+        built =
+            supportedSections schema
+                |> List.foldl add []
+                |> List.map (\t -> { t | sections = List.reverse t.sections })
+                |> List.reverse
+    in
+    List.filter (\t -> t.key /= noteTabLabel) built
+        ++ List.filter (\t -> t.key == noteTabLabel) built
+
+
+{-| 表示中のタブ。lint や逆参照からの飛び先はセクションキーなので、
+タブキーで当たらなければ「そのセクションを含むタブ」へ読み替える。
+-}
+activeTab : Schema.Schema -> Model -> Maybe FormTab
+activeTab schema model =
+    let
+        tabs =
+            tabsOf schema
+
+        byKey k =
+            tabs |> List.filter (\t -> t.key == k) |> List.head
+
+        bySection k =
+            tabs
+                |> List.filter (\t -> t.sections |> List.any (\( sk, _ ) -> sk == k))
+                |> List.head
+    in
+    case model.sectionKey of
+        Just k ->
+            case byKey k of
+                Just t ->
+                    Just t
+
+                Nothing ->
+                    case bySection k of
+                        Just t ->
+                            Just t
+
+                        Nothing ->
+                            List.head tabs
+
+        Nothing ->
+            List.head tabs
+
+
+{-| タブの実効キー(未クリックは先頭タブ)。update 側の currentSection と
 同じ決め方 — 操作が見えていない表に当たらないための対。
 -}
 activeSectionKey : Schema.Schema -> Model -> String
 activeSectionKey schema model =
-    model.sectionKey
-        |> Maybe.withDefault
-            (supportedSections schema |> List.head |> Maybe.map Tuple.first |> Maybe.withDefault "")
+    activeTab schema model |> Maybe.map .key |> Maybe.withDefault ""
+
+
+{-| そのタブが「単一値だけ」で出来ているなら、束ねた 1 枚の表として出すための
+フィールド列。混ざっている(一覧や入れ子がある)タブは束ねない。
+-}
+bundledFields : FormTab -> Maybe (List ( String, Schema.Field ))
+bundledFields tab =
+    let
+        picked =
+            tab.sections
+                |> List.filterMap
+                    (\( key, section ) ->
+                        case section.kind of
+                            Schema.ValueKind field ->
+                                Just ( key, field )
+
+                            _ ->
+                                Nothing
+                    )
+    in
+    if not (List.isEmpty picked) && List.length picked == List.length tab.sections then
+        Just picked
+
+    else
+        Nothing
 
 
 {-| フォームに出すのは「今この場で実際にいじれる」セクションだけ。
@@ -7055,12 +7313,21 @@ viewVisualBody model schema doc =
             usageDicts model schema doc
     in
     [ div [ HA.class "visual-tabs flex h-9 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b border-edge bg-panel px-3" ]
-        (supportedSections schema |> List.map (viewTab activeKey))
+        (tabsOf schema |> List.map (viewTab activeKey))
     , div [ HA.class "visual-body flex min-h-0 flex-1 flex-col p-3" ]
         (viewPreviewCard model
-            ++ (supportedSections schema
-                    |> List.filter (\( key, _ ) -> key == activeKey)
-                    |> List.concatMap
+            ++ (case activeTab schema model |> Maybe.andThen bundledFields of
+                    -- 単一値だけのタブは案内 1 行だけ(設定の数だけ増やさない)
+                    Just _ ->
+                        [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
+                            [ text "この一覧は右のフォームで編集します。" ]
+                        ]
+
+                    Nothing ->
+                        activeTab schema model
+                            |> Maybe.map .sections
+                            |> Maybe.withDefault []
+                            |> List.concatMap
                         (\( key, section ) ->
                             case section.kind of
                                 Schema.RecordKind ->
@@ -7069,9 +7336,7 @@ viewVisualBody model schema doc =
                                     ]
 
                                 Schema.ValueKind _ ->
-                                    [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
-                                        [ text "この設定は 1 個の値です。右のフォームで編集します。" ]
-                                    ]
+                                    []
 
                                 Schema.Catalog ->
                                     [ viewCrudBar model doc key section
@@ -7126,50 +7391,58 @@ viewVisualSideBody model schema doc =
             viewGuideCard "エントリを選んでください"
                 "中央のテーブルの行(または盤面の点)をクリックすると、ここに編集フォームが出ます。"
     in
-    case schema.sections |> List.filter (\( k, _ ) -> k == activeKey) |> List.head of
+    case activeTab schema model |> Maybe.andThen bundledFields of
+        -- 単一値だけのタブは、束ねた全部を 1 枚の表として出す(値ごとにタブを割らない)
+        Just fields ->
+            [ viewSideHead activeKey "値"
+            , viewRows model doc (valueSectionsAsRecord fields) doc []
+            ]
+
         Nothing ->
-            [ guide ]
+            case activeTab schema model |> Maybe.map .sections |> Maybe.andThen List.head of
+                Nothing ->
+                    [ guide ]
 
-        Just ( key, section ) ->
-            case section.kind of
-                Schema.RecordKind ->
-                    [ viewSideHead key "設定"
-                    , viewRows model doc section (Doc.record key doc) [ KeySeg key ]
-                    ]
-
-                Schema.ValueKind field ->
-                    [ viewSideHead key "値"
-                    , viewRows model doc (valueSectionAsRecord key field) doc []
-                    ]
-
-                Schema.Catalog ->
-                    case selectedCatalogName model key doc of
-                        Just name ->
-                            viewEntryPortrait model section (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
-                                ++ [ viewRenameHeader model key name
-                                   , viewRows model
-                                        doc
-                                        section
-                                        (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
-                                        [ KeySeg key, KeySeg name ]
-                                   ]
-
-                        Nothing ->
-                            [ guide ]
-
-                Schema.ListKind ->
-                    case selectedListEntry model key doc of
-                        Just ( i, entry ) ->
-                            [ viewSideHead ("#" ++ String.fromInt i) key
-                            , viewRows model doc section entry [ KeySeg key, IdxSeg i ]
+                Just ( key, section ) ->
+                    case section.kind of
+                        Schema.RecordKind ->
+                            [ viewSideHead key "設定"
+                            , viewRows model doc section (Doc.record key doc) [ KeySeg key ]
                             ]
 
-                        Nothing ->
-                            [ guide ]
+                        Schema.ValueKind field ->
+                            [ viewSideHead key "値"
+                            , viewRows model doc (valueSectionsAsRecord [ ( key, field ) ]) doc []
+                            ]
 
-                -- supportedSections が濾すのでここへは来ない
-                Schema.Unsupported _ ->
-                    []
+                        Schema.Catalog ->
+                            case selectedCatalogName model key doc of
+                                Just name ->
+                                    viewEntryPortrait model section (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
+                                        ++ [ viewRenameHeader model key name
+                                           , viewRows model
+                                                doc
+                                                section
+                                                (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
+                                                [ KeySeg key, KeySeg name ]
+                                           ]
+
+                                Nothing ->
+                                    [ guide ]
+
+                        Schema.ListKind ->
+                            case selectedListEntry model key doc of
+                                Just ( i, entry ) ->
+                                    [ viewSideHead ("#" ++ String.fromInt i) key
+                                    , viewRows model doc section entry [ KeySeg key, IdxSeg i ]
+                                    ]
+
+                                Nothing ->
+                                    [ guide ]
+
+                        -- supportedSections が濾すのでここへは来ない
+                        Schema.Unsupported _ ->
+                            []
 
 
 viewSideHead : String -> String -> Html Msg
@@ -7501,27 +7774,37 @@ viewForm model schema =
                     usageDicts model schema doc
             in
             div [ HA.class "form-tabs mb-2.5 flex flex-nowrap gap-1 overflow-x-auto" ]
-                (supportedSections schema |> List.map (viewTab activeKey))
-                :: (supportedSections schema
-                        |> List.filter (\( key, _ ) -> key == activeKey)
-                        |> List.concatMap (\( key, section ) -> viewSection model doc usageDict key section)
+                (tabsOf schema |> List.map (viewTab activeKey))
+                :: (case activeTab schema model of
+                        Just tab ->
+                            case bundledFields tab of
+                                -- 単一値だけのタブは 1 枚の表にまとめる(値ごとにタブを割らない)
+                                Just fields ->
+                                    [ viewRows model doc (valueSectionsAsRecord fields) doc [] ]
+
+                                Nothing ->
+                                    tab.sections
+                                        |> List.concatMap
+                                            (\( key, section ) -> viewSection model doc usageDict key section)
+
+                        Nothing ->
+                            []
                    )
 
 
-{-| タブ 1 つ。内部識別はキー名(クリックで開くのはこれ)、表示名はセクションの
-label があればそれ・無ければキー名。
+{-| タブ 1 つ。内部識別はタブキー(クリックで開くのはこれ)。
 -}
-viewTab : String -> ( String, Schema.Section ) -> Html Msg
-viewTab activeKey ( key, section ) =
+viewTab : String -> FormTab -> Html Msg
+viewTab activeKey tab =
     button
         [ HA.classList
             [ ( "form-tab h-6 shrink-0 cursor-pointer whitespace-nowrap rounded px-2 text-[11px]", True )
-            , ( "on bg-raised text-ink", key == activeKey )
-            , ( "text-ink-soft hover:bg-white/5 hover:text-ink", key /= activeKey )
+            , ( "on bg-raised text-ink", tab.key == activeKey )
+            , ( "text-ink-soft hover:bg-white/5 hover:text-ink", tab.key /= activeKey )
             ]
-        , HE.onClick (SectionClicked key)
+        , HE.onClick (SectionClicked tab.key)
         ]
-        [ text (Maybe.withDefault key section.label) ]
+        [ text tab.label ]
 
 
 viewSection : Model -> D.Value -> UsageDicts -> String -> Schema.Section -> List (Html Msg)
@@ -7531,7 +7814,7 @@ viewSection model doc usageDict key section =
             [ viewRows model doc section (Doc.record key doc) [ KeySeg key ] ]
 
         Schema.ValueKind field ->
-            [ viewRows model doc (valueSectionAsRecord key field) doc [] ]
+            [ viewRows model doc (valueSectionsAsRecord [ ( key, field ) ]) doc [] ]
 
         Schema.Catalog ->
             viewEntryTable model doc key section (Just usageDict)
@@ -8053,10 +8336,28 @@ viewRow model basePath row =
 
                   else
                     text ""
+                , case row.unit of
+                    -- 単位はラベルの隣。数字だけでは何を表すか読めない
+                    Just u ->
+                        span [ HA.class "unit ml-1 text-[10px] text-ink-faint" ] [ text ("(" ++ u ++ ")") ]
+
+                    Nothing ->
+                        text ""
                 ]
+
+        -- 効き目のひとこと。ラベルは名前、こちらは「上げると何がどうなるか」
+        hintText =
+            case row.hint of
+                Just h ->
+                    div [ HA.class "form-hint mb-0.5 text-[10px] leading-tight break-words text-ink-faint" ]
+                        [ text h ]
+
+                Nothing ->
+                    text ""
     in
     div [ HA.class "form-row mb-2" ]
         [ labelText
+        , hintText
         , viewControl model path row.control
         ]
 
@@ -9410,6 +9711,20 @@ subscriptions model =
         -- 採用オーバーレイの段送り(採用しました → 反映の報せ)。待ちの間だけ生きる
         , if Atelier.needsTick model.atelier then
             Time.every 1000 (\_ -> AtelierOverlayTick)
+
+          else
+            Sub.none
+
+        -- 開いているファイルの見張り。外で変わったら、編集を始める前に気付ける
+        , if model.current /= Nothing then
+            Time.every 2000 (\_ -> FileWatchTick)
+
+          else
+            Sub.none
+
+        -- ドット絵のコマ送り。動かしている間だけ時計を回す
+        , if PixelEditor.isPlaying model.pixel then
+            Time.every 140 (\_ -> PixelMsg PixelEditor.PlayTicked)
 
           else
             Sub.none

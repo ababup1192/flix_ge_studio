@@ -1612,17 +1612,24 @@ viewSwatch doc model swatch =
         selected =
             model.tool /= Eraser && activeBrush doc model == Terrain swatch.ch
     in
+    -- 名前は札の中に出す。色と 1 文字だけでは「どれが何か」が分からず、
+    -- 名前を当てるのに 1 つずつ指を乗せて確かめることになる。
     button
         [ HA.classList
-            [ ( "flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-sm border font-mono text-[10px] text-white/80", True )
+            [ ( "flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border pr-2 text-[11px] text-ink", True )
             , ( "border-accent ring-2 ring-accent/60", selected )
             , ( "border-edge hover:border-ink-faint", not selected )
             ]
-        , HA.style "background-color" swatch.css
         , HA.title swatch.name
         , HE.onClick (TerrainChosen swatch.ch)
         ]
-        [ text (String.fromChar swatch.ch) ]
+        [ span
+            [ HA.class "flex h-full w-7 shrink-0 items-center justify-center rounded-l-sm font-mono text-[10px] text-white/80"
+            , HA.style "background-color" swatch.css
+            ]
+            [ text (String.fromChar swatch.ch) ]
+        , span [ HA.class "whitespace-nowrap" ] [ text swatch.name ]
+        ]
 
 
 viewPlaceEntry : Doc -> Model -> PlaceGroup -> Html Msg

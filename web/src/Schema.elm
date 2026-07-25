@@ -49,6 +49,12 @@ type alias Section =
 
     -- タブの表示名(無ければ呼び側がキー名にフォールバック)
     , label : Maybe String
+
+    -- 同じ group 名を書いた単一値のセクションは、1 枚のタブに束ねて表として並ぶ。
+    -- 設定が数十個ある文書で「1 値 = 1 タブ」になるのを防ぐための、見せ方だけの指定。
+    -- 書かなければ「基本」タブへ束ねる。セクションの種類は変えないので、
+    -- 検査・参照解決・表・書き戻しはこの指定を一切見なくてよい。
+    , group : Maybe String
     , fields : List ( String, Field )
     }
 
@@ -56,6 +62,12 @@ type alias Section =
 type alias Field =
     { type_ : FieldType
     , label : Maybe String
+
+    -- 値の単位(秒・px・度・%)。数字だけでは何を表すか読めないので、欄の右に添える
+    , unit : Maybe String
+
+    -- ひとこと説明。「上げると何がどうなるか」を書く場所(ラベルは名前、こちらは効き目)
+    , hint : Maybe String
     , order : Maybe Int
     , widget : Maybe D.Value
     , required : Bool
@@ -138,8 +150,9 @@ schemaDecoder =
 
 sectionDecoder : D.Decoder Section
 sectionDecoder =
-    D.map2 (\label body -> { body | label = label })
+    D.map3 (\label group body -> { body | label = label, group = group })
         (opt "label" D.string)
+        (opt "group" D.string)
         sectionBodyDecoder
 
 
@@ -180,7 +193,7 @@ sectionBodyDecoder =
 {-| label 抜きの Section を組む(label は sectionDecoder が後載せする)。 -}
 section : SectionKind -> List ( String, Field ) -> Section
 section kind fields =
-    { kind = kind, label = Nothing, fields = fields }
+    { kind = kind, label = Nothing, group = Nothing, fields = fields }
 
 
 fieldsDecoder : D.Decoder (List ( String, Field ))
@@ -224,6 +237,8 @@ fieldDecoder =
     D.succeed Field
         |> andMap (D.field "type" (D.lazy (\_ -> fieldTypeDecoder)))
         |> andMap (opt "label" D.string)
+        |> andMap (opt "unit" D.string)
+        |> andMap (opt "hint" D.string)
         |> andMap (opt "order" D.int)
         |> andMap (opt "widget" D.value)
         |> andMap (D.oneOf [ D.field "required" D.bool, D.succeed False ])

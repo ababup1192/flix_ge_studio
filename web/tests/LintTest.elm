@@ -228,7 +228,28 @@ suite =
                     (parseDoc "{ \"enemies\": { \"slime\": { \"weapon\": \"cursed\" } } }")
                     |> List.map .message
                     |> Expect.equal [ "enemies \"slime\" の weapon \"cursed\" は weapons に居ません" ]
+        , test "文書直下の未宣言キーを知らせる(ファイルには残るのに触れなくなるため)" <|
+            \() ->
+                Lint.check rootSchema
+                    (parseDoc "{ \"version\": 1, \"note\": \"めも\", \"walkSpeed\": 74, \"runSpeed\": 122 }")
+                    |> List.map .message
+                    |> Expect.equal
+                        [ "スキーマが \"runSpeed\" を宣言していません（エディタから触れません）" ]
+        , test "version と note は直下にあってよい(規約で認めた物)" <|
+            \() ->
+                Lint.check rootSchema (parseDoc "{ \"version\": 1, \"note\": \"めも\", \"walkSpeed\": 74 }")
+                    |> Expect.equal []
         ]
+
+
+{-| 直下キー検査用: 単一値を 1 つだけ宣言したスキーマ。 -}
+rootSchema : Schema.Schema
+rootSchema =
+    Schema.decodeString
+        """
+{ "sections": { "walkSpeed": { "kind": "value", "type": "float", "group": "動き" } } }
+"""
+        |> Result.withDefault { version = Nothing, sections = [] }
 
 
 {-| 横断テスト用: weapon が別文書のセクション(weapons)を指すスキーマ。 -}
