@@ -339,7 +339,7 @@ mod PreviewUi {
             })
             |> List.toMap
 
-    /// 色値 ("#rrggbb" | {"hsv":[h,s,v]} | {"rgb":[r,g,b]}) を "#rrggbb" へ。
+    /// 色値 ("#rrggbb" | {"hsv":[h,s,v]} | {"rgb":[r,g,b]} | 包み {"hex": 色値}) を "#rrggbb" へ。
     /// hsv→rgb の数式はエンジンの Color.hsv に任せる (二重実装を作らない)。
     /// SpriteColors (ドット絵の legend 解決) も同じ解釈を使う (色方言を増やさない)。
     pub def colorHexOf(json: Json): Option[String] =
@@ -354,10 +354,25 @@ mod PreviewUi {
                     let (r, g, b) = t;
                     colorToHex({ r = channelOf(r), g = channelOf(g), b = channelOf(b) })
                 })
-                case _ => None
+                case _ => wrappedColorOf(m)
             }
             case _ => None
         }
+
+    /// catalog / map の欄 (名前で引く一覧) は色 1 つを object に包んで書き出す
+    /// ({"hex": "#rrggbb"})。包みを開いて中身を色として読み直す — 中身が
+    /// {"rgb": [...]} でも通る。
+    /// WhyNot: 「object の中の色に見える物は何でも拾う」にはしない。同じ catalog で
+    /// 文言 ({"text": ...}) や数も書かれるので、色そのものを指す名前だけを通す。
+    /// WhyNot: 欄が 1 つだけ、とも決めない。欄が増えた形 ({"hex":..., "note":...}) でも
+    /// 色は色として読めた方が、スキーマを育てたときに黙って壊れない。
+    def wrappedColorOf(m: Map[String, Json]): Option[String] =
+        colorWrapKeys()
+            |> List.filterMap(key -> Map.get(key, m) |> Option.flatMap(colorHexOf))
+            |> List.head
+
+    /// 包みの名前。スキーマの色欄に付けられがちな名前だけ (増やすときは実在を確かめてから)。
+    def colorWrapKeys(): List[String] = "hex" :: "color" :: "value" :: Nil
 
     /// "#rrggbb" (先頭 # は任意・大文字可) を小文字の "#rrggbb" へ。6 桁 16 進以外は None
     /// ("@名前" もここで落ちる — パレットの値に "@..." は書けない規約)。

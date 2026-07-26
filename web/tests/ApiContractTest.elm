@@ -8,6 +8,7 @@ import Api
 import Dict
 import Expect
 import Json.Decode as D
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -269,16 +270,25 @@ suite =
                         |> Expect.equal (Ok (Api.PutConflict { currentMtime = 1784274206557 }))
             ]
         , describe "/sprite/colors"
-            [ test "ok:true — legend の「値 → #rrggbb」の表が読める。ok:false は空の表(仮色へ fail-open)" <|
+            [ test "ok:true — 「値 → #rrggbb」の表と、解けなかった値が読める。ok:false は空(仮色へ fail-open)" <|
                 \_ ->
                     ( D.decodeString Api.spriteColorsDecoder
-                        """{"ok": true, "colors": {"accent": "#ffc95e"}}"""
+                        """{"ok": true, "colors": {"accent": "#ffc95e"}, "unresolved": ["body", "trim"]}"""
                     , D.decodeString Api.spriteColorsDecoder
                         """{"ok": false, "error": "JSON parse failed: assets/novel.sprite.json"}"""
                     )
                         |> Expect.equal
-                            ( Ok (Dict.fromList [ ( "accent", "#ffc95e" ) ])
-                            , Ok Dict.empty
+                            ( Ok
+                                { table = Dict.fromList [ ( "accent", "#ffc95e" ) ]
+                                , unresolved = Set.fromList [ "body", "trim" ]
+                                }
+                            , Ok Api.noSpriteColors
                             )
+            , test "unresolved を返さない旧サーバでも表は読める(印が出ないだけ)" <|
+                \_ ->
+                    D.decodeString Api.spriteColorsDecoder
+                        """{"ok": true, "colors": {"accent": "#ffc95e"}}"""
+                        |> Expect.equal
+                            (Ok { table = Dict.fromList [ ( "accent", "#ffc95e" ) ], unresolved = Set.empty })
             ]
         ]

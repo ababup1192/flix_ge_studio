@@ -575,9 +575,9 @@ type alias Model =
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
 
-    -- ドット絵 legend の実色表(サーバの POST /sprite/colors が返す「値 → #rrggbb」)。
-    -- 開いている sprite Doc の分だけ持ち、届くまで・解けないキーは仮色に倒す
-    , spriteColors : Dict.Dict String String
+    -- ドット絵 legend の実色表(サーバの POST /sprite/colors が返す「値 → #rrggbb」と
+    -- 解けなかった値)。開いている sprite Doc の分だけ持ち、届くまで・解けないキーは仮色に倒す
+    , spriteColors : Api.SpriteColors
     , spriteColorsReq : Maybe Int
 
     -- マップ(*.map.json のビジュアル編集)。持ち方はドット絵と同じ
@@ -737,7 +737,7 @@ init _ =
         , previewStale = False
         , drag = Nothing
         , pixel = PixelEditor.init
-        , spriteColors = Dict.empty
+        , spriteColors = Api.noSpriteColors
         , spriteColorsReq = Nothing
         , mapEd = MapEditor.init
         , wizard = Nothing
@@ -4366,7 +4366,7 @@ handleOkByKind env model =
                                     , previewStale = False
                                     , drag = Nothing
                                     , pixel = PixelEditor.init
-                                    , spriteColors = Dict.empty
+                                    , spriteColors = Api.noSpriteColors
                                     , spriteColorsReq = Nothing
                                     , mapEd = MapEditor.init
                                     , usagesOpenFor = Nothing
@@ -4464,7 +4464,7 @@ handleOkByKind env model =
 
                                         -- ドット絵の道具・履歴・実色表は開いたファイルの物(持ち越さない)
                                         , pixel = PixelEditor.init
-                                        , spriteColors = Dict.empty
+                                        , spriteColors = Api.noSpriteColors
                                         , spriteColorsReq = Nothing
                                         , mapEd = MapEditor.init
 
@@ -4714,7 +4714,7 @@ handleOkByKind env model =
                     | spriteColorsReq = Nothing
                     , spriteColors =
                         D.decodeValue Api.spriteColorsDecoder env.body
-                            |> Result.withDefault Dict.empty
+                            |> Result.withDefault Api.noSpriteColors
                   }
                 , Effect.none
                 )

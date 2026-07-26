@@ -1,5 +1,6 @@
 module PixelEditor exposing
-    ( Doc
+    ( Colors
+    , Doc
     , Edit
     , Model
     , Msg(..)
@@ -34,6 +35,8 @@ legend の値は意味色キー(テーマが解く名前)のことがあり、�
 解けない。サーバの解決表(POST /sprite/colors の「値 → #rrggbb」)があれば
 それを使い、無い・欠けるキーは #rrggbb 素通し → legend 内の並び順から導く
 仮色、の順に倒す(表示のためだけ。保存される文字には関与しない)。
+仮色に倒れた色はパレットに「?」を出す — 黙って倒れると「テーマの色が
+出ていない」不具合と見分けが付かない。
 
 -}
 
@@ -588,20 +591,47 @@ pickAt ( x, y ) rows =
 -- パレットの導出
 
 
+{-| サーバの色解決の結果。table は「legend の値 → #rrggbb」、unresolved は実色に
+解けなかった値。Api.SpriteColors と欄名を合わせてあるのでそのまま渡せる。
+-}
+type alias Colors =
+    { table : Dict String String
+    , unresolved : Set String
+    }
+
+
 type alias Swatch =
     { ch : Char
     , name : String
     , css : String
+
+    -- 実色が分からず仮色で描いている升目(パレットに印を出す)
+    , guessed : Bool
     }
 
 
-{-| legend の並びのまま升目にする。名前は legend の値そのもの(名詞を発明しない)。
-resolved はサーバの解決表(legend の値 → #rrggbb)。
--}
-palette : Dict String String -> Doc -> List Swatch
-palette resolved doc =
+{-| legend の並びのまま升目にする。名前は legend の値そのもの(名詞を発明しない)。 -}
+palette : Colors -> Doc -> List Swatch
+palette colors doc =
     doc.legend
-        |> List.map (\( ch, name ) -> { ch = ch, name = name, css = colorCss resolved (legendValues doc) name })
+        |> List.map
+            (\( ch, name ) ->
+                { ch = ch
+                , name = name
+                , css = colorCss colors.table (legendValues doc) name
+                , guessed = isGuessed colors name
+                }
+            )
+
+
+{-| 実色に解けていない値か。サーバの unresolved が正。
+WhyNot: それだけに頼らない — unresolved を返さない古いサーバでも印が出るよう、
+「表にも無く #rrggbb でもない」(= 仮色に倒れた) も同じ扱いにする。
+-}
+isGuessed : Colors -> String -> Bool
+isGuessed colors name =
+    Set.member name colors.unresolved
+        || (Dict.get name colors.table == Nothing && not (isHexColor name))
 
 
 {-| 透明を表す文字。実データが使っている非 legend 文字に合わせる('.' 優先)。 -}
@@ -808,8 +838,8 @@ zoomStep dir current =
 -- 表示
 
 
-view : Dict String String -> Doc -> Model -> Html Msg
-view resolved doc model =
+view : Colors -> Doc -> Model -> Html Msg
+view colors doc model =
     div [ HA.class "pixel-editor flex min-w-0 flex-1 bg-app" ]
         (case shownGrid doc model of
             Nothing ->
@@ -818,8 +848,8 @@ view resolved doc model =
 
             Just grid ->
                 [ viewTools model
-                , viewCenter resolved doc model grid
-                , viewPalette resolved doc model
+                , viewCenter colors doc model grid
+                , viewPalette colors doc model
                 ]
         )
 
@@ -862,8 +892,8 @@ historyButton label msg disabled body =
         [ body ]
 
 
-viewCenter : Dict String String -> Doc -> Model -> Edit -> Html Msg
-viewCenter resolved doc model grid =
+viewCenter : Colors -> Doc -> Model -> Edit -> Html Msg
+viewCenter colors doc model grid =
     let
         cols =
             grid.rows |> List.head |> Maybe.map String.length |> Maybe.withDefault 0
@@ -883,7 +913,7 @@ viewCenter resolved doc model grid =
                 (D.succeed { message = Swallowed, stopPropagation = True, preventDefault = True })
             , HE.onMouseLeave GridLeft
             ]
-            [ div [ HA.class "m-auto" ] [ viewGrid resolved doc model grid ] ]
+            [ div [ HA.class "m-auto" ] [ viewGrid colors doc model grid ] ]
         , viewStatus model cols rowCount
         ]
 
@@ -983,16 +1013,16 @@ chip selected msg label =
         [ text label ]
 
 
-viewGrid : Dict String String -> Doc -> Model -> Edit -> Html Msg
-viewGrid resolved doc model grid =
+viewGrid : Colors -> Doc -> Model -> Edit -> Html Msg
+viewGrid colors doc model grid =
     let
-        colors =
-            palette resolved doc
+        cellCss =
+            palette colors doc
                 |> List.map (\sw -> ( sw.ch, sw.css ))
                 |> Dict.fromList
     in
     div [ HA.class "px-grid border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]" ]
-        (grid.rows |> List.indexedMap (viewGridRow colors model.cellPx))
+        (grid.rows |> List.indexedMap (viewGridRow cellCss model.cellPx))
 
 
 viewGridRow : Dict Char String -> Int -> Int -> String -> Html Msg
@@ -1070,13 +1100,17 @@ largestZoom =
     List.head (List.reverse zoomLevels) |> Maybe.withDefault 34
 
 
-viewPalette : Dict String String -> Doc -> Model -> Html Msg
-viewPalette resolved doc model =
+viewPalette : Colors -> Doc -> Model -> Html Msg
+viewPalette colors doc model =
+    let
+        swatches =
+            palette colors doc
+    in
     div [ HA.class "px-palette w-56 shrink-0 overflow-y-auto border-l border-edge bg-panel p-3" ]
         ([ div [ HA.class "mb-1.5 text-[11px] text-ink-faint" ] [ text "いまの色" ]
-         , viewCurrentColor resolved doc model
+         , viewCurrentColor colors doc model
          , div [ HA.class "mt-3 flex flex-wrap gap-1.5" ]
-            ((palette resolved doc |> List.map (viewSwatch doc model))
+            ((swatches |> List.map (viewSwatch doc model))
                 ++ [ button
                         [ HA.class "btn h-7 rounded-full"
                         , HE.onClick AddColorPressed
@@ -1085,11 +1119,26 @@ viewPalette resolved doc model =
                    ]
             )
          ]
+            ++ viewGuessedNote swatches
         )
 
 
-viewCurrentColor : Dict String String -> Doc -> Model -> Html Msg
-viewCurrentColor resolved doc model =
+{-| 仮色の升目が 1 つでもあるときだけ出す説明。印の意味が分からないと
+「なぜか色が違う」で終わってしまう。
+-}
+viewGuessedNote : List Swatch -> List (Html Msg)
+viewGuessedNote swatches =
+    if List.any .guessed swatches then
+        [ div [ HA.class "mt-3 rounded border border-dashed border-ink-faint/60 p-2 text-[11px] leading-relaxed text-ink-faint" ]
+            [ text "? の色はテーマに無く、仮の色で描いています。ゲームが場面ごとに決めている色(味方と敵で塗り分ける等)かもしれません。テーマに足すとゲームと同じ色になります。" ]
+        ]
+
+    else
+        []
+
+
+viewCurrentColor : Colors -> Doc -> Model -> Html Msg
+viewCurrentColor colors doc model =
     if model.tool == Eraser then
         div [ HA.class "px-checker flex h-14 items-center justify-center rounded border border-edge" ]
             [ span [ HA.class "rounded bg-app/70 px-1.5 py-0.5 text-[11px] text-ink" ] [ text "透明(消す)" ] ]
@@ -1109,7 +1158,7 @@ viewCurrentColor resolved doc model =
         div []
             [ div
                 [ HA.class "h-14 rounded border border-edge"
-                , HA.style "background-color" (colorCss resolved (legendValues doc) name)
+                , HA.style "background-color" (colorCss colors.table (legendValues doc) name)
                 ]
                 []
             , div [ HA.class "mt-1 truncate font-mono text-[11px] text-ink-soft" ]
@@ -1117,6 +1166,10 @@ viewCurrentColor resolved doc model =
             ]
 
 
+{-| 升目 1 つ。実色が分からない色は枠を点線にして「?」を重ねる。
+WhyNot: 絵そのものは仮色のまま描く — 印のために塗るのをやめると、
+色が解けないだけで絵が読めなくなり、編集が止まってしまう。
+-}
 viewSwatch : Doc -> Model -> Swatch -> Html Msg
 viewSwatch doc model swatch =
     let
@@ -1125,15 +1178,27 @@ viewSwatch doc model swatch =
     in
     button
         [ HA.classList
-            [ ( "h-7 w-7 shrink-0 cursor-pointer rounded-sm border", True )
+            [ ( "h-7 w-7 shrink-0 cursor-pointer rounded-sm border flex items-center justify-center", True )
             , ( "border-accent ring-2 ring-accent/60", selected )
-            , ( "border-edge hover:border-ink-faint", not selected )
+            , ( "border-edge hover:border-ink-faint", not selected && not swatch.guessed )
+            , ( "border-dashed border-ink-faint hover:border-ink", swatch.guessed && not selected )
             ]
         , HA.style "background-color" swatch.css
-        , HA.title swatch.name
+        , HA.title
+            (if swatch.guessed then
+                swatch.name ++ " — テーマに無い色。仮の色で描いています"
+
+             else
+                swatch.name
+            )
         , HE.onClick (ColorChosen swatch.ch)
         ]
-        []
+        (if swatch.guessed then
+            [ span [ HA.class "px-guessed text-[10px] font-bold text-app/80 drop-shadow-[0_0_2px_rgb(255_255_255/0.9)]" ] [ text "?" ] ]
+
+         else
+            []
+        )
 
 
 

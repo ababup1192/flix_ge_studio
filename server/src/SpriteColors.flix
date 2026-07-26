@@ -5,7 +5,7 @@
 // 解決できない値は表に載せない (fail-open — 画面側は従来の仮色で描き続ける)。
 mod SpriteColors {
     use Util.Json.Json
-    use Util.Json.Json.{JObject, JString, JBool}
+    use Util.Json.Json.{JArray, JObject, JString, JBool}
 
     /// リクエストボディ {path?, doc?} を解いて (HTTP status, 応答 JSON) を作る。
     /// 封筒の壊れだけ 400。doc 側の問題 (パース失敗等) は 200 の ok:false —
@@ -18,14 +18,24 @@ mod SpriteColors {
                 case Err(PreviewUi.BadRequest.Doc(message))      => (200, errorJson(message))
                 case Ok(docJson) =>
                     let docPath = Map.get("path", obj) |> Option.flatMap(JsonCodec.expectString);
-                    (200, okJson(resolveAll(dir, docPath, docJson)))
+                    let (colors, unresolved) = resolveAll(dir, docPath, docJson);
+                    (200, okJson(colors, unresolved))
             }
         }
 
-    /// legend の値 → 実色の表 (IO 側の入口)。色票の勝ち順は
+    /// legend の値 → 実色の表と、解決できなかった値 (IO 側の入口)。色票の勝ち順は
     /// 「他のテーマ < 同名テーマ (novel.sprite.json ↔ novel.theme.json) < doc 自身の palette」。
-    def resolveAll(dir: String, docPath: Option[String], docJson: Json): Map[String, String] \ IO =
-        tableOf(themeTops(dir, docPath), PreviewUi.resolvedPalette(dir, docJson), legendValuesOf(docJson))
+    def resolveAll(dir: String, docPath: Option[String], docJson: Json): (Map[String, String], List[String]) \ IO =
+        let legendValues = legendValuesOf(docJson);
+        let colors = tableOf(themeTops(dir, docPath), PreviewUi.resolvedPalette(dir, docJson), legendValues);
+        (colors, unresolvedOf(colors, legendValues))
+
+    /// 表に載らなかった legend の値。ゲームが場面ごとに決める色 (味方/敵で振り分ける
+    /// "body" 等) は原理的にここへ残るので、表から落ちた事実そのものを画面へ返す。
+    /// WhyNot: 落ちたことを黙っていると、編集画面は仮色で平然と描き続け、
+    /// 「テーマの色が出ていない」不具合と見分けが付かなくなる。
+    pub def unresolvedOf(colors: Map[String, String], legendValues: List[String]): List[String] =
+        legendValues |> List.filter(value -> not Map.memberOf(value, colors))
 
     /// プロジェクト内の *.theme.json をトップレベル object として読む (後の物が勝つ順)。
     /// 読めない・形違いのテーマは黙って落とす — 表が痩せるだけで、編集は止めない。
@@ -103,11 +113,12 @@ mod SpriteColors {
                 Map.get(name, names)
         }
 
-    /// 成功応答: {ok: true, colors: {"値": "#rrggbb", ...}}。
-    def okJson(colors: Map[String, String]): Json =
+    /// 成功応答: {ok: true, colors: {"値": "#rrggbb", ...}, unresolved: ["値", ...]}。
+    def okJson(colors: Map[String, String], unresolved: List[String]): Json =
         JObject(Map#{
-            "ok"     => JBool(true),
-            "colors" => JObject(colors |> Map.map(hex -> JString(hex)))
+            "ok"         => JBool(true),
+            "colors"     => JObject(colors |> Map.map(hex -> JString(hex))),
+            "unresolved" => JArray(unresolved |> List.map(JString) |> List.toVector)
         })
 
     /// 失敗応答 (封筒不正 400 と doc 側の 200 ok:false の共通形 {ok:false, error})。

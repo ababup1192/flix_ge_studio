@@ -100,6 +100,21 @@ mod TestPreviewUi {
                 "\"broken\": \"@white\", " +
                 "\"weird\": 12}}")))
 
+    /// catalog の欄が吐く包み ({"hex": 色値}) も色として読む。中身は "#rrggbb" でも
+    /// {"rgb"} でもよい。色を指さない名前の包み ({"text": ...}) と、中身が色でない包みは落ちる。
+    @Test
+    def testPaletteTableResolvesWrappedColors(): Unit \ Assert =
+        Assert.assertEq(
+            expected = Map#{"plain" => "#6abe30", "deep" => "#ff0000", "memo" => "#123456"},
+            PreviewUi.paletteTable(Map.empty(), topOf(
+                "{\"palette\": {" +
+                "\"plain\": {\"hex\": \"#6ABE30\"}, " +
+                "\"deep\": {\"hex\": {\"rgb\": [1, 0, 0]}}, " +
+                "\"memo\": {\"hex\": \"#123456\", \"note\": \"欄が増えても読める\"}, " +
+                "\"label\": {\"text\": \"こうげき\"}, " +
+                "\"hexish\": {\"text\": \"#ff00ff\"}, " +
+                "\"count\": {\"value\": 12}}}")))
+
     /// palette キーが無いドキュメントは空の表 (paletteFile 側も無ければ何も出ない)。
     @Test
     def testPaletteTableEmpty(): Unit \ Assert =

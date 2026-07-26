@@ -17,11 +17,13 @@ module Api exposing
     , ResourceFile
     , ResourceGroup
     , Resources
+    , SpriteColors
     , changesDecoder
     , envelopeDecoder
     , fileContentDecoder
     , filesDecoder
     , healthResultDecoder
+    , noSpriteColors
     , previewResultDecoder
     , projectKey
     , projectSwitchDecoder
@@ -36,6 +38,7 @@ module Api exposing
 
 import Dict exposing (Dict)
 import Json.Decode as D
+import Set exposing (Set)
 
 
 type alias Design =
@@ -389,15 +392,29 @@ projectSwitchDecoder =
             )
 
 
-{-| POST /sprite/colors の応答(ドット絵 legend の「値 → #rrggbb」の表)。
-ok:false・colors 欠け・形違いは空の表 — 画面側が従来の仮色に倒す(fail-open)。
+{-| POST /sprite/colors の応答。table は legend の「値 → #rrggbb」、unresolved は
+サーバが実色に解けなかった legend の値(ゲームが場面ごとに決める色など)。
 -}
-spriteColorsDecoder : D.Decoder (Dict String String)
+type alias SpriteColors =
+    { table : Dict String String
+    , unresolved : Set String
+    }
+
+
+{-| 何も分かっていない状態(応答が届く前・取れなかったとき)。 -}
+noSpriteColors : SpriteColors
+noSpriteColors =
+    { table = Dict.empty, unresolved = Set.empty }
+
+
+{-| POST /sprite/colors の読み取り。ok:false・欄の欠け・形違いは空 — 画面側が
+従来の仮色に倒す(fail-open)。unresolved を返さない旧サーバでも表だけは読める。
+-}
+spriteColorsDecoder : D.Decoder SpriteColors
 spriteColorsDecoder =
-    D.oneOf
-        [ D.field "colors" (D.dict D.string)
-        , D.succeed Dict.empty
-        ]
+    D.map2 SpriteColors
+        (D.oneOf [ D.field "colors" (D.dict D.string), D.succeed Dict.empty ])
+        (D.oneOf [ D.field "unresolved" (D.list D.string) |> D.map Set.fromList, D.succeed Set.empty ])
 
 
 previewResultDecoder : D.Decoder PreviewResult

@@ -42,6 +42,27 @@ mod TestSpriteColors {
             SpriteColors.tableOf(theme :: Nil, Map.empty(),
                 "skin" :: "body" :: "hair" :: Nil))
 
+    /// catalog のテーマ (色を {"hex": "#rrggbb"} の包みで持つ形・fe_rogue や谷の色票) も
+    /// legend の解決に使える。色でない catalog (文言の {"text": ...}) は色票にならない。
+    @Test
+    def testTableOfCatalogTheme(): Unit \ Assert =
+        let theme = topOf("{\"colors\": {\"plain\": {\"hex\": \"#6ABE30\"}, \"wall\": {\"hex\": \"#595652\"}}, " +
+            "\"labels\": {\"attack\": {\"text\": \"こうげき\"}}}");
+        Assert.assertEq(
+            expected = Map#{"plain" => "#6abe30", "wall" => "#595652"},
+            SpriteColors.tableOf(theme :: Nil, Map.empty(),
+                "plain" :: "wall" :: "attack" :: Nil))
+
+    /// 解決できなかった legend の値は名前のまま返す (画面が印を出せるように)。
+    /// 色表記そのものは表に載るので、ここには残らない。
+    @Test
+    def testUnresolvedOf(): Unit \ Assert =
+        let legendValues = "plain" :: "#a0b1c2" :: "body" :: "trim" :: Nil;
+        let colors = SpriteColors.tableOf(topOf("{\"plain\": \"#6ABE30\"}") :: Nil, Map.empty(), legendValues);
+        Assert.assertEq(
+            expected = "body" :: "trim" :: Nil,
+            SpriteColors.unresolvedOf(colors, legendValues))
+
     /// 勝ち順: 先のテーマ < 後のテーマ (同名テーマを最後に回す並び) < doc 自身の palette。
     @Test
     def testTableOfPrecedence(): Unit \ Assert =
