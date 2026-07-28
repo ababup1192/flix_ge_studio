@@ -19,7 +19,7 @@ import Browser
 import Browser.Events
 import Atelier
 import Dashboards
-import Dict
+import Dict exposing (Dict)
 import Doc
 import Draft
 import Effect exposing (Effect)
@@ -27,6 +27,7 @@ import EntryOps
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
+import Html.Lazy as HL
 import Svg
 import Svg.Attributes as SA
 import Journey
@@ -36,6 +37,7 @@ import Lint
 import NewGame
 import MapEditor
 import PixelEditor
+import SfxEditor
 import Plugins
 import Progress
 import Refs
@@ -512,6 +514,11 @@ type alias Model =
     , current : Maybe String
     , docText : String
 
+    -- docText を解いた写し(と、ドット絵ならその読み取り結果)。current/docText を
+    -- 差し替える唯一の口 withDoc がここも一緒に作り直すので陳腐化はしない
+    , docValue : Maybe D.Value
+    , spriteDoc : Maybe PixelEditor.Doc
+
     -- 開いた時(または保存成功時)のテキスト。dirty 判定はこれと比べる。
     , openedText : String
     , dirty : Bool
@@ -574,6 +581,21 @@ type alias Model =
     -- ドット絵の手直し(*.sprite.json のビジュアル編集)。文書の正本は持たず、
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
+    , sfx : SfxEditor.Model
+
+    -- 焼き係を温め始めたか(1 つの文書につき 1 回だけ頼む)
+    , sfxWarmed : Bool
+
+    -- 準備できるまで様子を見に行っている最中か(見に行く先が preview でなく warm になる)
+    , sfxWarming : Bool
+
+    -- 焼き上がり待ち。走っているゲームが保存を見て焼き直すのを少し待ってから、
+    -- 絵を取り直して鳴らす(焼き上がりを知らせてくれる口が無いため)
+    , sfxWaitSeq : Int
+    , sfxWaitLeft : Int
+
+    -- 焼き上がりを待たせている再生(待ち終えた拍に鳴らす)
+    , sfxPendingPlay : Maybe { name : String, loop : Bool }
 
     -- ドット絵 legend の実色表(サーバの POST /sprite/colors が返す「値 → #rrggbb」と
     -- 解けなかった値)。開いている sprite Doc の分だけ持ち、届くまで・解けないキーは仮色に倒す
@@ -714,6 +736,8 @@ init _ =
         , pendingJump = Nothing
         , current = Nothing
         , docText = ""
+        , docValue = Nothing
+        , spriteDoc = Nothing
         , openedText = ""
         , dirty = False
         , mtime = Nothing
@@ -737,6 +761,12 @@ init _ =
         , previewStale = False
         , drag = Nothing
         , pixel = PixelEditor.init
+        , sfx = SfxEditor.init
+        , sfxWarmed = False
+        , sfxWarming = False
+        , sfxWaitSeq = 0
+        , sfxWaitLeft = 0
+        , sfxPendingPlay = Nothing
         , spriteColors = Api.noSpriteColors
         , spriteColorsReq = Nothing
         , mapEd = MapEditor.init
@@ -808,6 +838,8 @@ type Msg
     | FieldEdited EditPayload
     | EditsQueued (List EditPayload)
     | PixelMsg PixelEditor.Msg
+    | SfxMsg SfxEditor.Msg
+    | SfxWaitTick Int
     | MapMsg MapEditor.Msg
     | WeightsAddOpened (List Seg)
     | WeightsAddTyped String
@@ -1258,12 +1290,12 @@ update msg model =
                         -- 破棄=開いた時の本文へ戻す(ReloadChosen と同じ意味論)。
                         -- dirty を消さないと移動のやり直しが再びこの関所に阻まれる
                         m1 =
-                            { model
-                                | pendingNav = Nothing
-                                , docText = model.openedText
-                                , dirty = False
-                                , activeDraft = Nothing
-                            }
+                            withDoc model.current model.openedText
+                                { model
+                                    | pendingNav = Nothing
+                                    , dirty = False
+                                    , activeDraft = Nothing
+                                }
                     in
                     case target of
                         NavFile path ->
@@ -1286,7 +1318,7 @@ update msg model =
 
         DocChanged text_ ->
             scheduleAutosave
-                (requestPreview { model | docText = text_, dirty = text_ /= model.openedText })
+                (requestPreview (withDoc model.current text_ { model | dirty = text_ /= model.openedText }))
 
         SaveClicked ->
             case ( model.current, model.savingText ) of
@@ -1337,16 +1369,15 @@ update msg model =
 
         SectionClicked key ->
             -- 並べ替え・絞り込みは列の意味ごとセクションに紐づくので持ち越さない
-            ( { model
-                | sectionKey = Just key
-                , entrySel = Nothing
-                , tableSort = Nothing
-                , tableFilter = ""
-                , usagesOpenFor = Nothing
-                , rename = Nothing
-              }
-            , Effect.none
-            )
+            warmThenShape
+                { model
+                    | sectionKey = Just key
+                    , entrySel = Nothing
+                    , tableSort = Nothing
+                    , tableFilter = ""
+                    , usagesOpenFor = Nothing
+                    , rename = Nothing
+                }
 
         AddClicked ->
             addEntry model
@@ -1417,6 +1448,74 @@ update msg model =
 
         EditsQueued payloads ->
             queueEdits payloads model
+
+        SfxMsg smsg ->
+            case sfxConfigOf model of
+                Just config ->
+                    let
+                        ( sfx, out ) =
+                            SfxEditor.update config smsg model.sfx
+
+                        m1 =
+                            { model | sfx = sfx }
+                    in
+                    case out of
+                        SfxEditor.Silent ->
+                            ( m1, Effect.none )
+
+                        SfxEditor.Edited edit ->
+                            -- 文書へは書くが、掴んでいる間は焼かない。
+                            -- 途中で焼くと、実測から導く縁が指の下で飛び、音も動かすたびに
+                            -- 鳴ってしまう。焼くのは指を離した拍（Play）に 1 回だけ。
+                            let
+                                ( m2, editFx ) =
+                                    queueEdit (sfxPayload config edit) m1
+                            in
+                            if SfxEditor.isDragging m2.sfx then
+                                ( m2, editFx )
+
+                            else
+                                let
+                                    seq =
+                                        m2.sfxWaitSeq + 1
+                                in
+                                ( { m2 | sfxWaitSeq = seq, sfxWaitLeft = 1, sfxPendingPlay = Nothing }
+                                , Effect.batch
+                                    [ editFx, Effect.Delayed { seq = seq, afterMs = 200 } ]
+                                )
+
+                        SfxEditor.Play info ->
+                            requestPreview_ info config m1
+
+                        SfxEditor.Stop ->
+                            request "stopSound" (E.object []) { m1 | sfxPendingPlay = Nothing }
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        SfxWaitTick seq ->
+            -- 焼き上がりを知らせてくれる口が無いので、少し置いてから絵を取り直し、
+            -- 待たせていた再生をここで鳴らす。
+            if seq /= model.sfxWaitSeq || model.sfxWaitLeft <= 0 then
+                ( model, Effect.none )
+
+            else
+                if model.sfxWarming then
+                    request "sfxWarm" (E.object [])
+                        { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
+
+                else
+                    case sfxConfigOf model of
+                        Just config ->
+                            requestPreview_
+                                { name = config.sound
+                                , loop = model.sfx.looping == Just config.sound
+                                }
+                                config
+                                { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
+
+                        Nothing ->
+                            ( model, Effect.none )
 
         PixelMsg pmsg ->
             case spriteDocCurrent model of
@@ -2235,7 +2334,12 @@ crossFailApply id slots =
 {-| 読み込み済みの横断辞書を純ロジック(Sources / Lint / SchemaForm)の形に。 -}
 crossSources : Model -> List Sources.SourceDoc
 crossSources model =
-    model.crossSlots
+    crossSourcesOf model.crossSlots
+
+
+crossSourcesOf : List CrossSlot -> List Sources.SourceDoc
+crossSourcesOf slots =
+    slots
         |> List.filterMap
             (\s ->
                 s.doc
@@ -3056,23 +3160,45 @@ currentPlugin model =
         |> Maybe.andThen (Plugins.forPath model.groups)
 
 
+{-| current / docText を差し替える唯一の口。解いた写し(docValue・spriteDoc)を
+ここで一緒に作り直すので、毎回引くのと同じく陳腐化はしない。
+
+WhyNot: 以前は view から都度 D.decodeString していた。陳腐化はしないが、
+判定(effectiveMode)と本体で 1 回の描画に何度も呼ばれるため、ドット絵の
+一筆はセルを跨ぐたびに 89KB の JSON を 6 回解き直していた — 重さの正体。
+入口を 1 つに絞れば、覚えても陳腐化は同じく構造で防げる。
+-}
+withDoc : Maybe String -> String -> Model -> Model
+withDoc path text model =
+    let
+        value =
+            D.decodeString D.value text |> Result.toMaybe
+    in
+    { model
+        | current = path
+        , docText = text
+        , docValue = value
+        , spriteDoc =
+            case ( path, value ) of
+                ( Just p, Just doc ) ->
+                    if String.endsWith ".sprite.json" p then
+                        PixelEditor.fromDoc doc
+
+                    else
+                        Nothing
+
+                _ ->
+                    Nothing
+    }
+
+
 {-| 開いているファイルがドット絵(パスが .sprite.json で終わる)なら、その
 読み取り結果。legend が読めない・絵が残らない文書は Nothing — 従来のフォーム/
-コード表示へ静かに倒れる(壊さない)。モデルに覚えず毎回引くのは currentPlugin
-と同じ理由(文書が進むたびの陳腐化を構造で防ぐ)。
+コード表示へ静かに倒れる(壊さない)。
 -}
 spriteDocCurrent : Model -> Maybe PixelEditor.Doc
 spriteDocCurrent model =
-    case ( model.current, parsedDoc model ) of
-        ( Just path, Just doc ) ->
-            if String.endsWith ".sprite.json" path then
-                PixelEditor.fromDoc doc
-
-            else
-                Nothing
-
-        _ ->
-            Nothing
+    model.spriteDoc
 
 
 {-| 開いているドット絵の legend 実色表をサーバに頼む(POST /sprite/colors)。
@@ -3099,6 +3225,127 @@ requestSpriteColors model =
 
         _ ->
             ( model, Effect.none )
+
+
+{-| いま開いているタブが効果音のつまみなら、その材料。 -}
+sfxConfigOf : Model -> Maybe SfxEditor.Config
+sfxConfigOf model =
+    currentSection model
+        |> Maybe.andThen
+            (\( key, section ) ->
+                if Schema.widgetIs "sfx" section.widget then
+                    Just
+                        { sound = key
+                        , label = Maybe.withDefault key section.label
+                        , values = sfxValues key model
+                        }
+
+                else
+                    Nothing
+            )
+
+
+{-| そのセクションの数値だけを名前で引ける形に。数でない欄は落とす。 -}
+sfxValues : String -> Model -> Dict String Float
+sfxValues key model =
+    case D.decodeString D.value model.docText of
+        Ok doc ->
+            Doc.record key doc
+                |> D.decodeValue (D.dict (D.maybe D.float))
+                |> Result.withDefault Dict.empty
+                |> Dict.foldl
+                    (\name maybeValue acc ->
+                        case maybeValue of
+                            Just v ->
+                                Dict.insert name v acc
+
+                            Nothing ->
+                                acc
+                    )
+                    Dict.empty
+
+        Err _ ->
+            Dict.empty
+
+
+sfxPayload : SfxEditor.Config -> { field : String, value : Float } -> EditPayload
+sfxPayload config edit =
+    { op = SetOp
+    , path = [ KeySeg config.sound, KeySeg edit.field ]
+    , value = E.float edit.value
+    , isInt = False
+    }
+
+
+{-| つまみの値をそのまま渡して 1 音だけ焼いてもらい、鳴らす。
+保存もゲームの起動も要らない — 焼くのは常駐の焼き係(ゲーム自身のコード)。
+焼けたら実ファイルも新しくなっているので、絵も取り直す。
+-}
+requestPreview_ : { name : String, loop : Bool } -> SfxEditor.Config -> Model -> ( Model, Effect )
+requestPreview_ info config model =
+    let
+        ( m1, previewFx ) =
+            request "previewSfx"
+                (E.object
+                    [ ( "name", E.string info.name )
+                    , ( "loop", E.bool info.loop )
+                    , ( "values", E.dict identity E.float config.values )
+                    ]
+                )
+                model
+
+        ( m2, shapeFx ) =
+            requestSfxShape config.sound
+                { m1 | sfx = SfxEditor.forget config.sound m1.sfx }
+    in
+    ( m2, Effect.batch [ previewFx, shapeFx ] )
+
+
+{-| タブを選んだ拍: 焼き係を温めつつ、その音の絵を取りに行く。 -}
+warmThenShape : Model -> ( Model, Effect )
+warmThenShape model =
+    let
+        ( m1, warmFx ) =
+            warmSfxIfNeeded model
+
+        ( m2, shapeFx ) =
+            requestSfxShapeIfNeeded m1
+    in
+    ( m2, Effect.batch [ warmFx, shapeFx ] )
+
+
+{-| 焼き上がった音の実測を取りに行く。 -}
+requestSfxShape : String -> Model -> ( Model, Effect )
+requestSfxShape sound model =
+    request "sfxShape" (E.object [ ( "name", E.string (sound ++ ".wav") ) ]) model
+
+
+{-| まだ取りに行っていない音なら、絵を取りに行く。
+文書を開いた拍とタブを選んだ拍に通す — 描画からは頼めないため。
+-}
+requestSfxShapeIfNeeded : Model -> ( Model, Effect )
+requestSfxShapeIfNeeded model =
+    case sfxConfigOf model |> Maybe.andThen (\config -> SfxEditor.wanted config.sound model.sfx) of
+        Just sound ->
+            requestSfxShape sound
+                { model | sfx = SfxEditor.shapeLoaded sound Nothing Dict.empty model.sfx }
+
+        Nothing ->
+            ( model, Effect.none )
+
+
+{-| 焼き係を温め始める。立ち上げに 1〜2 分かかるので、音の文書を開いた拍に頼んでおく
+（つまみに手が伸びる頃には焼けている）。1 つの文書につき 1 回だけ。
+絵を取りに行くかどうかとは切り離す — 束ねると、スキーマが後から届く順序で
+一度も温まらないことがある。
+-}
+warmSfxIfNeeded : Model -> ( Model, Effect )
+warmSfxIfNeeded model =
+    if model.sfxWarmed || sfxConfigOf model == Nothing then
+        ( model, Effect.none )
+
+    else
+        request "sfxWarm" (E.object []) { model | sfxWarmed = True }
 
 
 {-| ドット絵の一筆(または戻す/やり直す)1 件を docEdit の編集に翻訳する。
@@ -3185,7 +3432,7 @@ mapPayloads edit =
 
 parsedDoc : Model -> Maybe D.Value
 parsedDoc model =
-    D.decodeString D.value model.docText |> Result.toMaybe
+    model.docValue
 
 
 {-| 表示中セクション(キーとスキーマ)。未クリックなら先頭セクション —
@@ -4349,6 +4596,8 @@ handleOkByKind env model =
                                     , pendingJump = Nothing
                                     , current = Nothing
                                     , docText = ""
+                                    , docValue = Nothing
+                                    , spriteDoc = Nothing
                                     , openedText = ""
                                     , dirty = False
                                     , schemaState = SchemaNone
@@ -4366,6 +4615,7 @@ handleOkByKind env model =
                                     , previewStale = False
                                     , drag = Nothing
                                     , pixel = PixelEditor.init
+                                    , sfx = SfxEditor.init
                                     , spriteColors = Api.noSpriteColors
                                     , spriteColorsReq = Nothing
                                     , mapEd = MapEditor.init
@@ -4451,10 +4701,9 @@ handleOkByKind env model =
                         let
                             ( m1, previewFx ) =
                                 requestPreview
+                                    (withDoc (Just fc.path) fc.content
                                     { model
                                         | loadReq = Nothing
-                                        , current = Just fc.path
-                                        , docText = fc.content
                                         , openedText = fc.content
                                         , dirty = False
                                         , mtime = fc.mtime
@@ -4464,6 +4713,7 @@ handleOkByKind env model =
 
                                         -- ドット絵の道具・履歴・実色表は開いたファイルの物(持ち越さない)
                                         , pixel = PixelEditor.init
+                                        , sfx = SfxEditor.init
                                         , spriteColors = Api.noSpriteColors
                                         , spriteColorsReq = Nothing
                                         , mapEd = MapEditor.init
@@ -4495,6 +4745,7 @@ handleOkByKind env model =
                                                         Nothing
                                         , pendingJump = Nothing
                                     }
+                                    )
 
                             ( m2, crossFx ) =
                                 requestCrossDocsIfNeeded m1
@@ -4504,8 +4755,17 @@ handleOkByKind env model =
 
                             ( m4, spriteColorsFx ) =
                                 requestSpriteColors m3
+
+                            ( m5, sfxFx ) =
+                                requestSfxShapeIfNeeded m4
+
+                            ( m6, warmFx ) =
+                                warmSfxIfNeeded { m5 | sfxWarmed = False }
                         in
-                        ( m4, Effect.batch [ previewFx, crossFx, portraitFx, spriteColorsFx ] )
+                        ( m6
+                        , Effect.batch
+                            [ previewFx, crossFx, portraitFx, spriteColorsFx, sfxFx, warmFx ]
+                        )
 
                     else if Just env.id == model.schemaReq then
                         case Schema.decodeString fc.content of
@@ -4535,8 +4795,15 @@ handleOkByKind env model =
 
                                     ( m4, portraitFx ) =
                                         requestPortraits m3
+                                    ( m5, sfxFx ) =
+                                        requestSfxShapeIfNeeded m4
+
+                                    ( m6, warmFx ) =
+                                        warmSfxIfNeeded m5
                                 in
-                                ( m4, Effect.batch [ texFx, previewFx, crossFx, portraitFx ] )
+                                ( m6
+                                , Effect.batch [ texFx, previewFx, crossFx, portraitFx, sfxFx, warmFx ]
+                                )
 
                             Err reason ->
                                 -- JSON-Schema 形式(draft-07 等)は壊れではなく
@@ -4573,6 +4840,70 @@ handleOkByKind env model =
 
                 Err _ ->
                     ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
+
+        "sfxWarm" ->
+            let
+                ready =
+                    D.decodeValue (D.field "ready" D.bool) env.body
+                        |> Result.withDefault False
+
+                m1 =
+                    { model | sfx = SfxEditor.startingChanged (not ready) model.sfx }
+            in
+            if ready then
+                ( { m1 | sfxWarming = False }, Effect.none )
+
+            else
+                -- まだ焼けない。少し置いてもう一度様子を見る（見に行く先は warm）。
+                let
+                    seq =
+                        m1.sfxWaitSeq + 1
+                in
+                ( { m1 | sfxWarming = True, sfxWaitSeq = seq, sfxWaitLeft = 1 }
+                , Effect.Delayed { seq = seq, afterMs = 2000 }
+                )
+
+        "previewSfx" ->
+            let
+                starting =
+                    D.decodeValue (D.field "starting" D.bool) env.body
+                        |> Result.withDefault False
+
+                m1 =
+                    { model | sfx = SfxEditor.startingChanged starting model.sfx }
+            in
+            if starting then
+                -- 焼き係の立ち上げ待ち。誰も試し直さないと、こちらから触るまで
+                -- 鳴らないままになるので、間を置いて自分でもう一度頼む。
+                let
+                    seq =
+                        m1.sfxWaitSeq + 1
+                in
+                ( { m1 | sfxWaitSeq = seq, sfxWaitLeft = 1 }
+                , Effect.Delayed { seq = seq, afterMs = 4000 }
+                )
+
+            else
+                ( m1, Effect.none )
+
+        "sfxShape" ->
+            let
+                shape =
+                    D.decodeValue SfxEditor.shapeDecoder env.body |> Result.toMaybe
+
+                name =
+                    shape |> Maybe.map .name |> Maybe.withDefault ""
+
+                sound =
+                    if String.endsWith ".wav" name then
+                        String.dropRight 4 name
+
+                    else
+                        name
+            in
+            ( { model | sfx = SfxEditor.shapeLoaded sound shape (sfxValues sound model) model.sfx }
+            , Effect.none
+            )
 
         "putFile" ->
             if Just env.id == model.putReq then
@@ -4817,11 +5148,12 @@ afterDocEditResponse : String -> Model -> ( Model, Effect )
 afterDocEditResponse newText model =
     let
         m1 =
-            { model
-                | editReq = Nothing
-                , docText = newText
-                , dirty = newText /= model.openedText
-            }
+            withDoc model.current
+                newText
+                { model
+                    | editReq = Nothing
+                    , dirty = newText /= model.openedText
+                }
 
         ( m2, editFx ) =
             case ( m1.pendingEdits, m1.pendingRename ) of
@@ -6152,7 +6484,7 @@ viewEditing model =
 -}
 valueSectionsAsRecord : List ( String, Schema.Field ) -> Schema.Section
 valueSectionsAsRecord fields =
-    { kind = Schema.RecordKind, label = Nothing, group = Nothing, fields = fields }
+    { kind = Schema.RecordKind, label = Nothing, group = Nothing, widget = Nothing, fields = fields }
 
 
 {-| ペイン境界のつまみ(縦帯)。ドラッグで隣のペインの幅を変える。
@@ -7331,9 +7663,21 @@ viewVisualBody model schema doc =
                         (\( key, section ) ->
                             case section.kind of
                                 Schema.RecordKind ->
-                                    [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
-                                        [ text "この設定は一覧を持ちません。右のフォームで編集します。" ]
-                                    ]
+                                    if Schema.widgetIs "sfx" section.widget then
+                                        [ Html.map SfxMsg
+                                            (SfxEditor.view
+                                                { sound = key
+                                                , label = Maybe.withDefault key section.label
+                                                , values = sfxValues key model
+                                                }
+                                                model.sfx
+                                            )
+                                        ]
+
+                                    else
+                                        [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
+                                            [ text "この設定は一覧を持ちません。右のフォームで編集します。" ]
+                                        ]
 
                                 Schema.ValueKind _ ->
                                     []
@@ -9470,23 +9814,32 @@ wizardCreateLabel write =
 -- 問題パネル(下部バー)
 
 
-{-| 問題一覧は docText から view のたびに計算し直す(数百エントリ規模なら全計算で足りる)。
+{-| 問題一覧は文書から計算し直す(数百エントリ規模なら全計算で足りる)。
 問題があっても保存は止めない — バーは知らせるだけ。
+
+lazy に包むのは、検査が文書全体を舐めるから — ドット絵の一筆はセルを跨ぐたびに
+view が回るので、素の view のたびだと 89KB の検査がカーソルに付いて回る。
+種(文書・スキーマ・横断辞書)が動かない限り前の結果でよい。
 -}
 viewProblemBar : Model -> Html Msg
 viewProblemBar model =
     case ( model.current, model.schemaState ) of
         ( Just _, SchemaReady schema ) ->
-            case D.decodeString D.value model.docText of
-                Ok doc ->
-                    viewProblems (Lint.checkAcross (crossSources model) schema doc) model.problemsOpen
+            case model.docValue of
+                Just doc ->
+                    HL.lazy4 viewProblemBarBody model.crossSlots schema doc model.problemsOpen
 
-                Err _ ->
+                Nothing ->
                     div [ HA.class "problem-bar shrink-0 border-t border-edge bg-panel" ]
                         [ div [ HA.class "problem-head muted px-3 py-1.5 text-[11px] text-ink-faint" ] [ text "JSON が読めないため検査できません" ] ]
 
         _ ->
             text ""
+
+
+viewProblemBarBody : List CrossSlot -> Schema.Schema -> D.Value -> Bool -> Html Msg
+viewProblemBarBody slots schema doc open =
+    viewProblems (Lint.checkAcross (crossSourcesOf slots) schema doc) open
 
 
 viewProblems : List Lint.Problem -> Bool -> Html Msg
@@ -9839,7 +10192,11 @@ main : Program () Model Msg
 main =
     let
         caps =
-            { toPort = apiRequest, noticeExpired = NoticeExpired, autosaveFired = AutosaveFired }
+            { toPort = apiRequest
+            , noticeExpired = NoticeExpired
+            , autosaveFired = AutosaveFired
+            , delayFired = SfxWaitTick
+            }
     in
     Browser.element
         { init = init >> Tuple.mapSecond (Effect.perform caps)

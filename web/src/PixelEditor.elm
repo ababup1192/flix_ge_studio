@@ -44,6 +44,7 @@ import Dict exposing (Dict)
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
+import Html.Lazy as HL
 import Json.Decode as D
 import Set exposing (Set)
 import Svg
@@ -1013,8 +1014,20 @@ chip selected msg label =
         [ text label ]
 
 
+{-| 格子は「色 × 大きさ × rows」だけで決まる。lazy に包んで、それ以外の動き
+(hover の座標表示・道具の切り替え)では作り直さない — 32×24 の絵で 768 升あり、
+カーソルがセルを跨ぐたびに全升を組み直すと、一筆が目に見えて遅れる。
+
+lazy の比較は参照なので、色の辞書はここでなく中で作る(毎回作ると必ず外れる)。
+rows は文書か working からそのまま来るので、塗った時だけ参照が変わる。
+-}
 viewGrid : Colors -> Doc -> Model -> Edit -> Html Msg
 viewGrid colors doc model grid =
+    HL.lazy4 viewGridBody colors doc model.cellPx grid.rows
+
+
+viewGridBody : Colors -> Doc -> Int -> List String -> Html Msg
+viewGridBody colors doc cellPx rows =
     let
         cellCss =
             palette colors doc
@@ -1022,7 +1035,7 @@ viewGrid colors doc model grid =
                 |> Dict.fromList
     in
     div [ HA.class "px-grid border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]" ]
-        (grid.rows |> List.indexedMap (viewGridRow cellCss model.cellPx))
+        (rows |> List.indexedMap (viewGridRow cellCss cellPx))
 
 
 viewGridRow : Dict Char String -> Int -> Int -> String -> Html Msg
