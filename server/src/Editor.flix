@@ -70,13 +70,15 @@ mod Editor {
         let scaffold = Runner.make();
         // 検査と基準の自動追随の記録 (見た目が変わった知らせ)。
         let changes = Changes.make();
+        // 常駐する焼き係（ゲーム自身のコードで音を作る係）の世話係。
+        let bakeHost = BakeHost.make();
         let webRoot = webRootFromEnv();
         let server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         discard server.createContext("/", new HttpHandler {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, bakeHost, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -88,6 +90,10 @@ mod Editor {
                 }
         });
         server.start();
+        // 音を焼く口を持つゲームなら、開いた瞬間から焼き係を温め始める
+        // （立ち上げに 1〜2 分かかるので、触られてからでは間に合わない）。
+        Option.forEach(dir -> if (BakeHost.canHost(dir)) BakeHost.ensure(bakeHost, dir) else (),
+            initialDir);
         match initialDir {
             case Some(dir) => println("[studio] serving ${dir} on http://127.0.0.1:${port}")
             case None      => println("[studio] no project selected — GET /projects で候補を見て POST /project で選ぶ (http://127.0.0.1:${port})")
@@ -107,7 +113,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -116,7 +122,7 @@ mod Editor {
         match (methodName, path) {
             case ("OPTIONS", _)        => sendPreflight(exchange)
             case ("GET", "/projects")  => handleProjects(selection, exchange)
-            case ("POST", "/project")  => handleSelectProject(selection, readBody(exchange), exchange)
+            case ("POST", "/project")  => handleSelectProject(selection, bakeHost, readBody(exchange), exchange)
             case ("GET", "/running-games") => handleRunningGames(exchange)
             // 「新しいゲームをはじめる」の家族一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
@@ -167,6 +173,19 @@ mod Editor {
                 handleGalleryImage(dir, params, exchange))
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
+            case ("GET", "/sfx/shape") => withProject(selection, exchange, dir ->
+                handleSfxShape(dir, params, exchange))
+            // つまみの値をそのまま渡して 1 音だけ焼いてもらう（保存も待たない）。
+            // 焼くのはゲーム自身のコードなので、ここで聴く音は実機の音と同じ。
+            case ("POST", "/sfx/preview") => withProject(selection, exchange, dir ->
+                handleSfxPreview(bakeHost, dir, params, readBody(exchange), exchange))
+            // 音の文書を開いた拍に焼き係を温めておく（最初のひと触りを待たせない）。
+            case ("POST", "/sfx/warm") => withProject(selection, exchange, dir -> {
+                BakeHost.ensure(bakeHost, dir);
+                sendJson(200, Util.Json.Json.JObject(Map#{
+                    "ok" => Util.Json.Json.JBool(true),
+                    "ready" => Util.Json.Json.JBool(BakeHost.ready(bakeHost, dir))}), exchange)
+            })
             // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
             case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
                 discard Changes.pump(changes, runner, gamePorts, dir);
@@ -271,7 +290,8 @@ mod Editor {
 
     /// POST /project (body: {dir}) — 編集対象プロジェクトの切替。存在しない・project.json が
     /// 無い/読めない dir は 400 で断り、選択は変えない。成功したら履歴の先頭へ記録する。
-    def handleSelectProject(selection: Projects.Selection, bodyText: String, exchange: HttpExchange): Unit \ IO =
+    def handleSelectProject(selection: Projects.Selection, bakeHost: BakeHost.State,
+                            bodyText: String, exchange: HttpExchange): Unit \ IO =
         let dirOpt = JsonCompat.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj -> Map.get("dir", obj))
@@ -283,10 +303,14 @@ mod Editor {
                     sendJson(400, errorJson("プロジェクトが見つかりません(削除または移動されています): ${dir}"), exchange)
                 else if (not Projects.hasProjectJson(dir))
                     sendJson(400, errorJson("この場所は開けません(project.json がありません): ${dir}"), exchange)
-                else
+                else {
                     // 履歴・current が同じプロジェクトの別表記 (末尾スラッシュ等) で
                     // 二重登録されないよう、正規化した絶対パスに揃えてから選択する。
-                    selectValidated(new JFile(dir).getCanonicalPath(), selection, exchange)
+                    let canonical = new JFile(dir).getCanonicalPath();
+                    // 開いた瞬間から焼き係を温め始める（触られてからでは 1〜2 分待たせる）。
+                    if (BakeHost.canHost(canonical)) BakeHost.ensure(bakeHost, canonical) else ();
+                    selectValidated(canonical, selection, exchange)
+                }
         }
 
     /// 存在確認済みの dir へ切り替える。project.json が壊れていて読めないときは 400 で断る
@@ -679,10 +703,38 @@ mod Editor {
             case None        => sendJson(404, errorJson("preview not found"), exchange)
         }
 
-    /// GET /gallery/sound?name=… — debug/sounds/ の WAV のバイト列。無ければ 404。
+    /// POST /sfx/preview?name=… — つまみの値で 1 音だけ焼いてもらい、WAV をそのまま返す。
+    /// 焼き係がまだ立ち上がっていなければ、裏で立ち上げ始めて 202 を返す
+    /// (待たせない — 立ち上げは初回だけ 1〜2 分かかる)。
+    def handleSfxPreview(bakeHost: BakeHost.State, dir: String, params: Map[String, String],
+                         body: String, exchange: HttpExchange): Unit \ IO =
+        match Map.get("name", params) {
+            case None       => sendJson(400, errorJson("name が要ります"), exchange)
+            case Some(name) =>
+                let (status, result) = BakeHost.preview(bakeHost, dir, name, body);
+                match result {
+                    case Ok(bytes) => sendBytes("audio/wav", bytes, exchange)
+                    case Err(json) => sendJson(status, json, exchange)
+                }
+        }
+
+    /// GET /sfx/shape?name=… — 焼き上がった WAV を絵にできる形 (包絡と帯) で返す。
+    /// 読めない・WAV でないは 404 — エディタは絵を出さず、数値のつまみだけで編集できる。
+    def handleSfxShape(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
+        let found = match Map.get("name", params) {
+            case Some(name) => SfxShape.shapeJson(dir, name)
+            case None       => None
+        };
+        match found {
+            case Some(json) => sendJson(200, json, exchange)
+            case None       => sendJson(404, errorJson("sfx shape not found"), exchange)
+        }
+
+    /// GET /gallery/sound?name=… — 焼き上がった WAV のバイト列。無ければ 404。
+    /// ゲームが焼いた assets/sfx/ と、検証用の debug/sounds/ の両方を見る。
     def handleGallerySound(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
         let found = match Map.get("name", params) {
-            case Some(name) => Gallery.soundBytes(dir, name)
+            case Some(name) => SfxShape.findBytes(dir, name)
             case None       => None
         };
         match found {

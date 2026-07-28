@@ -56,6 +56,10 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.AutosaveFired info.seq)
 
+        Effect.Delayed info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.SfxWaitTick info.seq)
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 

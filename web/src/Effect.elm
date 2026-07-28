@@ -27,6 +27,9 @@ type Effect
       -- ライブ反映の自動保存予約。編集のたびに seq が進むので、発火時に
       -- 最新の予約だけが保存する(debounce)
     | Autosave { seq : Int, afterMs : Float }
+      -- 焼き上がりの確かめのように「少し置いてからもう一度」の予約。
+      -- seq は古い予約が新しい物を追い越さないための合鍵
+    | Delayed { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -61,6 +64,7 @@ perform :
     { toPort : E.Value -> Cmd msg
     , noticeExpired : { seq : Int, message : String } -> msg
     , autosaveFired : Int -> msg
+    , delayFired : Int -> msg
     }
     -> Effect
     -> Cmd msg
@@ -76,6 +80,10 @@ perform caps effect =
         Autosave info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.autosaveFired info.seq)
+
+        Delayed info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.delayFired info.seq)
 
         NoFx ->
             Cmd.none

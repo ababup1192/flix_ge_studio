@@ -112,6 +112,17 @@ export function realApi(base: string): Api {
           return getJson(`${base}/journey/changes`);
         case "journeyChangesSeen":
           return sendJson("POST", `${base}/journey/changes/seen`, payload);
+        case "sfxWarm": {
+          // 焼き係を先に立ち上げておく(最初のひと触りを待たせないため)
+          const res = await fetch(`${base}/sfx/warm`, { method: "POST" });
+          return res.json();
+        }
+        case "sfxShape":
+          // 焼き上がった効果音の実測(波形の包絡と帯ごとの音量)。まだ焼かれて
+          // いなければサーバが 404 を返し、エディタは絵を出さないだけ
+          return getJson(
+            `${base}/sfx/shape?name=${encodeURIComponent(String((payload as { name: string }).name ?? ""))}`,
+          );
         case "galleryList":
           // 「全場面を見る」の一覧(読むだけ)
           return getJson(`${base}/gallery/list`);

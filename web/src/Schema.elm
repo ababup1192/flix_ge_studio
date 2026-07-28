@@ -55,6 +55,10 @@ type alias Section =
     -- 書かなければ「基本」タブへ束ねる。セクションの種類は変えないので、
     -- 検査・参照解決・表・書き戻しはこの指定を一切見なくてよい。
     , group : Maybe String
+
+    -- セクションまるごとの見せ方の指定({"sfx": {…}} 等)。読めない指定は
+    -- 素の自動フォームに倒す — 宣言が先行してもエディタが壊れないように。
+    , widget : Maybe D.Value
     , fields : List ( String, Field )
     }
 
@@ -150,9 +154,10 @@ schemaDecoder =
 
 sectionDecoder : D.Decoder Section
 sectionDecoder =
-    D.map3 (\label group body -> { body | label = label, group = group })
+    D.map4 (\label group widget body -> { body | label = label, group = group, widget = widget })
         (opt "label" D.string)
         (opt "group" D.string)
+        (opt "widget" D.value)
         sectionBodyDecoder
 
 
@@ -193,7 +198,7 @@ sectionBodyDecoder =
 {-| label 抜きの Section を組む(label は sectionDecoder が後載せする)。 -}
 section : SectionKind -> List ( String, Field ) -> Section
 section kind fields =
-    { kind = kind, label = Nothing, group = Nothing, fields = fields }
+    { kind = kind, label = Nothing, group = Nothing, widget = Nothing, fields = fields }
 
 
 fieldsDecoder : D.Decoder (List ( String, Field ))
