@@ -12,7 +12,7 @@ mod SfxShape {
 
     /// 音を配ってよいディレクトリの白名前簿。ゲームが焼いた物 (assets/sfx) と
     /// 検証用に吐いた物 (debug/sounds) だけ。
-    pub def soundDirs(): List[String] = "assets/sfx" :: "debug/sounds" :: Nil
+    pub def soundDirs(): List[String] = "assets/sfx" :: "debug/sounds" :: "golden/sfx" :: Nil
 
     /// 波形を間引く升目の数 (横)。
     def cols(): Int32 = 160
@@ -25,6 +25,16 @@ mod SfxShape {
     pub def bandHi(): Float64 = 9000.0
 
     /// 白名前簿を順に見て、最初に見つかったファイルのバイト列。
+    /// 置き場を指しての取り出し(聴き比べ用)。許すのは soundDirs の中だけ。
+    pub def findBytesIn(dir: String, subdir: String, name: String): Option[Array[Int8, Static]] \ IO =
+        if (not Gallery.isSafeName(name) or not String.endsWith(suffix = ".wav", name)
+                or not List.memberOf(subdir, soundDirs()))
+            None
+        else {
+            let file = new JFile("${dir}/${subdir}/${name}");
+            if (file.isFile()) Some(Files.readAllBytes(file.toPath())) else None
+        }
+
     pub def findBytes(dir: String, name: String): Option[Array[Int8, Static]] \ IO =
         if (not Gallery.isSafeName(name) or not String.endsWith(suffix = ".wav", name)) None
         else soundDirs() |> List.findMap(sub -> {

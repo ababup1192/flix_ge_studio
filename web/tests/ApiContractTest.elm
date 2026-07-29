@@ -215,6 +215,8 @@ suite =
                                 (Just
                                     { id = "level"
                                     , bakeUrl = Nothing
+                                    , bakeCmd = Nothing
+                                    , performUrl = Nothing
                                     , pattern = "assets/level.json"
                                     , title = Just "レベル"
                                     , plugin = Just "shooterLevel"
@@ -230,6 +232,8 @@ suite =
                             (Ok
                                 [ { id = "misc"
                                   , bakeUrl = Nothing
+                                  , bakeCmd = Nothing
+                                  , performUrl = Nothing
                                   , pattern = "assets/*.hitbox.json"
                                   , title = Nothing
                                   , plugin = Nothing

@@ -33,6 +33,10 @@ type Effect
       -- 横断検索の打鍵デバウンス。seq は「その予約がまだ最新か」の合鍵で、
       -- 打っている間の予約は次々に失効する(最後の 1 回だけがサーバへ行く)
     | SearchDebounce { seq : Int, afterMs : Float }
+      -- 行を選ぶたびに 1 枚焼きを頼まないための間(連打の最後だけ焼く)
+    | FramePeek { seq : Int, afterMs : Float }
+      -- 焼き係が立ち上がるのを訊き直す間(初回のコンパイルは数分かかる)
+    | WakePoll { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -69,6 +73,8 @@ perform :
     , autosaveFired : Int -> msg
     , delayFired : Int -> msg
     , searchDebounced : Int -> msg
+    , framePeeked : Int -> msg
+    , wakePolled : Int -> msg
     }
     -> Effect
     -> Cmd msg
@@ -92,6 +98,14 @@ perform caps effect =
         SearchDebounce info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.searchDebounced info.seq)
+
+        FramePeek info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.framePeeked info.seq)
+
+        WakePoll info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.wakePolled info.seq)
 
         NoFx ->
             Cmd.none

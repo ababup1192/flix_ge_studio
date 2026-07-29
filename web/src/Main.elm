@@ -27,6 +27,7 @@ import EditHistory
 import Effect exposing (Effect)
 import EntryOps
 import EntryTable
+import GoldenView
 import FileVerbs
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
@@ -134,6 +135,14 @@ type SchemaState
 {-| 編集 1 件の封筒(語彙は Edit モジュール — 履歴も同じ形を運ぶ)。 -}
 type alias EditPayload =
     Edit.Payload
+
+
+{-| 焼き係 / 実機が起きた後にやること。draft はどちらで焼くか、from は
+どのカットから演じるか(選んでいなければ頭から)。
+-}
+type PendingAction
+    = BakeAfterWake Bool
+    | PerformAfterWake (Maybe Int)
 
 
 {-| 作業モード。ビジュアル=テーブル+フォーム主役(テキスト非表示)・
@@ -572,6 +581,52 @@ type alias Model =
     -- 進行中も編集は止めない(焼きは 20〜70 秒かかる)
     , bakeReq : Maybe Int
 
+    -- 行を選んだ時の 1 枚焼き。cache は (ファイル, カット, 保存世代) → 絵の置き場で、
+    -- 同じ姿を二度焼かない。saveGen は保存のたびに進む(焼き直すべき印)
+    , frameShot : Maybe { cut : Int, png : String }
+    , frameCache : Dict String String
+    , frameSeq : Int
+    , frameReq : Maybe Int
+    , saveGen : Int
+
+    -- 1 枚焼きが返した注意(飛ばしたカットの報せ)
+    , frameNotes : List String
+
+    -- 焼き上がりの見比べ(golden)。数字はステータスバーに出す
+    , golden : GoldenView.Model
+
+    -- 焼き上がりの拡大(ライトボックス)と、その中で動く絵を出しているか。
+    -- GIF は止められないので、止める = その時のコマを 1 枚出す
+    , bakeZoom : Bool
+    , bakePlaying : Bool
+
+    -- 拡大で 1 枚だけ見せている絵(Nothing = 焼き上がりのコマ送り)
+    , bakeZoomShot : Maybe String
+
+    -- 出しているのが「前回の焼き」(今の脚本で焼いた物ではない)か
+    , bakeStale : Bool
+
+    -- 「前回の焼き」を探している最中の置き場(本番 → 下書きの順に 1 つずつ訊く)
+    , bakeProbe : Maybe String
+
+    -- 実機へ頼んだ往復と、そのとき渡したカット
+    , performReq : Maybe Int
+    , performFrom : Maybe Int
+
+    -- 焼き係を起こしている間(と、その経過秒)。起こし終えたら焼きへ進む。
+    -- pendingDraft は起こし終えた後にどちらで焼くか
+    , wakeReq : Maybe Int
+    , wakeSeconds : Int
+    -- 起こし終えた後にやること(焼く / 実機で演じる)
+    , pendingAction : PendingAction
+
+    -- 訊き直しの世代(やめた後の予約が生き返らないための合鍵)と、待っている印
+    , wakeSeq : Int
+    , waking : Bool
+
+    -- 今どの口を起こしているか(焼き係 / 実機)
+    , wakeUrl : Maybe String
+
     -- 焼き始めてからの秒。止まっているのか進んでいるのかを画面で言うため
     -- (焼きは 70〜90 秒級。無言のスピナーだけだと固まったように見える)
     , bakeSeconds : Int
@@ -811,6 +866,26 @@ init _ =
         , soundLooping = False
         , tilePicker = Nothing
         , bakeReq = Nothing
+        , frameShot = Nothing
+        , frameCache = Dict.empty
+        , frameSeq = 0
+        , frameReq = Nothing
+        , saveGen = 0
+        , frameNotes = []
+        , golden = GoldenView.init
+        , wakeReq = Nothing
+        , wakeSeconds = 0
+        , pendingAction = BakeAfterWake False
+        , wakeSeq = 0
+        , waking = False
+        , wakeUrl = Nothing
+        , bakeZoom = False
+        , bakePlaying = True
+        , bakeZoomShot = Nothing
+        , bakeStale = False
+        , bakeProbe = Nothing
+        , performReq = Nothing
+        , performFrom = Nothing
         , bakeSeconds = 0
         , bake = Nothing
         , bakeFrame = 0
@@ -918,6 +993,22 @@ type Msg
     | BakeClicked
     | BakeFrameChanged String
     | BakeTick
+    | FramePeeked Int
+    | BakeDraftClicked
+    | GoldenOpened
+    | GoldenClosed
+    | GoldenSelected String
+    | GoldenModeChosen GoldenView.Mode
+    | GoldenOpacityChanged String
+    | GoldenBlessed Api.GoldenItem
+    | GoldenPlayClicked { name : String, dir : String }
+    | WakePolled Int
+    | PerformClicked
+    | BakeCancelled
+    | BakeZoomOpened
+    | BakeZoomShot String
+    | BakeZoomClosed
+    | BakePlayToggled
     | CutKindChosen (List Seg) (Maybe String) String
     | NoteClicked PianoRoll.Note
     | WaveCleared
@@ -1567,11 +1658,97 @@ update msg model =
         BakeClicked ->
             startBake model
 
+        FramePeeked seq ->
+            -- 連打の最後の 1 回だけ焼きに行く(0.4 秒とはいえ、行を撫でるたびは無駄)
+            if seq == model.frameSeq then
+                requestFrameShot model
+
+            else
+                ( model, Effect.none )
+
+        BakeDraftClicked ->
+            startBakeWith True model
+
+        GoldenOpened ->
+            -- 開くたびに見比べ直す(焼き直した直後に開くのが普通の使い方)。
+            -- 読み取りだけの封筒なので採番外(往復の番号をずらさない)
+            ( { model | golden = GoldenView.open model.golden }, requestInfo "goldenStatus" )
+
+        GoldenClosed ->
+            ( { model | golden = GoldenView.close model.golden }, Effect.none )
+
+        GoldenSelected name ->
+            paintGoldenDiff { model | golden = GoldenView.select name model.golden }
+
+        GoldenModeChosen mode ->
+            paintGoldenDiff { model | golden = GoldenView.setMode mode model.golden }
+
+        GoldenOpacityChanged text_ ->
+            ( { model | golden = GoldenView.setOpacity text_ model.golden }, Effect.none )
+
+        GoldenBlessed item ->
+            request "goldenBless" (E.object [ ( "name", E.string item.name ) ]) model
+
+        GoldenPlayClicked info ->
+            request "playSound"
+                (E.object
+                    [ ( "name", E.string info.name )
+                    , ( "dir", E.string info.dir )
+                    , ( "loop", E.bool False )
+                    ]
+                )
+                model
+
+        WakePolled seq ->
+            -- やめた後・別の焼きが始まった後の予約は捨てる
+            if seq /= model.wakeSeq || not model.waking then
+                ( model, Effect.none )
+
+            else if model.wakeSeconds >= wakeGiveUpSeconds then
+                showToast "立ち上がりません(手元で起こす手の様子を見てください)"
+                    { model | waking = False, wakeReq = Nothing }
+
+            else
+                askWake False model
+
+        PerformClicked ->
+            -- 選んでいる行があればそこから(行を選んで押す = そこから見る)
+            startWake (PerformAfterWake (selectedCut model)) (performUrlOf model) model
+
+        BakeCancelled ->
+            -- 長い待ちには必ず中断の口を置く。飛んでいる応答は id が合わなくなるので捨てられる
+            ( { model | waking = False, wakeReq = Nothing, bakeReq = Nothing, wakeSeq = model.wakeSeq + 1 }
+            , Effect.none
+            )
+
+        BakeZoomOpened ->
+            ( { model | bakeZoom = True, bakePlaying = True, bakeZoomShot = Nothing }, Effect.none )
+
+        BakeZoomShot url ->
+            -- 1 枚焼きの拡大(コマ送りではなく、その 1 枚を大きく見る)
+            ( { model | bakeZoom = True, bakeZoomShot = Just url }, Effect.none )
+
+        BakeZoomClosed ->
+            ( { model | bakeZoom = False }, Effect.none )
+
+        BakePlayToggled ->
+            ( { model | bakePlaying = not model.bakePlaying }, Effect.none )
+
         BakeTick ->
-            ( { model | bakeSeconds = model.bakeSeconds + 1 }, Effect.none )
+            if model.waking then
+                ( { model | wakeSeconds = model.wakeSeconds + 1 }, Effect.none )
+
+            else
+                ( { model | bakeSeconds = model.bakeSeconds + 1 }, Effect.none )
 
         BakeFrameChanged text_ ->
-            ( { model | bakeFrame = String.toInt text_ |> Maybe.withDefault model.bakeFrame }, Effect.none )
+            -- コマを指したら動く絵は止める(動いている上でコマは指せない)
+            ( { model
+                | bakeFrame = String.toInt text_ |> Maybe.withDefault model.bakeFrame
+                , bakePlaying = False
+              }
+            , Effect.none
+            )
 
         CutKindChosen basePath old new ->
             -- 種類の入れ替えは「前の鍵を消す + 新しい鍵を既定値で書く」の 2 本組。
@@ -1805,14 +1982,21 @@ update msg model =
         EntryClicked sel ->
             -- 改名の打ちかけは選び直しで破棄(別エントリの id に化けさせない)。
             -- 別の音を選んだら、波形の選択と再生位置も持ち越さない
-            requestSfxShapeIfNeeded
-                { model
-                    | entrySel = Just sel
-                    , rename = Nothing
-                    , usagesOpenFor = Nothing
-                    , wave = Waveform.init
-                    , selectedNote = Nothing
-                }
+            let
+                ( m1, shapeFx ) =
+                    requestSfxShapeIfNeeded
+                        { model
+                            | entrySel = Just sel
+                            , rename = Nothing
+                            , usagesOpenFor = Nothing
+                            , wave = Waveform.init
+                            , selectedNote = Nothing
+                        }
+
+                ( m2, peekFx ) =
+                    peekFrame m1
+            in
+            ( m2, Effect.batch [ shapeFx, peekFx ] )
 
         SortClicked column ->
             ( { model | tableSort = Just (toggleSort column model.tableSort) }, Effect.none )
@@ -2451,9 +2635,13 @@ openFile path model =
         ( m1, loadFx ) =
             request "getFile" (E.object [ ( "path", E.string path ) ]) model
 
+        -- 前のファイルの焼き上がり・進行中の予約も持ち越さない
+        cleared =
+            forgetBake m1
+
         -- 前のファイルのスキーマ要求・編集往復は無効化(遅れて届く古い応答を受けない)
         m2 =
-            { m1
+            { cleared
                 | loadReq = Just m1.reqCounter
                 , dashboard = Nothing
                 , pendingJump = Nothing
@@ -5391,7 +5579,10 @@ handleOkByKind env model =
                             request "resources" (E.object []) m1
                     in
                     -- 既定の画面はホームなので、その中身も最初に取っておく
-                    ( m2, Effect.batch [ c1, c2, requestInfo "journeyState" ] )
+                    ( m2
+                    , Effect.batch
+                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState" ]
+                    )
 
                 Ok (Api.HealthErr _) ->
                     -- プロジェクト未選択(または project.json が読めない)。候補を出して選ばせる。
@@ -5977,10 +6168,14 @@ handleOkByKind env model =
 
                                     Nothing ->
                                         ( m6, Effect.none )
+
+                            -- 前に焼いた物が残っていれば出す(今の脚本と同じ保証は無いので札つき)
+                            ( m8, bakedFx ) =
+                                lookForBaked m7
                         in
-                        ( m7
+                        ( m8
                         , Effect.batch
-                            [ previewFx, crossFx, portraitFx, spriteColorsFx, sfxFx, warmFx, scrollFx ]
+                            [ previewFx, crossFx, portraitFx, spriteColorsFx, sfxFx, warmFx, scrollFx, bakedFx ]
                         )
 
                     else if Just env.id == model.schemaReq then
@@ -6069,12 +6264,140 @@ handleOkByKind env model =
                 Err _ ->
                     ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
 
+        "goldenStatus" ->
+            case D.decodeValue Api.goldenStatusDecoder env.body of
+                Ok status ->
+                    paintGoldenDiff { model | golden = GoldenView.withStatus status model.golden }
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        -- 祝福したら見比べ直す(直った物が一覧から消える)
+        "goldenBless" ->
+            ( model, requestInfo "goldenStatus" )
+
+        "diffImages" ->
+            ( model, Effect.none )
+
+        "mediaExists" ->
+            let
+                found =
+                    D.decodeValue (D.field "exists" D.bool) env.body |> Result.withDefault False
+            in
+            case ( model.bakeProbe, found ) of
+                ( Just path, True ) ->
+                    ( { model | bakeProbe = Nothing, bake = Just (pastBake path), bakeStale = True }
+                    , Effect.none
+                    )
+
+                ( Just path, False ) ->
+                    -- 本番が無ければ下書きを見に行く(それも無ければ空のまま)
+                    case ( String.contains "/draft/" path, sceneId model ) of
+                        ( False, Just id ) ->
+                            probeBaked (draftGifPath id) model
+
+                        _ ->
+                            ( { model | bakeProbe = Nothing }, Effect.none )
+
+                _ ->
+                    ( model, Effect.none )
+
+        "bakeWake" ->
+            if Just env.id == model.wakeReq then
+                let
+                    reachable =
+                        D.decodeValue (D.field "reachable" D.bool) env.body |> Result.withDefault False
+
+                    needsCmd =
+                        D.decodeValue (D.field "needsCmd" D.bool) env.body |> Result.withDefault False
+
+                    m1 =
+                        { model | wakeReq = Nothing }
+                in
+                if reachable then
+                    case m1.pendingAction of
+                        BakeAfterWake draft ->
+                            sendBake draft { m1 | waking = False }
+
+                        PerformAfterWake from ->
+                            sendPerform from { m1 | waking = False }
+
+                else if needsCmd then
+                    showToast "焼き係の起こし方が宣言されていません(project.json の宣言に bakeCmd を書いてください)"
+                        { m1 | waking = False }
+
+                else
+                    -- まだ立ち上がっていない。焼きへは進まず、2 秒後にもう一度訊く
+                    ( m1, Effect.WakePoll { seq = m1.wakeSeq, afterMs = 2000 } )
+
+            else
+                ( model, Effect.none )
+
+        "cutsceneFrame" ->
+            if Just env.id == model.frameReq then
+                case D.decodeValue Api.frameShotDecoder env.body of
+                    Ok shot ->
+                        case shot.png of
+                            Just png ->
+                                ( { model
+                                    | frameReq = Nothing
+                                    , frameShot = Just { cut = shot.cut, png = png }
+                                    , frameCache = Dict.insert (frameKey model shot.cut) png model.frameCache
+                                    , frameNotes = shot.notes
+                                  }
+                                , Effect.none
+                                )
+
+                            Nothing ->
+                                ( { model | frameReq = Nothing, frameNotes = shot.notes }, Effect.none )
+
+                    Err _ ->
+                        ( { model | frameReq = Nothing }, Effect.none )
+
+            else
+                ( model, Effect.none )
+
+        "performScene" ->
+            if Just env.id == model.performReq then
+                let
+                    body =
+                        D.decodeValue (D.field "body" D.string) env.body |> Result.withDefault ""
+
+                    reachable =
+                        D.decodeValue (D.field "reachable" D.bool) env.body |> Result.withDefault False
+
+                    m1 =
+                        { model | performReq = Nothing }
+                in
+                if not reachable then
+                    showToast "実機に繋がりませんでした" m1
+
+                else if String.startsWith "ok" (String.trimLeft body) then
+                    showToast
+                        (case m1.performFrom of
+                            Just cut ->
+                                "実機で再生中(カット " ++ String.fromInt cut ++ " から)"
+
+                            Nothing ->
+                                "実機で再生中"
+                        )
+                        m1
+
+                else
+                    -- error: 理由 — 相手の言葉をそのまま見せる(言い換えない)
+                    showToast (String.trim body) m1
+
+            else
+                ( model, Effect.none )
+
         "bakeCutscene" ->
             if Just env.id == model.bakeReq then
                 case D.decodeValue Api.bakeResultDecoder env.body of
                     Ok result ->
                         if result.reachable then
-                            ( { model | bakeReq = Nothing, bake = Just result, bakeFrame = 0 }, Effect.none )
+                            ( { model | bakeReq = Nothing, bake = Just result, bakeFrame = 0, bakeStale = False }
+                            , Effect.none
+                            )
 
                         else
                             showToast "焼き係に繋がりません(make cutscene-server で起動してください)"
@@ -6196,6 +6519,9 @@ handleOkByKind env model =
                                     , savingText = Nothing
                                     , openedText = saved
                                     , dirty = model.docText /= saved
+
+                                    -- 保存で「焼ける姿」が変わる = 1 枚焼きの控えは古くなる
+                                    , saveGen = model.saveGen + 1
 
                                     -- 次の保存の ifMtime。旧サーバ(mtime 無し)は控えを進めない
                                     , mtime =
@@ -7044,13 +7370,48 @@ viewShell model content =
             [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
             , viewNavTabs model.tab
             , viewSearchButton
+            , viewGoldenBadge model
             , viewProjectSwitch
             ]
         , content
 
         -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
         , viewSearchPanel model
+        , viewGoldenWindow model
         ]
+
+
+{-| 焼き上がりの見張りの数字。割れていれば琥珀、揃っていれば静かな緑。
+golden/ を持たないプロジェクトでは出さない(見張る決まりが無い)。
+-}
+viewGoldenBadge : Model -> Html Msg
+viewGoldenBadge model =
+    case model.golden.status of
+        Just status ->
+            if not status.enabled || status.total == 0 then
+                text ""
+
+            else
+                button
+                    [ HA.classList
+                        [ ( "golden-badge btn btn-ghost btn-mini shrink-0", True )
+                        , ( "text-amber-300", status.broken > 0 )
+                        , ( "text-ok", status.broken == 0 )
+                        ]
+                    , HA.title "焼き上がりが前と同じかを見比べる"
+                    , HE.onClick GoldenOpened
+                    ]
+                    [ text
+                        (if status.broken > 0 then
+                            "⚠ " ++ String.fromInt status.broken ++ " / " ++ String.fromInt status.total
+
+                         else
+                            "✓ " ++ String.fromInt status.total ++ " / " ++ String.fromInt status.total
+                        )
+                    ]
+
+        Nothing ->
+            text ""
 
 
 {-| 検索の入口。ショートカットだけだと、知らない人には無い機能と同じ。 -}
@@ -7062,6 +7423,20 @@ viewSearchButton =
         , HE.onClick SearchToggled
         ]
         [ text "🔍" ]
+
+
+viewGoldenWindow : Model -> Html Msg
+viewGoldenWindow model =
+    GoldenView.view
+        { onSelect = GoldenSelected
+        , onMode = GoldenModeChosen
+        , onOpacity = GoldenOpacityChanged
+        , onBless = GoldenBlessed
+        , onPlay = GoldenPlayClicked
+        , onClose = GoldenClosed
+        }
+        { golden = goldenUrl model, baked = bakedUrl model }
+        model.golden
 
 
 viewSearchPanel : Model -> Html Msg
@@ -7588,6 +7963,8 @@ viewEditing model =
                     Nothing ->
                         text ""
                 , viewFileMenu model
+                , viewGoldenWindow model
+                , viewBakeZoom model
                 , viewTilePicker model
                 , viewSearchPanel model
                 , case model.fileVerb of
@@ -7750,11 +8127,240 @@ viewJsonTab =
         [ text "JSON" ]
 
 
+{-| 行を選んだ拍の 1 枚焼き。控えにあれば即その絵、無ければ少し置いてから頼む。 -}
+peekFrame : Model -> ( Model, Effect )
+peekFrame model =
+    case ( bakeUrlOf model, selectedCut model ) of
+        ( Just _, Just cut ) ->
+            case Dict.get (frameKey model cut) model.frameCache of
+                Just png ->
+                    ( { model | frameShot = Just { cut = cut, png = png } }, Effect.none )
+
+                Nothing ->
+                    let
+                        seq =
+                            model.frameSeq + 1
+                    in
+                    ( { model | frameSeq = seq, frameShot = Nothing }
+                    , Effect.FramePeek { seq = seq, afterMs = 200 }
+                    )
+
+        _ ->
+            ( { model | frameShot = Nothing }, Effect.none )
+
+
+{-| 焼き係へ 1 枚だけ頼む(宣言の口 + "/frame")。 -}
+requestFrameShot : Model -> ( Model, Effect )
+requestFrameShot model =
+    case ( bakeUrlOf model, model.current, selectedCut model ) of
+        ( Just url, Just path, Just cut ) ->
+            let
+                ( m1, fx ) =
+                    request "cutsceneFrame"
+                        (E.object
+                            [ ( "url", E.string url )
+                            , ( "path", E.string "/frame" )
+                            , ( "file", E.string path )
+                            , ( "query", E.string ("cut=" ++ String.fromInt cut) )
+                            ]
+                        )
+                        model
+            in
+            ( { m1 | frameReq = Just m1.reqCounter }, fx )
+
+        _ ->
+            ( model, Effect.none )
+
+
+{-| 選んでいるカットの番号(1 始まり)。一覧の行でなければ Nothing。 -}
+selectedCut : Model -> Maybe Int
+selectedCut model =
+    case ( model.entrySel, currentSection model ) of
+        ( Just (ByIndex i), Just ( _, section ) ) ->
+            if section.oneOf then
+                Just (i + 1)
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| 控えの鍵。同じファイル・同じカット・同じ保存の姿なら焼き直さない。 -}
+frameKey : Model -> Int -> String
+frameKey model cut =
+    Maybe.withDefault "" model.current
+        ++ "#"
+        ++ String.fromInt cut
+        ++ "@"
+        ++ String.fromInt model.saveGen
+
+
 {-| 焼く。未保存があれば先に保存してから頼む(サーバは毎回ファイルを読み直すので、
 保存前に頼むと古い脚本が焼ける)。焼いている間も編集は止めない。
 -}
 startBake : Model -> ( Model, Effect )
 startBake model =
+    startBakeWith False model
+
+
+{-| ファイルを切り替えた時に、前のファイルの焼き上がりを持ち越さない。
+進行中の起こし・1 枚焼きの予約は世代を進めて無効にする(やめると同じ仕組み)。
+-}
+forgetBake : Model -> Model
+forgetBake model =
+    { model
+        | bake = Nothing
+        , bakeStale = False
+        , bakeFrame = 0
+        , bakeZoom = False
+        , bakeZoomShot = Nothing
+        , bakeProbe = Nothing
+        , bakeReq = Nothing
+        , bakeSeconds = 0
+        , waking = False
+        , wakeReq = Nothing
+        , wakeSeq = model.wakeSeq + 1
+        , frameShot = Nothing
+        , frameNotes = []
+        , frameReq = Nothing
+        , frameSeq = model.frameSeq + 1
+    }
+
+
+{-| 開いたファイルに前回の焼き産物があるか訊く(本番 → 下書きの順)。
+あれば「前回の焼き」として出す — 今の脚本と同じ保証は無いので札を添える。
+-}
+lookForBaked : Model -> ( Model, Effect )
+lookForBaked model =
+    case ( bakeUrlOf model, sceneId model ) of
+        ( Just _, Just id ) ->
+            probeBaked (bakedGifPath id) model
+
+        _ ->
+            ( model, Effect.none )
+
+
+{-| その置き場に絵があるか訊く(あった時だけ出す — 無い絵を先に出さない)。 -}
+probeBaked : String -> Model -> ( Model, Effect )
+probeBaked path model =
+    request "mediaExists"
+        (E.object [ ( "url", E.string (mediaUrl model path) ) ])
+        { model | bakeProbe = Just path }
+
+
+{-| 焼き上がりの置き場(本番)。下書きは同じ名前で draft/ の下に住む。 -}
+bakedGifPath : String -> String
+bakedGifPath id =
+    "debug/cutscene/" ++ id ++ ".gif"
+
+
+draftGifPath : String -> String
+draftGifPath id =
+    "debug/cutscene/draft/" ++ id ++ ".gif"
+
+
+{-| 焼く前に焼き係を起こす(繋がっていれば server 側で即返る)。
+起こしている間は「起こしています… n 秒」を出し、返ってから焼きへ進む。
+-}
+startBakeWith : Bool -> Model -> ( Model, Effect )
+startBakeWith draft model =
+    startWake (BakeAfterWake draft) (bakeUrlOf model) model
+
+
+{-| 起こしてから、やることへ進む共通の入り口(焼き係も実機も同じ道)。 -}
+startWake : PendingAction -> Maybe String -> Model -> ( Model, Effect )
+startWake action url model =
+    case url of
+        Just _ ->
+            askWake True
+                { model
+                    | wakeSeconds = 0
+                    , pendingAction = action
+                    , wakeUrl = url
+                    , waking = True
+                    , wakeSeq = model.wakeSeq + 1
+                }
+
+        Nothing ->
+            ( model, Effect.none )
+
+
+{-| 焼き係の様子を訊く。launch=True は 1 回目だけ(冪等な手でも、2 秒ごとに
+撃ち直せば無駄なプロセスが積み上がる)。
+-}
+askWake : Bool -> Model -> ( Model, Effect )
+askWake launch model =
+    case model.wakeUrl of
+        Just url ->
+            let
+                ( m1, fx ) =
+                    request "bakeWake"
+                        (E.object [ ( "url", E.string url ), ( "launch", E.bool launch ) ])
+                        model
+            in
+            ( { m1 | wakeReq = Just m1.reqCounter }, fx )
+
+        Nothing ->
+            ( { model | waking = False }, Effect.none )
+
+
+{-| 立ち上がりを待つ上限(初回はコンパイルで数分かかる)。 -}
+wakeGiveUpSeconds : Int
+wakeGiveUpSeconds =
+    240
+
+
+{-| 実機へ「この脚本をここから演じて」と頼む。脚本は毎回ディスクから読み直されるので、
+未保存があれば先に保存する。
+-}
+sendPerform : Maybe Int -> Model -> ( Model, Effect )
+sendPerform from model =
+    case ( performUrlOf model, model.current ) of
+        ( Just url, Just path ) ->
+            let
+                ( m1, saveFx ) =
+                    if model.dirty then
+                        sendPut model.mtime model
+
+                    else
+                        ( model, Effect.none )
+
+                ( m2, playFx ) =
+                    request "performScene"
+                        (E.object
+                            [ ( "url", E.string url )
+                            , ( "file", E.string path )
+                            , ( "query"
+                              , E.string
+                                    (case from of
+                                        Just cut ->
+                                            "from=" ++ String.fromInt cut
+
+                                        Nothing ->
+                                            ""
+                                    )
+                              )
+                            ]
+                        )
+                        m1
+            in
+            ( { m2 | performReq = Just m2.reqCounter, performFrom = from }, Effect.batch [ saveFx, playFx ] )
+
+        _ ->
+            ( model, Effect.none )
+
+
+{-| 開いているファイルの宣言が持つ実機の口(無ければ「実機で再生」は出さない)。 -}
+performUrlOf : Model -> Maybe String
+performUrlOf model =
+    currentGroup model |> Maybe.andThen .performUrl
+
+
+{-| 起こし終えた後の本番。未保存があれば先に保存してから頼む。 -}
+sendBake : Bool -> Model -> ( Model, Effect )
+sendBake draft model =
     case ( bakeUrlOf model, model.current ) of
         ( Just url, Just path ) ->
             let
@@ -7767,13 +8373,32 @@ startBake model =
 
                 ( m2, bakeFx ) =
                     request "bakeCutscene"
-                        (E.object [ ( "url", E.string url ), ( "file", E.string path ) ])
+                        (E.object
+                            [ ( "url", E.string url )
+                            , ( "file", E.string path )
+                            , ( "query"
+                              , E.string
+                                    (if draft then
+                                        "draft=1"
+
+                                     else
+                                        ""
+                                    )
+                              )
+                            ]
+                        )
                         m1
             in
             ( { m2 | bakeReq = Just m2.reqCounter, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
 
         _ ->
             ( model, Effect.none )
+
+
+{-| 開いているファイルの宣言が、焼き係の起こし方を持つか(案内の出し分け)。 -}
+bakeCmdDeclared : Model -> Bool
+bakeCmdDeclared model =
+    (currentGroup model |> Maybe.andThen .bakeCmd) /= Nothing
 
 
 {-| 開いているファイルの宣言が持つ焼き係の URL(無ければ「焼く」は出さない)。 -}
@@ -7918,11 +8543,14 @@ viewBakePanel model =
     let
         baking =
             model.bakeReq /= Nothing
+
+        waking =
+            model.waking
     in
     [ div [ HA.class "bake-bar mb-2 flex flex-wrap items-center gap-1.5" ]
         [ button
             [ HA.class "bake-run btn btn-mini"
-            , HA.disabled baking
+            , HA.disabled (baking || waking)
             , HA.title "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
             , HE.onClick BakeClicked
             ]
@@ -7934,7 +8562,49 @@ viewBakePanel model =
                     "焼く"
                 )
             ]
-        , if baking then
+        , case performUrlOf model of
+            Just _ ->
+                button
+                    [ HA.class "perform-run btn btn-ghost btn-mini"
+                    , HA.disabled (baking || waking || model.performReq /= Nothing)
+                    , HA.title "実機(ゲームの窓)で、選んでいるカットから演じさせます"
+                    , HE.onClick PerformClicked
+                    ]
+                    [ text "▶ 実機で再生" ]
+
+            Nothing ->
+                text ""
+        , if waking || baking then
+            button
+                [ HA.class "bake-cancel btn btn-ghost btn-mini", HE.onClick BakeCancelled ]
+                [ text "やめる" ]
+
+          else
+            text ""
+        , button
+            [ HA.class "bake-draft btn btn-ghost btn-mini"
+            , HA.disabled (baking || waking)
+            , HA.title "小さく粗い代わりに速い下書き(10 秒台)。動きの確かめ用"
+            , HE.onClick BakeDraftClicked
+            ]
+            [ text "下書きで焼く" ]
+        , if waking then
+            span [ HA.class "bake-waking flex items-center gap-1.5 text-[11px] text-ink-soft" ]
+                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                , text
+                    ((case model.pendingAction of
+                        PerformAfterWake _ ->
+                            "ゲームを起こしています… "
+
+                        BakeAfterWake _ ->
+                            "焼き係を起こしています… "
+                     )
+                        ++ String.fromInt model.wakeSeconds
+                        ++ "s(初回はコンパイルのため数分かかることがあります)"
+                    )
+                ]
+
+          else if baking then
             span [ HA.class "flex items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text ("焼いています… " ++ String.fromInt model.bakeSeconds ++ "s")
@@ -7946,7 +8616,14 @@ viewBakePanel model =
             Just result ->
                 if not result.reachable then
                     span [ HA.class "bake-offline text-[11px] text-amber-300" ]
-                        [ text "焼き係が起きていません(make cutscene-server)" ]
+                        [ text
+                            (if bakeCmdDeclared model then
+                                "焼き係が応えませんでした(もう一度お試しください)"
+
+                             else
+                                "焼き係の起こし方が宣言されていません(project.json の editor.bakeCmd)"
+                            )
+                        ]
 
                 else if List.isEmpty result.notes then
                     text ""
@@ -7962,7 +8639,66 @@ viewBakePanel model =
                 text ""
         ]
     ]
+        ++ viewFrameShot model
         ++ viewBakedFilm model
+
+
+{-| 行を選んだ時の 1 枚焼き。0.4 秒で返るので、選ぶたびにその瞬間が出る。
+未保存の編集があるうちは「今の脚本」ではないことを小さく断る(勝手には保存しない)。
+-}
+viewFrameShot : Model -> List (Html Msg)
+viewFrameShot model =
+    case model.frameShot of
+        Just shot ->
+            [ div [ HA.class "frame-shot relative mb-2" ]
+                [ img
+                    [ HA.class "block w-full rounded border border-edge bg-well"
+                    , HA.src (mediaUrl model shot.png)
+                    , HA.alt ("カット " ++ String.fromInt shot.cut)
+                    ]
+                    []
+                , span [ HA.class "absolute top-1 left-1 rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
+                    [ text ("カット " ++ String.fromInt shot.cut ++ " の瞬間") ]
+                , button
+                    [ HA.class "frame-zoom btn btn-mini absolute top-1 right-1"
+                    , HA.title "大きく見る(Esc で閉じる)"
+                    , HE.onClick (BakeZoomShot (mediaUrl model shot.png))
+                    ]
+                    [ text "⤢ 拡大" ]
+                ]
+            , if model.dirty then
+                div [ HA.class "mb-2 text-[10px] text-ink-faint" ]
+                    [ text "保存すると最新の脚本で焼けます" ]
+
+              else
+                text ""
+            , if List.isEmpty model.frameNotes then
+                text ""
+
+              else
+                div [ HA.class "mb-2 text-[10px] text-amber-300", HA.title (String.join "\n" model.frameNotes) ]
+                    [ text ("⚠ " ++ String.fromInt (List.length model.frameNotes) ++ " 件の報せ") ]
+            ]
+
+        Nothing ->
+            if model.frameReq /= Nothing then
+                [ div [ HA.class "mb-2 text-[11px] text-ink-faint" ] [ text "この瞬間を焼いています…" ] ]
+
+            else
+                []
+
+
+{-| 前回の焼き産物を「絵だけある」状態として持つ(コマ数は分からないので 0)。 -}
+pastBake : String -> Api.BakeResult
+pastBake gif =
+    { reachable = True
+    , gif = Just gif
+    , frames = 0
+    , pngFrames = Nothing
+    , stride = 2
+    , draft = String.contains "/draft/" gif
+    , notes = []
+    }
 
 
 {-| 焼き上がり(GIF)と、コマ送り。コマ数は焼き応答の frames。 -}
@@ -7970,12 +8706,40 @@ viewBakedFilm : Model -> List (Html Msg)
 viewBakedFilm model =
     case model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif ))) of
         Just ( result, gif ) ->
-            [ img
-                [ HA.class "bake-gif mb-2 block w-full rounded border border-edge bg-well"
-                , HA.src (mediaUrl model gif)
-                , HA.alt "焼き上がり"
+            [ div [ HA.class "relative mb-2" ]
+                [ img
+                    [ HA.classList
+                        [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+
+                        -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
+                        -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
+                        , ( "shot-pixelated", result.draft )
+                        ]
+                    , HA.src (mediaUrl model gif)
+                    , HA.alt "焼き上がり"
+                    ]
+                    []
+                , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
+                    [ if result.draft then
+                        span [ HA.class "bake-draft-tag rounded-sm bg-amber-500/80 px-1.5 py-px text-[10px] text-black" ]
+                            [ text "下書き(1/3 サイズ・1/2 コマ)" ]
+
+                      else
+                        text ""
+                    , if model.bakeStale then
+                        span [ HA.class "bake-stale rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
+                            [ text "前回の焼き" ]
+
+                      else
+                        text ""
+                    ]
+                , button
+                    [ HA.class "bake-zoom btn btn-mini absolute top-1 right-1"
+                    , HA.title "大きく見る(← → でコマ送り・Space で再生 / 止める・Esc で閉じる)"
+                    , HE.onClick BakeZoomOpened
+                    ]
+                    [ text "⤢ 拡大" ]
                 ]
-                []
             , if Api.pngFrameCount result <= 1 then
                 text ""
 
@@ -8020,8 +8784,11 @@ viewFilmstrip model result =
         [ case sceneId model of
             Just id ->
                 img
-                    [ HA.class "film-frame block w-full rounded border border-edge bg-well"
-                    , HA.src (mediaUrl model ("debug/cutscene/frames/" ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                    [ HA.classList
+                        [ ( "film-frame block w-full rounded border border-edge bg-well", True )
+                        , ( "shot-pixelated", result.draft )
+                        ]
+                    , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
                     , HA.alt ("コマ " ++ String.fromInt at)
                     ]
                     []
@@ -8044,6 +8811,159 @@ viewFilmstrip model result =
                 [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
             ]
         ]
+
+
+{-| 「違いを塗る」を選んでいる間だけ、画布に 2 枚を重ねて塗ってもらう。
+描くのは JS(画素の計算は Elm の仕事ではない)。
+-}
+paintGoldenDiff : Model -> ( Model, Effect )
+paintGoldenDiff model =
+    case ( model.golden.mode, GoldenView.selectedItem model.golden ) of
+        ( GoldenView.Diff, Just item ) ->
+            request "diffImages"
+                (E.object
+                    [ ( "a", E.string (goldenUrl model item) )
+                    , ( "b", E.string (bakedUrl model item) )
+                    , ( "id", E.string GoldenView.diffCanvasId )
+                    ]
+                )
+                model
+
+        _ ->
+            ( model, Effect.none )
+
+
+{-| 正(golden)と今(焼き上がり)の絵の URL。置き場だけが違う。 -}
+goldenUrl : Model -> Api.GoldenItem -> String
+goldenUrl model item =
+    SceneView.galleryImageUrl model.serverBase model.root "golden" item.name
+
+
+bakedUrl : Model -> Api.GoldenItem -> String
+bakedUrl model item =
+    SceneView.galleryImageUrl model.serverBase model.root "gallery" item.name
+
+
+{-| 焼き上がりの拡大。全場面モーダルと同じ暗幕の流儀で、画面いっぱいに出す。
+中でも同じ操作(GIF の再生 / 止める・コマ送り)ができる。
+-}
+viewBakeZoom : Model -> Html Msg
+viewBakeZoom model =
+    case ( model.bakeZoom, model.bake ) of
+        ( True, Just result ) ->
+            let
+                last =
+                    max 0 (Api.pngFrameCount result - 1)
+
+                at =
+                    clamp 0 last model.bakeFrame
+            in
+            div
+                [ HA.class "bake-zoom-layer fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/85"
+                , HE.onClick BakeZoomClosed
+                ]
+                [ case ( model.bakeZoomShot, model.bakePlaying, result.gif ) of
+                    ( Just url, _, _ ) ->
+                        img
+                            [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
+                            , HA.src url
+                            , HA.alt "この瞬間"
+                            ]
+                            []
+
+                    _ ->
+                        text ""
+                , case ( model.bakeZoomShot, model.bakePlaying, result.gif ) of
+                    ( Nothing, True, Just gif ) ->
+                        img
+                            [ HA.classList
+                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
+                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
+                                ]
+                            , HA.src (mediaUrl model gif)
+                            , HA.alt "焼き上がり"
+                            ]
+                            []
+
+                    ( Nothing, False, _ ) ->
+                        case sceneId model of
+                            Just id ->
+                                img
+                                    [ HA.classList
+                                        [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
+                                        , ( "shot-pixelated h-[82vh] w-auto", result.draft )
+                                        ]
+                                    , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                                    , HA.alt ("コマ " ++ String.fromInt at)
+                                    ]
+                                    []
+
+                            Nothing ->
+                                text ""
+
+                    _ ->
+                        text ""
+                , div
+                    [ HA.class "flex w-[70vw] max-w-[52rem] items-center gap-2"
+
+                    -- 中の操作は暗幕の「押したら閉じる」に食わせない
+                    , HE.stopPropagationOn "click" (D.succeed ( BakeTick, True ))
+                    ]
+                    [ button
+                        [ HA.class "zoom-play btn btn-mini shrink-0", HE.onClick BakePlayToggled ]
+                        [ text
+                            (if model.bakePlaying then
+                                "⏸ 止める"
+
+                             else
+                                "▶ 動かす"
+                            )
+                        ]
+                    , button
+                        [ HA.class "btn btn-ghost btn-mini shrink-0"
+                        , HE.onClick (BakeFrameChanged (String.fromInt (max 0 (at - 1))))
+                        ]
+                        [ text "◀" ]
+                    , input
+                        [ HA.class "min-w-0 flex-1"
+                        , HA.type_ "range"
+                        , HA.min "0"
+                        , HA.max (String.fromInt last)
+                        , HA.value (String.fromInt at)
+                        , HE.onInput BakeFrameChanged
+                        ]
+                        []
+                    , button
+                        [ HA.class "btn btn-ghost btn-mini shrink-0"
+                        , HE.onClick (BakeFrameChanged (String.fromInt (min last (at + 1))))
+                        ]
+                        [ text "▶" ]
+                    , span [ HA.class "shrink-0 font-mono text-[11px] text-ink" ]
+                        [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
+                    , button [ HA.class "btn btn-mini shrink-0", HE.onClick BakeZoomClosed ] [ text "閉じる" ]
+                    ]
+                ]
+
+        _ ->
+            text ""
+
+
+{-| コマ別 PNG の置き場。下書きは別の棚に焼かれるので、GIF の置き場から導く
+(応答が置き場を明示しないので、同じ産物の隣を指す)。
+-}
+framesDir : Model -> Api.BakeResult -> String
+framesDir _ result =
+    case result.gif of
+        Just gif ->
+            case List.reverse (String.split "/" gif) of
+                _ :: rest ->
+                    String.join "/" (List.reverse rest) ++ "/frames/"
+
+                [] ->
+                    "debug/cutscene/frames/"
+
+        Nothing ->
+            "debug/cutscene/frames/"
 
 
 {-| 焼き上がりの置き場(debug/…)を、既存の絵の配信に載せた URL へ。 -}
@@ -8291,6 +9211,7 @@ viewTopbar model =
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
         , viewNavTabs model.tab
         , viewSearchButton
+        , viewGoldenBadge model
         , viewProjectSwitch
         , case model.notice of
             Just message ->
@@ -11889,6 +12810,39 @@ viewDeleteDialog confirm =
 -- 配線
 
 
+{-| 拡大の中のキー(QuickLook の作法): ← → でコマ送り・Space で動かす / 止める・
+Esc で閉じる。コマ送りは自動で「止めた」姿にする(動く絵の上でコマは指せない)。
+-}
+bakeZoomKeyDecoder : Model -> D.Decoder Msg
+bakeZoomKeyDecoder model =
+    let
+        last =
+            model.bake |> Maybe.map (\result -> max 0 (Api.pngFrameCount result - 1)) |> Maybe.withDefault 0
+
+        step delta =
+            BakeFrameChanged (String.fromInt (clamp 0 last (model.bakeFrame + delta)))
+    in
+    D.field "key" D.string
+        |> D.andThen
+            (\key ->
+                case key of
+                    "Escape" ->
+                        D.succeed BakeZoomClosed
+
+                    "ArrowLeft" ->
+                        D.succeed (step -1)
+
+                    "ArrowRight" ->
+                        D.succeed (step 1)
+
+                    " " ->
+                        D.succeed BakePlayToggled
+
+                    _ ->
+                        D.fail "他のキーは素通し"
+            )
+
+
 {-| ⌘⇧F(開く / 閉じる)と、開いている間の Esc(閉じる)。 -}
 searchKeyDecoder : Bool -> D.Decoder Msg
 searchKeyDecoder isOpen =
@@ -12034,8 +12988,32 @@ subscriptions model =
           else
             Sub.none
 
+        -- 見比べの窓が開いている間だけ Esc で閉じる
+        , if GoldenView.isOpen model.golden then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed GoldenClosed
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else
+            Sub.none
+
+        -- 拡大の間だけ、コマ送り(← →)・再生の入り切り(Space)・閉じる(Esc)
+        , if model.bakeZoom then
+            Browser.Events.onKeyDown (bakeZoomKeyDecoder model)
+
+          else
+            Sub.none
+
         -- 焼いている間だけ経過秒を進める(70〜90 秒かかるので、進んでいる印が要る)
-        , if model.bakeReq /= Nothing then
+        , if model.bakeReq /= Nothing || model.waking then
             Time.every 1000 (\_ -> BakeTick)
 
           else
@@ -12182,6 +13160,8 @@ main =
             , autosaveFired = AutosaveFired
             , delayFired = SfxWaitTick
             , searchDebounced = SearchDebounced
+            , framePeeked = FramePeeked
+            , wakePolled = WakePolled
             }
     in
     Browser.element

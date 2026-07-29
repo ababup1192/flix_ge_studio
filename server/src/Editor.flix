@@ -151,9 +151,23 @@ mod Editor {
             // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
             // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
             // 横断検索。宣言済み Doc の文字列値だけを単純一致で探す (大きな生成物は名前だけ)
+            // 焼き直した絵と音が「前と同じか」。golden/ があるプロジェクトだけ生きる
+            case ("GET", "/golden/status") => withProject(selection, exchange, dir -> {
+                let (status, json) = Golden.status(dir);
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/golden/bless") => withProject(selection, exchange, dir -> {
+                let (status, json) = Golden.bless(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             // 焼き係(ゲーム側の常駐サーバ)への取り次ぎ。宛先は宣言(bakeUrl)から来る
-            case ("POST", "/bake/proxy") => withProject(selection, exchange, _dir -> {
-                let (status, json) = BakeProxy.respond(readBody(exchange));
+            // 焼き係を起こす(繋がっていれば何もしない)。走らせる手は project.json の宣言だけ
+            case ("POST", "/bake/wake") => withProject(selection, exchange, dir -> {
+                let (status, json) = BakeProxy.wake(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/bake/proxy") => withProject(selection, exchange, dir -> {
+                let (status, json) = BakeProxy.respond(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("GET", "/search") => withProject(selection, exchange, dir -> {
@@ -535,10 +549,18 @@ mod Editor {
                         Map.insert("schema", JString(schemaPath), base)
                     else base)
         });
-        let withBake = match decl#bakeUrl {
-            case Some(url) => Map#{"bakeUrl" => JString(url)}
-            case None      => Map#{}
-        };
+        // 焼き・実機の宣言は素通し(画面は有無だけを見る。手の中身は server が読む)
+        let withBake = List.foldLeft(
+            (acc, pair) -> match snd(pair) {
+                case Some(value) => Map.insert(fst(pair), JString(value), acc)
+                case None        => acc
+            },
+            (Map#{}: Map[String, Json]),
+            ("bakeUrl", decl#bakeUrl)
+                :: ("bakeCmd", decl#bakeCmd)
+                :: ("performCmd", decl#performCmd)
+                :: ("performUrl", decl#performUrl)
+                :: Nil);
         let base = Map.union(withBake, Map#{
             "id"      => JString(decl#id),
             "pattern" => JString(decl#pattern),
@@ -557,7 +579,24 @@ mod Editor {
     /// エラーにならず「schema 未指定」として黙って sibling 規約へ倒れ、フォームが出ない理由が
     /// 誰にも分からなくなる — ここで名指しすることでだけ気づける。
     def declKeyWarnings(projectJson: Json): List[String] =
-        let known = Set#{"id", "pattern", "title", "schema", "plugin", "role", "bakeUrl"};
+        editorKeyWarnings(projectJson) ::: resourceKeyWarnings(projectJson)
+
+    /// editor 直下の知らないキー(bakeCmd の綴り違い等)。
+    def editorKeyWarnings(projectJson: Json): List[String] =
+        let known = Set#{"resources", "dashboards"};
+        JsonCodec.expectObject(projectJson)
+            |> Option.flatMap(obj -> Map.get("editor", obj))
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.map(obj -> Map.keysOf(obj) |> Set.toList
+                // "//" 始まりは注釈(文書の流儀と同じ)
+                |> List.filter(k -> not (String.startsWith(prefix = "//", k)))
+                |> List.filter(k -> not Set.memberOf(k, known))
+                |> List.map(k -> "editor に未知のキー『${k}』があります(使えるのは resources / dashboards)"))
+            |> Option.getWithDefault(Nil)
+
+    def resourceKeyWarnings(projectJson: Json): List[String] =
+        let known = Set#{"id", "pattern", "title", "schema", "plugin", "role",
+                         "bakeUrl", "bakeCmd", "performCmd", "performUrl"};
         let decls = JsonCodec.expectObject(projectJson)
             |> Option.flatMap(obj -> Map.get("editor", obj))
             |> Option.flatMap(JsonCodec.expectObject)
@@ -573,7 +612,7 @@ mod Editor {
                 let declId = Map.get("id", obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("?");
                 Map.keysOf(obj) |> Set.toList
                     |> List.filter(k -> not Set.memberOf(k, known))
-                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin / role / bakeUrl)")
+                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin / role / bakeUrl / bakeCmd / performCmd / performUrl)")
         })
 
     /// 宣言と実ファイルの健康診断。応答は 200 のまま warnings で「見える化」だけする —
@@ -783,9 +822,12 @@ mod Editor {
     /// GET /gallery/sound?name=… — 焼き上がった WAV のバイト列。無ければ 404。
     /// ゲームが焼いた assets/sfx/ と、検証用の debug/sounds/ の両方を見る。
     def handleGallerySound(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
-        let found = match Map.get("name", params) {
-            case Some(name) => SfxShape.findBytes(dir, name)
-            case None       => None
+        // dir を添えると、その置き場だけを見る(正 golden/sfx と今 assets/sfx は
+        // 同じ名前なので、聴き比べには置き場の指定が要る)
+        let found = match (Map.get("name", params), Map.get("dir", params)) {
+            case (Some(name), Some(sub)) => SfxShape.findBytesIn(dir, sub, name)
+            case (Some(name), None)      => SfxShape.findBytes(dir, name)
+            case _                       => None
         };
         match found {
             case Some(bytes) => sendBytes("audio/wav", bytes, exchange)

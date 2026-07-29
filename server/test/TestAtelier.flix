@@ -131,7 +131,8 @@ mod TestAtelier {
     def testMaterialFiltering(): Unit \ Assert =
         let decl = (id, pattern, role) ->
             { id = id, pattern = pattern, title = None, schemaPath = None,
-              plugin = None, builtin = false, role = role, bakeUrl = None };
+              plugin = None, builtin = false, role = role,
+              bakeUrl = None, bakeCmd = None, performCmd = None, performUrl = None };
         let decls = decl("sprite", "assets/*.sprite.json", Some("material"))
             :: decl("balance", "assets/balance.kind.json", Some("tuning"))
             :: decl("terrain", "assets/terrain.kind.json", None)

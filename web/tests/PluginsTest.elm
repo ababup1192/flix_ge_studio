@@ -17,6 +17,8 @@ levelGroup : Api.ResourceGroup
 levelGroup =
     { id = "level"
     , bakeUrl = Nothing
+    , bakeCmd = Nothing
+    , performUrl = Nothing
     , pattern = "assets/*.level.json"
     , title = Just "レベル"
     , plugin = Just "shooterLevel"
@@ -29,6 +31,8 @@ plainGroup : Api.ResourceGroup
 plainGroup =
     { id = "misc"
     , bakeUrl = Nothing
+    , bakeCmd = Nothing
+    , performUrl = Nothing
     , pattern = "assets/*.misc.json"
     , title = Nothing
     , plugin = Nothing
@@ -41,6 +45,8 @@ futureGroup : Api.ResourceGroup
 futureGroup =
     { id = "board"
     , bakeUrl = Nothing
+    , bakeCmd = Nothing
+    , performUrl = Nothing
     , pattern = "assets/*.board.json"
     , title = Nothing
     , plugin = Just "puzzleBoard"

@@ -13,29 +13,172 @@
 // 案内できるようにする。
 mod BakeProxy {
     import java.io.InputStream
+    import java.io.{File => JFile}
     import java.lang.Exception
+    import java.lang.ProcessBuilder
+    import java.lang.Thread
+    import java.util.ArrayList
     import java.lang.{String => JavaString}
     import java.net.{Socket, InetSocketAddress}
 
     use Util.Json.Json
-    use Util.Json.Json.{JObject, JString, JBool}
+    use Util.Json.Json.{JObject, JString, JBool, JNumber}
 
     /// 焼きの待ち時間の上限(長尺で ~70 秒。余裕を見て 3 分)。
     def timeoutMs(): Int32 = 180000
 
-    /// POST /bake/proxy — body {url, file?}。応答は焼き係の JSON をそのまま
-    /// {ok:true, body:…} に包む。届かなければ {ok:false, reachable:false}。
-    pub def respond(body: String): (Int32, Json) \ IO =
+    /// 取り次ぎの直前に、落ちていた時だけ待つ短い猶予。長い待ちは画面側の
+    /// 訊き直しが受け持つ(1 本の往復で何分も抱え込まない)。
+    def graceMs(): Int32 = 8000
+
+    /// POST /bake/proxy — body {url, file?, path?, query?}。
+    /// path は宣言の口に足す小道(例 "/frame")、query は "cut=5&draft=1" の形。
+    /// 応答は焼き係の JSON をそのまま {ok:true, body:…} に包む。
+    /// 届かなければ {ok:false, reachable:false}。
+    /// POST /bake/wake — body {url, launch?}。**待たずにすぐ返す**:
+    ///   (a) 繋がるか確かめる
+    ///   (b) 繋がらず launch なら、宣言の手を 1 度だけ撃つ(冪等なので再訪も安全)
+    ///   (c) 今の様子をそのまま返す
+    /// 長い待ち(初回はコンパイルで数分)は画面側が 2 秒おきに訊き直す —
+    /// 1 本の往復で数分を抱え込むと、進んでいるのか固まったのかが誰にも見えない。
+    /// **コマンドは画面から受け取らない**(走らせてよい手は宣言だけ)。
+    pub def wake(dir: String, body: String): (Int32, Json) \ IO =
         match parseRequest(body) {
-            case None => (400, errorJson("body must be a JSON object {url, file?}"))
-            case Some((url, file)) => match target(url) {
-                case None => (400, errorJson("bakeUrl must point at 127.0.0.1: ${url}"))
+            case None => (400, errorJson("body must be a JSON object {url, launch?}"))
+            case Some(req) => match target(req#url) {
+            case None => (400, errorJson("bakeUrl must point at 127.0.0.1"))
+            case Some((port, _)) =>
+                if (healthy(port))
+                    (200, wokeJson(true, false, "既に起きています"))
+                else if (not (req#launch))
+                    (200, wokeJson(false, false, "まだ起きていません(立ち上がりを待っています)"))
+                else match bakeCmdOf(dir, req#url) {
+                    case None => (200, JObject(Map#{
+                        "ok"        => JBool(false),
+                        "reachable" => JBool(false),
+                        "needsCmd"  => JBool(true),
+                        "log"       => JString("起こし方(bakeCmd)が宣言されていません")
+                    }))
+                    case Some(cmd) => {
+                        let started = launch(dir, cmd);
+                        (200, wokeJson(false, true,
+                            if (started) "『${cmd}』で起こしています" else "『${cmd}』を起こせませんでした"))
+                    }
+                }
+            }
+        }
+
+    def wokeJson(reachable: Bool, woke: Bool, log: String): Json =
+        JObject(Map#{
+            "ok"        => JBool(reachable),
+            "reachable" => JBool(reachable),
+            "woke"      => JBool(woke),
+            "log"       => JString(log)
+        })
+
+    /// 起こして待つ(宣言が無ければ何もしない)。
+    def ensureUp(dir: String, url: String, port: Int32): Unit \ IO =
+        match bakeCmdOf(dir, url) {
+            case None      => ()
+            case Some(cmd) => {
+                discard launch(dir, cmd);
+                discard waitForHealth(port, 0)
+            }
+        }
+
+    /// 「起こす手」は、その口(bakeUrl / performUrl)を宣言している資源の物を使う。
+    /// 画面から渡させない — 走らせてよい手はプロジェクト自身の宣言だけ。
+    def bakeCmdOf(dir: String, url: String): Option[String] \ IO =
+        match FileIndex.readInside(dir, "project.json") {
+            case Err(_)   => None
+            case Ok(text) => match JsonCompat.parse(text) {
+                case None       => None
+                case Some(json) => match ResourceDecl.fromProjectJson(json) {
+                    case Err(_)    => None
+                    case Ok(decls) =>
+                        decls#resources
+                            |> List.filterMap(decl ->
+                                if (decl#bakeUrl == Some(url)) decl#bakeCmd
+                                else if (decl#performUrl == Some(url)) decl#performCmd
+                                else None)
+                            |> List.head
+                }
+            }
+        }
+
+    /// 宣言された手をプロジェクトの根で走らせる(シェル経由)。
+    /// 出入りは覗かない — 起きたかどうかは health で確かめる。
+    /// 宣言された手をプロジェクトの根で走らせ、**待たない**。
+    ///
+    /// WhyNot: 出入りを繋いだままにしない — 実機を起こす手(make debug)は
+    /// 終わらないコマンドで、誰も読まないパイプが詰まった瞬間に相手が止まる。
+    /// 書き出しはファイルへ逃がす(様子を見たい時の置き場にもなる)。
+    def launch(dir: String, cmd: String): Bool \ IO =
+        try {
+            let args = new ArrayList();
+            discard args.add("/bin/sh");
+            discard args.add("-lc");
+            discard args.add(cmd);
+            let pb = new ProcessBuilder(args);
+            discard pb.directory(new JFile(dir));
+            discard pb.redirectErrorStream(true);
+            discard new JFile("${dir}/.studio").mkdirs();
+            discard pb.redirectOutput(new JFile("${dir}/.studio/host.log"));
+            discard pb.start();
+            true
+        } catch {
+            case _: Exception => false
+        }
+
+    /// health が返るまで 0.5 秒おきに見に行く(上限まで)。返るのは待った時間。
+    def waitForHealth(port: Int32, waited: Int32): Int32 \ IO =
+        if (healthy(port)) waited
+        else if (waited >= graceMs()) waited
+        else {
+            Thread.sleep(500i64);
+            waitForHealth(port, waited + 500)
+        }
+
+    /// 生きているか(短い往復。閉じない相手でも頭だけ読んで判じる)。
+    pub def healthy(port: Int32): Bool \ IO =
+        try {
+            let socket = new Socket();
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 300);
+            socket.setSoTimeout(700);
+            let head = "GET /health HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n"
+                + "Connection: close\r\n\r\n";
+            socket.getOutputStream().write(head.getBytes("UTF-8"));
+            socket.getOutputStream().flush();
+            let alive = match readHeader(socket.getInputStream()) {
+                case Some(header) => String.startsWith(prefix = "HTTP/1.1 200", header)
+                case None         => false
+            };
+            socket.close();
+            alive
+        } catch {
+            case _: Exception => false
+        }
+
+    pub def respond(dir: String, body: String): (Int32, Json) \ IO =
+        match parseRequest(body) {
+            case None => (400, errorJson("body must be a JSON object {url, file?, path?, query?}"))
+            case Some(req) => match target(req#url) {
+                case None => (400, errorJson("bakeUrl must point at 127.0.0.1: ${req#url}"))
                 case Some((port, path)) =>
-                    let suffix = match file {
-                        case Some(f) if f != "" => "?file=${f}"
+                    if (not (safeBit(req#path)) or not (safeBit(req#args)))
+                        (400, errorJson("path / query に使えない文字があります"))
+                    else
+                    let fileBit = match req#file {
+                        case Some(f) if f != "" => "file=${f}"
                         case _                  => ""
                     };
-                    match post(port, "${path}${suffix}") {
+                    let args = List.filter(bit -> bit != "", fileBit :: req#args :: Nil)
+                        |> List.join("&");
+                    let suffix = if (args == "") "" else "?${args}";
+                    // 前段: 繋がらなければ宣言の手で起こしてから頼む(冪等でも、
+                    // 繋がっている時は走らせない — 無駄なプロセスを増やさないため)
+                    if (not (healthy(port))) ensureUp(dir, req#url, port) else ();
+                    match post(port, "${path}${req#path}${suffix}") {
                         case Some(text) => (200, JObject(Map#{
                             "ok"        => JBool(true),
                             "reachable" => JBool(true),
@@ -50,15 +193,27 @@ mod BakeProxy {
             }
         }
 
-    /// {url, file?} を解く。
-    def parseRequest(body: String): Option[(String, Option[String])] =
+    /// {url, file?, path?, query?} を解く。
+    def parseRequest(body: String): Option[{url = String, file = Option[String], path = String, args = String, launch = Bool}] =
         JsonCompat.parse(body)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj ->
                 Map.get("url", obj)
                     |> Option.flatMap(JsonCodec.expectString)
-                    |> Option.map(url ->
-                        (url, Map.get("file", obj) |> Option.flatMap(JsonCodec.expectString))))
+                    |> Option.map(url -> {
+                        url   = url,
+                        file  = Map.get("file", obj) |> Option.flatMap(JsonCodec.expectString),
+                        path  = Map.get("path", obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault(""),
+                        args  = Map.get("query", obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault(""),
+                        launch = Map.get("launch", obj) |> Option.flatMap(JsonCodec.expectBool) |> Option.getWithDefault(false)
+                    }))
+
+    /// 頼み事に混ぜてよい文字か(改行やスペースで別の要求を差し込ませない)。
+    pub def safeBit(bit: String): Bool =
+        not (String.contains(substr = "\r", bit)
+                or String.contains(substr = "\n", bit)
+                or String.contains(substr = " ", bit)
+                or String.contains(substr = "..", bit))
 
     /// "http://127.0.0.1:8792/cutscene" → (8792, "/cutscene")。
     /// 127.0.0.1 (と localhost) 以外・http 以外は None。

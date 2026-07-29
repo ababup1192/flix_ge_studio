@@ -100,6 +100,59 @@ function handleLocal(kind: string, payload: any): unknown | undefined {
     // 鳴らせない環境・焼かれていない音は静かに何もしない(編集は続く)
     return playAudio({ url, loop, offset, duration, playheadId }).then(() => ({}));
   }
+  if (kind === "diffImages") {
+    // 正と今を重ねて、違う画素だけを塗る。色を作るのは画布(canvas)の仕事なので、
+    // ここで 2 枚を読み込んでから 1 枚に描き出す(Elm は画布の名前を知るだけ)。
+    const p = payload as { a: string; b: string; id: string };
+    const canvas = document.getElementById(p.id);
+    if (!(canvas instanceof HTMLCanvasElement)) return {};
+    const load = (src: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    return Promise.all([load(p.a), load(p.b)])
+      .then(([a, b]) => {
+        const w = Math.max(a.naturalWidth, b.naturalWidth);
+        const h = Math.max(a.naturalHeight, b.naturalHeight);
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (ctx === null) return { ok: false };
+        const pixels = (img: HTMLImageElement) => {
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0);
+          return ctx.getImageData(0, 0, w, h);
+        };
+        const left = pixels(a);
+        const right = pixels(b);
+        const out = ctx.createImageData(w, h);
+        for (let i = 0; i < out.data.length; i += 4) {
+          const d =
+            Math.abs(left.data[i] - right.data[i]) +
+            Math.abs(left.data[i + 1] - right.data[i + 1]) +
+            Math.abs(left.data[i + 2] - right.data[i + 2]) +
+            Math.abs(left.data[i + 3] - right.data[i + 3]);
+          if (d === 0) {
+            // 同じところは「今」の絵を暗く敷く(違いだけが浮く)
+            out.data[i] = right.data[i] * 0.25;
+            out.data[i + 1] = right.data[i + 1] * 0.25;
+            out.data[i + 2] = right.data[i + 2] * 0.25;
+            out.data[i + 3] = 255;
+          } else {
+            out.data[i] = 255;
+            out.data[i + 1] = 64;
+            out.data[i + 2] = 128;
+            out.data[i + 3] = 255;
+          }
+        }
+        ctx.putImageData(out, 0, 0);
+        return { ok: true };
+      })
+      .catch(() => ({ ok: false }));
+  }
   if (kind === "highlightJson") {
     // フォームで触っている欄を、右の JSON でも選択状態にして見せる。
     // focus は移さない(打っている欄から指が離れる方が困る)ので、選択と

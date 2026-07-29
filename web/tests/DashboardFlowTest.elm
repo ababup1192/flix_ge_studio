@@ -60,6 +60,14 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.SearchDebounced info.seq)
 
+        Effect.FramePeek info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.FramePeeked info.seq)
+
+        Effect.WakePoll info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.WakePolled info.seq)
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 
@@ -224,7 +232,7 @@ booted =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources", "journeyState" ]
+        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resourcesBody
         |> ProgramTest.clickButton "アトリエ"

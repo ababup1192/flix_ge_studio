@@ -17,6 +17,8 @@ module Api exposing
     , ResourceFile
     , ResourceGroup
     , BakeResult
+    , GoldenItem
+    , GoldenStatus
     , Resources
     , SearchHit
     , SearchResults
@@ -33,7 +35,10 @@ module Api exposing
     , projectsDecoder
     , putFileResultDecoder
     , resourcesDecoder
+    , FrameShot
     , bakeResultDecoder
+    , frameShotDecoder
+    , goldenStatusDecoder
     , pngFrameCount
     , runningGamesDecoder
     , searchResultsDecoder
@@ -220,6 +225,12 @@ type alias ResourceGroup =
     -- 焼き係(ゲーム側の常駐サーバ)の URL。宣言があれば「焼く」を出す
     , bakeUrl : Maybe String
 
+    -- 焼き係の起こし方(中身は server が読む。画面は有無だけを見る)
+    , bakeCmd : Maybe String
+
+    -- 実機(ゲームの窓)の口。宣言があれば「実機で再生」を出す
+    , performUrl : Maybe String
+
     -- 宣言の照合パターン("assets/*.map.json" 等)。新しいファイルの置き場と
     -- 名前の決まりでもあるので、一覧を出す側だけでなく「+ 新規」も見る
     , pattern : String
@@ -283,9 +294,11 @@ dashboardDecoder =
 
 resourceGroupDecoder : D.Decoder ResourceGroup
 resourceGroupDecoder =
-    D.map6 ResourceGroup
+    D.map8 ResourceGroup
         (D.field "id" D.string)
         (opt "bakeUrl" D.string)
+        (opt "bakeCmd" D.string)
+        (opt "performUrl" D.string)
         (withDefault "" (D.field "pattern" D.string))
         (opt "title" D.string)
         (opt "plugin" D.string)
@@ -553,6 +566,9 @@ type alias BakeResult =
     -- コマ別 PNG の枚数(応答が明示する時だけ)と、間引きの歩幅
     , pngFrames : Maybe Int
     , stride : Int
+
+    -- 下書き焼き(小さく粗い代わりに速い)の産物か
+    , draft : Bool
     , notes : List String
     }
 
@@ -581,7 +597,7 @@ bakeResultDecoder =
             (\reachable ->
                 if not reachable then
                     D.succeed
-                        { reachable = False, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
+                        { reachable = False, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
 
                 else
                     D.field "body" D.string
@@ -594,30 +610,115 @@ bakeResultDecoder =
                                         , frames = baked.frames
                                         , pngFrames = baked.pngFrames
                                         , stride = baked.stride
+                                        , draft = baked.draft
                                         , notes = baked.notes
                                         }
 
                                     Err _ ->
-                                        { reachable = True, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
+                                        { reachable = True, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
                             )
             )
 
 
 {-| 焼き係の本文 {"baked":[{gif,frames,notes}]}。1 本だけ焼く前提で先頭を採る。 -}
-bakedDecoder : D.Decoder { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, notes : List String }
+type alias Baked =
+    { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, draft : Bool, notes : List String }
+
+
+emptyBaked : Baked
+emptyBaked =
+    { gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
+
+
+{-| 焼き係の本文。1 本だけ焼く時は {"baked":[…]}、下書き / 1 枚焼きは
+そのまま 1 つの物として返る — どちらの形でも同じ 1 件に落として読む。
+-}
+bakedDecoder : D.Decoder Baked
 bakedDecoder =
-    D.field "baked" (D.list bakedItemDecoder)
-        |> D.map
-            (List.head
-                >> Maybe.withDefault { gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
-            )
+    D.oneOf
+        [ D.field "baked" (D.list bakedItemDecoder) |> D.map (List.head >> Maybe.withDefault emptyBaked)
+        , bakedItemDecoder
+        ]
 
 
-bakedItemDecoder : D.Decoder { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, notes : List String }
+bakedItemDecoder : D.Decoder Baked
 bakedItemDecoder =
-    D.map5 (\gif frames pngFrames stride notes -> { gif = gif, frames = frames, pngFrames = pngFrames, stride = stride, notes = notes })
+    D.map6 (\gif frames pngFrames stride draft notes -> { gif = gif, frames = frames, pngFrames = pngFrames, stride = stride, draft = draft, notes = notes })
         (opt "gif" D.string)
         (withDefault 0 (D.field "frames" D.int))
         (opt "pngFrames" D.int)
         (withDefault 2 (D.field "stride" D.int))
+        (withDefault False (D.field "draft" D.bool))
         (withDefault [] (D.field "notes" (D.list D.string)))
+
+
+{-| POST /cutscene/frame の応答(1 枚焼き)。png は debug/… の置き場。 -}
+type alias FrameShot =
+    { png : Maybe String, cut : Int, notes : List String }
+
+
+frameShotDecoder : D.Decoder FrameShot
+frameShotDecoder =
+    D.field "reachable" D.bool
+        |> D.andThen
+            (\reachable ->
+                if not reachable then
+                    D.succeed { png = Nothing, cut = 0, notes = [] }
+
+                else
+                    D.field "body" D.string
+                        |> D.map
+                            (\body ->
+                                D.decodeString frameBodyDecoder body
+                                    |> Result.withDefault { png = Nothing, cut = 0, notes = [] }
+                            )
+            )
+
+
+frameBodyDecoder : D.Decoder FrameShot
+frameBodyDecoder =
+    D.map3 (\png cut notes -> { png = png, cut = cut, notes = notes })
+        (opt "png" D.string)
+        (withDefault 0 (D.field "cut" D.int))
+        (withDefault [] (D.field "notes" (D.list D.string)))
+
+
+{-| GET /golden/status。enabled=False は「見張る決まりが無い」(golden/ が無い)。
+now はサーバの時計(秒)で、「割れて何日目か」はこれと since の差で出す。
+-}
+type alias GoldenStatus =
+    { enabled : Bool
+    , now : Int
+    , total : Int
+    , broken : Int
+    , items : List GoldenItem
+    }
+
+
+type alias GoldenItem =
+    { name : String
+    , kind : String
+    , match : Bool
+    , goldenMtime : Int
+    , since : Maybe Int
+    }
+
+
+goldenStatusDecoder : D.Decoder GoldenStatus
+goldenStatusDecoder =
+    D.map5 GoldenStatus
+        (withDefault False (D.field "enabled" D.bool))
+        (withDefault 0 (D.field "now" D.int))
+        (withDefault 0 (D.field "total" D.int))
+        (withDefault 0 (D.field "broken" D.int))
+        (withDefault [] (D.field "items" (D.list goldenItemDecoder)))
+
+
+goldenItemDecoder : D.Decoder GoldenItem
+goldenItemDecoder =
+    D.map5 GoldenItem
+        (D.field "name" D.string)
+        (withDefault "image" (D.field "kind" D.string))
+        (withDefault True (D.field "match" D.bool))
+        (withDefault 0 (D.field "goldenMtime" D.int))
+        (opt "since" D.int)

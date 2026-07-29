@@ -20,7 +20,10 @@ mod ResourceDecl {
         plugin = Option[String],        // 専用の編集画面プラグイン名。無ければ汎用フォームで編集する
         builtin = Bool,                 // true = サーバ組み込み (ui / hitbox)。project.json 由来は false
         role = Option[String],          // "material" (素材 = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
-        bakeUrl = Option[String]        // 焼き係 (ゲーム側の常駐サーバ) の URL。宣言があれば画面に「焼く」が出る
+        bakeUrl = Option[String],       // 焼き係 (ゲーム側の常駐サーバ) の URL。宣言があれば画面に「焼く」が出る
+        bakeCmd = Option[String],       // 焼き係の起こし方。繋がらない時だけ、この手をプロジェクトの根で撃つ
+        performCmd = Option[String],    // 実機で演じさせる手 (画面はまだ使わない — 素通しだけ)
+        performUrl = Option[String]     // 実機の口 (同上)
     }
 
     /// アトリエ (つくる) の対象か。role の明示的な "material" だけを通す —
@@ -73,9 +76,11 @@ mod ResourceDecl {
     // 組み込みは専用のプレビュー画面が受け持ち、スキーマ駆動フォームを使わないため。
     pub def builtinDecls(): List[Decl] =
            { id = "ui",     pattern = "*.ui.json",  title = Some("UI"),
-             schemaPath = None, plugin = None, builtin = true, role = None, bakeUrl = None }
+             schemaPath = None, plugin = None, builtin = true, role = None,
+             bakeUrl = None, bakeCmd = None, performCmd = None, performUrl = None }
         :: { id = "hitbox", pattern = "hitbox.json", title = Some("ヒットボックス"),
-             schemaPath = None, plugin = None, builtin = true, role = None, bakeUrl = None }
+             schemaPath = None, plugin = None, builtin = true, role = None,
+             bakeUrl = None, bakeCmd = None, performCmd = None, performUrl = None }
         :: Nil
 
     // ── "editor" セクションの分解 ─────────────────────────
@@ -122,7 +127,10 @@ mod ResourceDecl {
             plugin     = optionalString("plugin", declObj),
             builtin    = false,
             role       = optionalString("role", declObj),
-            bakeUrl    = optionalString("bakeUrl", declObj)
+            bakeUrl    = optionalString("bakeUrl", declObj),
+            bakeCmd    = optionalString("bakeCmd", declObj),
+            performCmd = optionalString("performCmd", declObj),
+            performUrl = optionalString("performUrl", declObj)
         }
 
     /// dashboards の要素 1 件を DashboardDecl に読む。id と plugin は必須。

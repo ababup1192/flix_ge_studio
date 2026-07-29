@@ -105,8 +105,24 @@ export function realApi(base: string): Api {
           }
         }
         // 焼き係への取り次ぎ(Studio のサーバが 1 枚噛む)。20〜70 秒かかる
+        case "bakeWake":
+          return sendJson("POST", `${base}/bake/wake`, payload);
+        // 実機へ「ここから演じて」と頼む(本文は text/plain。判別は Elm 側)
+        case "performScene":
+          return sendJson("POST", `${base}/bake/proxy`, payload);
         case "bakeCutscene":
           return sendJson("POST", `${base}/bake/proxy`, payload);
+        // 焼き産物が既にあるか(既存の配信の口へ HEAD を撃つだけ)
+        case "mediaExists": {
+          const url = String((payload as { url: string }).url ?? "");
+          return fetch(url, { method: "HEAD" })
+            .then((res) => ({ exists: res.ok }))
+            .catch(() => ({ exists: false }));
+        }
+        case "goldenStatus":
+          return getJson(`${base}/golden/status`);
+        case "goldenBless":
+          return sendJsonReason("POST", `${base}/golden/bless`, payload);
         case "search":
           return getJson(`${base}/search?q=${encodeURIComponent(String((payload as { q: string }).q ?? ""))}`);
         // 検索結果から飛んだ欄まで画面を送る。描き終わるのは Elm の次の描画なので
