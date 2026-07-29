@@ -644,6 +644,68 @@ mapResourcesBody =
         ]
 
 
+{-| 曲の文書 1 本と、project.json が宣言している音(サーバが /resources で返す形)。 -}
+musicResourcesBody : E.Value
+musicResourcesBody =
+    E.object
+        [ ( "sounds", E.list E.string [ "moonlight" ] )
+        , ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "music" )
+                    , ( "pattern", E.string "assets/*.music.json" )
+                    , ( "title", E.string "音楽" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/kaidan.music.json" )
+                                , ( "schema", E.string "assets/music.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
+{-| 曲の一覧(map kind)を 1 つ持つスキーマ。grid 欄は無い = つまみ系。 -}
+musicSchemaText : String
+musicSchemaText =
+    """{
+  "version": 1,
+  "sections": {
+    "bpm":   { "kind": "field", "type": "float", "label": "速さ", "min": 20, "max": 240 },
+    "tunes": { "kind": "map", "label": "曲",
+               "item": { "kind": "record", "fields": {
+                 "looping": { "type": "bool", "label": "繰り返す" },
+                 "decay":   { "type": "float", "label": "余韻", "min": 0, "max": 2 } } } }
+  }
+}"""
+
+
+musicText : String
+musicText =
+    """{
+  "bpm": 60,
+  "tunes": { "moonlight": { "looping": true, "decay": 1.0 } }
+}"""
+
+
+{-| 曲の文書を開き、一覧の moonlight を選んだ状態。 -}
+openedMusic : App
+openedMusic =
+    bootedWith musicResourcesBody
+        |> ProgramTest.clickButton "assets/kaidan.music.json"
+        |> ensureKinds [ "getFile", "getFile" ]
+        |> respondOk 4 "getFile" (fileBody "assets/kaidan.music.json" musicText)
+        |> respondOk 5 "getFile" (fileBody "assets/music.schema.json" musicSchemaText)
+        |> ProgramTest.clickButton "曲"
+        |> ProgramTest.simulateDomEvent
+            (Query.find [ tag "tr", containing [ text "moonlight" ] ])
+            ( "click", E.object [] )
+
+
 {-| kaidan の map と同じ骨格: マスを見ない行(on:enter)が 1 行だけ入った triggers。 -}
 mapText : String
 mapText =
@@ -719,6 +781,12 @@ clickRoomRow =
     ProgramTest.simulateDomEvent
         (Query.find [ class "place-room-row" ])
         ( "click", E.object [] )
+
+
+{-| クラス名で 1 つだけの要素を押す(文字合わせでは当たらないボタン向け)。 -}
+clickOn : String -> App -> App
+clickOn className =
+    ProgramTest.simulateDomEvent (Query.find [ class className ]) ( "click", E.object [] )
 
 
 {-| 検索パネルを開いて「turret」で探し、結果が返った所まで。 -}
@@ -1312,12 +1380,62 @@ suite =
                         )
                         -- キー改名 1 + spawns からの参照書き換え 1
                         (Expect.equal [ ( "applyDocEdits", 2 ) ])
-        , test "モード: ビジュアル既定では textarea が無く、コードに切り替えると出る" <|
+        , test "つまみ系 Doc: モード切替を持たず、フォームと JSON の 2 ペインで開く" <|
             \() ->
                 openedLevel
-                    |> ProgramTest.ensureViewHasNot [ tag "textarea", class "resize-none" ]
-                    |> ProgramTest.clickButton "コード"
-                    |> ProgramTest.expectViewHas [ tag "textarea", class "resize-none" ]
+                    -- 盤面(grid 欄)を持たないスキーマ = つまみ系。切替の札は出ない
+                    |> ProgramTest.ensureViewHasNot [ text "ビジュアル" ]
+                    |> ProgramTest.ensureViewHasNot [ text "コード" ]
+                    |> ProgramTest.expectViewHas [ class "form-tabs", class "json-box" ]
+        , test "盤面(grid 欄を持つ Doc)は従来のモード切替のまま(型で分ける)" <|
+            \() ->
+                openedMap
+                    |> ProgramTest.expectViewHas [ text "ビジュアル", text "コード" ]
+        , test "音の Doc: 宣言された音を選ぶと ▶ が出て、押すと素の WAV が鳴る" <|
+            \() ->
+                openedMusic
+                    |> ProgramTest.ensureViewHas [ class "sound-play" ]
+                    |> ProgramTest.clickButton "▶ moonlight"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "name" ] D.string))
+                        (Expect.equal [ ( "playSound", "moonlight.wav" ) ])
+        , test "つまみ系 Doc: 欄に触ると、右の JSON でその場所を指し示す" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.simulateDomEvent (Query.find [ class "number-box" ]) ( "focus", E.object [] )
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] (D.list D.string)))
+                        (Expect.equal [ ( "highlightJson", [ "meta", "scrollSpeed" ] ) ])
+        , test "つまみ系 2 ペイン: 幅を持つのは JSON 側だけ(境界が指と同じ向きに動く)" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.expectView
+                        (Query.find [ class "pane-form" ]
+                            >> Query.has [ class "flex-1" ]
+                        )
+        , test "JSON を畳んでも、右のプレビュー(音の ▶)は残る" <|
+            \() ->
+                openedMusic
+                    |> ProgramTest.ensureViewHas [ class "sound-play", class "json-box" ]
+                    |> clickOn "json-head"
+                    |> ProgramTest.ensureViewHasNot [ class "json-box" ]
+                    -- 消えるのは JSON の箱だけ(見え方は残って高さを受け取る)
+                    |> ProgramTest.expectViewHas [ class "sound-play", class "json-head" ]
+        , test "畳んだ JSON の見出しを押すと戻る(上の道具列まで戻らずに開き直せる)" <|
+            \() ->
+                openedMusic
+                    |> clickOn "json-head"
+                    |> ProgramTest.ensureViewHasNot [ class "json-box" ]
+                    |> clickOn "json-head"
+                    |> ProgramTest.expectViewHas [ class "json-box" ]
+        , test "つまみ系 Doc: JSON ペインは畳めて、畳んだ事実は端末に覚える" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.clickButton "⌨ JSON"
+                    |> ProgramTest.ensureViewHasNot [ class "json-box" ]
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "json" ] D.bool))
+                        (Expect.equal [ ( "saveUiPrefs", False ) ])
         , test "モード: ビジュアル(テキスト非表示)での編集も保存(ifMtime 付き putFile)に乗る" <|
             \() ->
                 openedLevel
@@ -1652,16 +1770,16 @@ suite =
             \() ->
                 openedLevel
                     |> ProgramTest.clickButton "spawns"
-                    |> ProgramTest.ensureViewHas [ text "エントリを選んでください" ]
+                    |> ProgramTest.ensureViewHas [ text "行をクリックすると下にフォームが出ます" ]
                     |> ProgramTest.clickButton "+ 追加"
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] (D.list D.string)))
                         (Expect.equal [ ( "applyDocAppend", [ "spawns" ] ) ])
                     |> respondOk 8 "applyDocAppend" (E.object [ ( "text", E.string levelWithThirdSpawn ) ])
                     |> ensureKinds [ "previewItems" ]
-                    |> ProgramTest.ensureViewHasNot [ text "エントリを選んでください" ]
+                    |> ProgramTest.ensureViewHasNot [ text "行をクリックすると下にフォームが出ます" ]
                     |> ProgramTest.expectView
-                        (Query.find [ class "entry-id" ] >> Query.has [ text "#2" ])
+                        (Query.findAll [ class "form-rows" ] >> Query.count (Expect.greaterThan 0))
         , test "追加(catalog): 重複 id は理由付きで拒まれ、空いた id で applyDocEdit が飛ぶ" <|
             \() ->
                 openedLevel

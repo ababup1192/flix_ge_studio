@@ -2,7 +2,7 @@
 // キー順・インデント・"//" 注釈が保たれることを、結果テキスト全文で固定する。
 
 import { describe, expect, test } from "vitest";
-import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, valueAt } from "../src/js/docEdit";
+import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, rangeAt, valueAt } from "../src/js/docEdit";
 
 const doc = [
   "{",
@@ -300,5 +300,23 @@ describe("valueAt — 編集する前の値を読む(元に戻すの材料)", ()
 
   test("壊れた JSON でも例外を投げない(読めない場所は無い扱い)", () => {
     expect(valueAt("{ oops", ["a"])).toEqual({ found: false, value: null });
+  });
+});
+
+describe("rangeAt — 触っている欄が正本のどこかを指す", () => {
+  test("キーごとの範囲を返す(フォームの欄 → JSON の行)", () => {
+    const range = rangeAt(doc, ["meta", "scrollSpeed"]);
+    expect(range).not.toBeNull();
+    expect(doc.slice(range!.from, range!.to)).toBe('"scrollSpeed": 60');
+  });
+
+  test("配列の要素は要素まるごと", () => {
+    const range = rangeAt(doc, ["spawns", 0]);
+    expect(doc.slice(range!.from, range!.to)).toBe('{ "atX": 200, "kind": "popcorn" }');
+  });
+
+  test("書かれていない場所・壊れた JSON は null(何も指さない)", () => {
+    expect(rangeAt(doc, ["meta", "tint"])).toBeNull();
+    expect(rangeAt("{ oops", ["a"])).toBeNull();
   });
 });

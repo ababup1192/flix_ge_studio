@@ -245,6 +245,9 @@ type alias Resources =
     { groups : List ResourceGroup
     , dashboards : List Dashboard
 
+    -- project.json が宣言している音の名前(焼いた WAV があるはずの物)
+    , sounds : List String
+
     -- 宣言と実ファイルのずれ(壊れ JSON・schema 不在・一致ゼロ等)の人間可読文
     , warnings : List String
     }
@@ -256,9 +259,10 @@ dashboards はキーごと無い旧応答も空として読める形にしてお
 -}
 resourcesDecoder : D.Decoder Resources
 resourcesDecoder =
-    D.map3 Resources
+    D.map4 Resources
         (D.field "resources" (D.list resourceGroupDecoder))
         (withDefault [] (D.field "dashboards" (D.list dashboardDecoder)))
+        (withDefault [] (D.field "sounds" (D.list D.string)))
         (withDefault [] (D.field "warnings" (D.list D.string)))
 
 

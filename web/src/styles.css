@@ -335,7 +335,10 @@ sl-alert.notice::part(message) {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  min-height: 15rem;
+  /* 並べ方は「画面の広さ」でなく「この器の広さ」で決める。右のプレビュー枠
+     (狭い)へ移しても、窓が広いままだと画面基準の切り替えは効かないため */
+  container-type: inline-size;
   border: 1px solid var(--color-edge);
   border-radius: 3px;
   background: var(--color-panel);
@@ -445,10 +448,18 @@ sl-alert.notice::part(message) {
   padding: 0.7rem;
 }
 
-@media (max-width: 1000px) {
+/* 器が狭い(右のプレビュー枠など)ときは 1 列に積む。2 列のままだと
+   グラフ側が 0 幅まで潰れ、右にパッドの固定幅だけが残る */
+@container (max-width: 34rem) {
   .sfx-body {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(9rem, 1fr) auto;
+  }
+
+  /* 縦に積む時のパッドは横長で足りる(正方形だと下が枠から溢れる) */
+  .sfx-pad {
+    aspect-ratio: 1 / 0.5;
+    max-height: 8.5rem;
   }
 }
 

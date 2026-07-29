@@ -317,10 +317,9 @@ suite =
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 6 "getFile" (fileBody "assets/weapons.json" weaponsText)
                     |> respondOk 7 "getFile" (fileBody "assets/weapons.schema.json" weaponsSchemaText)
-                    -- 既定のビジュアルは textarea を出さないので、コードへ切り替えてから汚す
-                    |> ProgramTest.clickButton "コード"
+                    -- つまみ系 Doc は常時 2 ペイン。右下の JSON を直に汚す
                     |> ProgramTest.simulateDomEvent
-                        (Query.find [ tag "textarea", class "resize-none" ])
+                        (Query.find [ class "json-box" ])
                         ( "input", E.object [ ( "target", E.object [ ( "value", E.string "{ }" ) ] ) ] )
                     |> ProgramTest.clickButton "モンスター図鑑"
                     |> ensureKinds [ "getFile", "getFile", "getFile", "getFile" ]

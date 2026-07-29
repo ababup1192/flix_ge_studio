@@ -24,6 +24,19 @@ export function valueAt(text: string, path: PathSeg[]): { found: boolean; value:
   return { found: true, value: getNodeValue(node) };
 }
 
+// path が指す場所の文字の範囲(キーごと)。フォームで触っている欄が、正本の
+// どの行なのかを画面に示すために使う。見つからなければ null。
+export function rangeAt(text: string, path: PathSeg[]): { from: number; to: number } | null {
+  const root = parseTree(text);
+  const node = root === undefined ? undefined : findNodeAtLocation(root, path);
+  if (node === undefined) {
+    return null;
+  }
+  // 値だけでなく "キー": 値 の一組を指す(行として読める範囲にする)
+  const item = node.parent?.type === "property" ? node.parent : node;
+  return { from: item.offset, to: item.offset + item.length };
+}
+
 export function applyDocEdit(
   text: string,
   path: PathSeg[],

@@ -492,6 +492,9 @@ mod Editor {
                             "root"       => JString(dir),
                             "resources"  => JArray(List.toVector(entries)),
                             "dashboards" => JArray(List.toVector(dashboards)),
+                            // 宣言された音の名前。編集画面の ▶ は「宣言にある音」だけに出す
+                            // (焼いた WAV があるはずの物だけを鳴らしに行かせる)
+                            "sounds"     => JArray(soundNames(json) |> List.map(JString) |> List.toVector),
                             "warnings"   => JArray(warnings |> List.map(w -> JString(w)) |> List.toVector)
                         }), exchange)
                     }
@@ -502,6 +505,20 @@ mod Editor {
     /// 宣言 1 件ぶんの応答。files は pattern に一致した実ファイルで、各ファイルに
     /// スキーマパス(宣言 or 隣の *.schema.json)を実在確認つきで添える — エディタが
     /// 「フォームが出るか」を開く前に知れるように。
+    /// project.json の sounds 宣言の name たち(形が違えば空)。
+    def soundNames(projectJson: Json): List[String] =
+        let declared = JsonCodec.expectObject(projectJson)
+            |> Option.flatMap(obj -> Map.get("sounds", obj));
+        match declared {
+            case Some(JArray(items)) =>
+                Vector.toList(items)
+                    |> List.filterMap(item -> JsonCodec.expectObject(item)
+                        |> Option.flatMap(obj -> Map.get("name", obj))
+                        |> Option.flatMap(JsonCodec.expectString))
+            case _ => Nil
+        }
+
+
     def resourceJson(dir: String, allJsonPaths: List[String], decl: ResourceDecl.Decl): Json \ IO =
         let files = ResourceDecl.matchFiles(decl#pattern, allJsonPaths) |> List.map(path -> {
             let schemaPath = match decl#schemaPath {

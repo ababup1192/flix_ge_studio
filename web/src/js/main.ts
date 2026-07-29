@@ -8,7 +8,7 @@ import "@shoelace-style/shoelace/dist/components/dialog/dialog.js";
 import "@shoelace-style/shoelace/dist/components/alert/alert.js";
 import "@shoelace-style/shoelace/dist/components/color-picker/color-picker.js";
 import { realApi } from "./realApi";
-import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, type DocEditOp, type PathSeg } from "./docEdit";
+import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, rangeAt, type DocEditOp, type PathSeg } from "./docEdit";
 // @ts-ignore — vite-plugin-elm が Elm モジュールへ変換する
 import { Elm } from "../Main.elm";
 
@@ -102,6 +102,22 @@ function handleLocal(kind: string, payload: any): unknown | undefined {
     void audio.play().catch(() => {
       // 焼かれていない・音を出せない環境は黙って何もしない(絵と数値の編集は続く)
     });
+    return {};
+  }
+  if (kind === "highlightJson") {
+    // フォームで触っている欄を、右の JSON でも選択状態にして見せる。
+    // focus は移さない(打っている欄から指が離れる方が困る)ので、選択と
+    // スクロール位置だけを合わせる。見つからない・畳まれている時は何もしない。
+    const p = payload as { text: string; path: PathSeg[]; id: string };
+    const box = document.getElementById(p.id);
+    if (!(box instanceof HTMLTextAreaElement)) return {};
+    const range = rangeAt(p.text, p.path);
+    if (range === null) return {};
+    box.setSelectionRange(range.from, range.to);
+    // 選んだ所が見えるように寄せる(行の高さは実測せず、前の改行数から割り出す)
+    const line = p.text.slice(0, range.from).split("\n").length - 1;
+    const lineHeight = box.scrollHeight / Math.max(1, p.text.split("\n").length);
+    box.scrollTop = Math.max(0, line * lineHeight - box.clientHeight / 2);
     return {};
   }
   if (kind === "saveUiPrefs") {

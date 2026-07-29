@@ -5,6 +5,7 @@ module Schema exposing
     , Section
     , SectionKind(..)
     , decodeString
+    , hasGridField
     , isJsonSchema
     , widgetIs
     )
@@ -112,6 +113,40 @@ type FieldType
     | TList FieldType
     | TRecord (List ( String, Field ))
     | TCustom String
+
+
+{-| 盤面(grid)の欄を持つスキーマか。「この文書は絵で編集する物か」を
+ファイル名やゲームの語ではなく型で判じるための問い — マス目を持つ文書だけが
+盤面エディタの持ち場になる。
+-}
+hasGridField : Schema -> Bool
+hasGridField schema =
+    schema.sections
+        |> List.any
+            (\( _, sec ) ->
+                case sec.kind of
+                    ValueKind field ->
+                        isGrid field.type_
+
+                    _ ->
+                        sec.fields |> List.any (\( _, field ) -> isGrid field.type_)
+            )
+
+
+isGrid : FieldType -> Bool
+isGrid type_ =
+    case type_ of
+        TGrid ->
+            True
+
+        TList inner ->
+            isGrid inner
+
+        TRecord fields ->
+            fields |> List.any (\( _, field ) -> isGrid field.type_)
+
+        _ ->
+            False
 
 
 {-| widget 指定が特定の名前(素の文字列形)か。フォームとダッシュボードが

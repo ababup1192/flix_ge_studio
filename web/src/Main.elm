@@ -48,6 +48,7 @@ import Progress
 import Refs
 import ContextMenu
 import CrossEdit
+import DocKind
 import SceneView
 import SearchView
 import Schema
@@ -550,6 +551,17 @@ type alias Model =
     -- フォーカス中フィールドの打ちかけ(Nothing = 打ちかけ無し)
     , activeDraft : Maybe ActiveDraft
 
+    -- 右の JSON ペインを開いているか(つまみ系 Doc の 2 ペインでだけ効く)。
+    -- 端末に覚える — 「常に JSON が邪魔」な人に毎回畳ませない
+    , jsonPaneOpen : Bool
+
+    -- いま鳴らしている音(Nothing = 鳴っていない)。止める札を出すためだけ
+    , playingSound : Maybe String
+
+    -- project.json が宣言している音の名前(/resources が一緒に返す)。
+    -- ▶ を出してよいのはこの列にある名前だけ
+    , sounds : List String
+
     -- 横断検索・置換のパネルと、置換の進行(開いていないファイルへの直列書き戻し)
     , search : SearchView.Model
     , crossEdit : Maybe CrossEdit.Run
@@ -770,6 +782,9 @@ init _ =
         , helpOpen = Set.empty
         , problemsOpen = False
         , activeDraft = Nothing
+        , jsonPaneOpen = True
+        , playingSound = Nothing
+        , sounds = []
         , search = SearchView.init
         , crossEdit = Nothing
         , scrollTarget = Nothing
@@ -865,6 +880,9 @@ type Msg
     | SearchTyped String
     | SearchDebounced Int
     | SearchReplacementTyped String
+    | JsonPaneToggled
+    | SoundPlayClicked String
+    | SoundStopClicked
     | SearchMoved Int
     | SearchActivated
     | SearchFileClicked String
@@ -1481,6 +1499,18 @@ update msg model =
         SearchReplacementTyped text_ ->
             ( { model | search = SearchView.typedReplacement text_ model.search }, Effect.none )
 
+        JsonPaneToggled ->
+            savePrefs { model | jsonPaneOpen = not model.jsonPaneOpen }
+
+        SoundPlayClicked name ->
+            -- 素の WAV をそのまま鳴らす(master のつまみは掛からない)
+            request "playSound"
+                (E.object [ ( "name", E.string (name ++ ".wav") ), ( "loop", E.bool False ) ])
+                { model | playingSound = Just name }
+
+        SoundStopClicked ->
+            request "stopSound" (E.object []) { model | playingSound = Nothing }
+
         SearchMoved dir ->
             let
                 search =
@@ -1887,7 +1917,9 @@ update msg model =
             ( { model | crossRename = Nothing }, Effect.none )
 
         DraftStarted seed ->
-            case model.activeDraft of
+            -- 触り始めた欄を、右の JSON でも指し示す(2 ペインで開いている時だけ)
+            highlightJson seed.path <|
+                case model.activeDraft of
                 -- 同じ欄への focus 再入(確定失敗の赤を直しに戻った等)は打ちかけを消さない
                 Just d ->
                     if d.path == seed.path then
@@ -3210,6 +3242,7 @@ savePrefs model =
             [ ( "leftW", E.int model.leftPaneW )
             , ( "rightW", E.int model.rightPaneW )
             , ( "live", E.bool model.liveSave )
+            , ( "json", E.bool model.jsonPaneOpen )
             ]
         )
         model
@@ -5632,6 +5665,7 @@ handleOkByKind env model =
                                     , addDialog = Nothing
                                     , deleteConfirm = Nothing
                                     , textures = []
+                                    , sounds = []
                                     , texturesReq = Nothing
                                     , weightsAdd = Nothing
                                     , crossFor = Nothing
@@ -5688,6 +5722,7 @@ handleOkByKind env model =
                                     | groups = res.groups
                                     , dashboards = res.dashboards
                                     , resourceWarnings = res.warnings
+                                    , sounds = res.sounds
                                 }
 
                         ( m2, crossFx ) =
@@ -5882,8 +5917,11 @@ handleOkByKind env model =
                     , Effect.none
                     )
 
-        -- 画面送り・カーソル置きは頼むだけ(応答に用は無い)
+        -- 画面送り・カーソル置き・JSON の指し示しは頼むだけ(応答に用は無い)
         "scrollTo" ->
+            ( model, Effect.none )
+
+        "highlightJson" ->
             ( model, Effect.none )
 
         "focusId" ->
@@ -6060,18 +6098,20 @@ handleOkByKind env model =
             -- 覚えた頃と可動域が変わっていても壊れないよう、復元時も丸める
             case
                 D.decodeValue
-                    (D.map3 (\l r live -> ( l, r, live ))
+                    (D.map4 (\l r live json -> ( ( l, r ), live, json ))
                         (D.field "leftW" D.int)
                         (D.field "rightW" D.int)
                         (D.oneOf [ D.field "live" D.bool, D.succeed False ])
+                        (D.oneOf [ D.field "json" D.bool, D.succeed True ])
                     )
                     env.body
             of
-                Ok ( l, r, live ) ->
+                Ok ( ( l, r ), live, json ) ->
                     ( { model
                         | leftPaneW = clampPaneWidth LeftPane l
                         , rightPaneW = clampPaneWidth RightPane r
                         , liveSave = live
+                        , jsonPaneOpen = json
                       }
                     , Effect.none
                     )
@@ -7256,7 +7296,15 @@ viewEditing : Model -> Html Msg
 viewEditing model =
     case model.wizard of
         Just w ->
-            div [ HA.class "app flex h-screen flex-col" ]
+            div
+                [ HA.classList
+                    [ ( "app flex h-screen flex-col", True )
+
+                    -- 掴んでいる間は画面ぜんぶを col-resize に(1px の帯から
+                    -- 指が外れた瞬間にカーソルが戻ると、掴み損ねたように見える)
+                    , ( "cursor-col-resize select-none", model.paneDrag /= Nothing )
+                    ]
+                ]
                 [ viewTopbar model
                 , viewWizard model w
                 ]
@@ -7292,6 +7340,12 @@ viewEditing model =
                                     [ viewDashboard model dash ]
 
                                 Nothing ->
+                                    if knobDoc model then
+                                        -- つまみ系の Doc は常時 2 ペイン(モード切替を持たない)。
+                                        -- 左 = フォーム、右 = 上プレビュー + 下 JSON
+                                        viewKnobPanes model
+
+                                    else
                                     case effectiveMode model of
                                         VisualMode ->
                                             case ( mapDocCurrent model, spriteDocCurrent model ) of
@@ -7366,6 +7420,244 @@ viewEditing model =
                     Nothing ->
                         text ""
                 ]
+
+
+{-| 触っている欄を右の JSON でも選択状態にする(2 ペインで JSON を出している時だけ)。
+編集そのものではないので、失敗しても静かに何もしない。
+-}
+highlightJson : List Seg -> ( Model, Effect ) -> ( Model, Effect )
+highlightJson path ( model, fx ) =
+    if knobDoc model && model.jsonPaneOpen then
+        let
+            ( m1, hlFx ) =
+                request "highlightJson"
+                    (E.object
+                        [ ( "text", E.string model.docText )
+                        , ( "path", E.list encodeSeg path )
+                        , ( "id", E.string jsonBoxId )
+                        ]
+                    )
+                    model
+        in
+        ( m1, Effect.batch [ fx, hlFx ] )
+
+    else
+        ( model, fx )
+
+
+{-| つまみ系の Doc(2 ペイン常設)か。判定は型だけ — 盤面(grid 欄)を持つ物と
+ドット絵は自前の絵エディタが主役なので外れる。ファイル名は見ない。
+-}
+knobDoc : Model -> Bool
+knobDoc model =
+    case model.schemaState of
+        SchemaReady schema ->
+            DocKind.isKnob
+                { schema = Just schema
+                , isSprite = spriteDocCurrent model /= Nothing
+                , supported = List.length (supportedSections schema)
+                }
+
+        _ ->
+            False
+
+
+{-| つまみ系 Doc の 2 ペイン。左はフォーム(従来の分割モードと同じ部品)、
+右は上が見え方(絵 / 音)・下が生 JSON。
+
+JSON を畳んでも右ペインは畳まない — 畳むのは「JSON の箱」だけで、見え方は
+残ってその高さを受け取る。見せる物が何も無い Doc でだけ、空のペインを残さず
+細い縦タブに畳む(開き直す入口は必ず右側にも置く)。
+
+-}
+viewKnobPanes : Model -> List (Html Msg)
+viewKnobPanes model =
+    let
+        preview =
+            viewKnobPreview model
+    in
+    viewKnobFormPane model
+        :: (case ( preview, model.jsonPaneOpen ) of
+                -- 見せる物も JSON も無い = 空のペインになる。縦タブだけ残す
+                ( Nothing, False ) ->
+                    [ viewJsonTab ]
+
+                _ ->
+                    [ viewPaneHandle RightPane
+                    , div
+                        [ HA.class "pane-side flex shrink-0 flex-col overflow-hidden border-l border-edge bg-panel"
+                        , HA.style "width" (String.fromInt model.rightPaneW ++ "px")
+                        ]
+                        (viewKnobPreviewBox model preview ++ [ viewKnobJsonBox model ])
+                    ]
+           )
+
+
+{-| 見え方の枠。JSON を畳んでいる間は、空いた高さをこちらが受け取る。 -}
+viewKnobPreviewBox : Model -> Maybe (List (Html Msg)) -> List (Html Msg)
+viewKnobPreviewBox model preview =
+    case preview of
+        Nothing ->
+            []
+
+        Just content ->
+            [ div
+                [ HA.classList
+                    [ ( "knob-preview flex flex-col overflow-y-auto border-b border-edge p-3", True )
+
+                    -- 音の編集器は縦の場所が要る(波形・帯・2D パッド)。
+                    -- 高さを与えないと中の grid が潰れて絵が線になる
+                    , ( "min-h-[19rem] flex-1", tallPreview model || not model.jsonPaneOpen )
+                    , ( "shrink-0", not (tallPreview model || not model.jsonPaneOpen) )
+                    ]
+                ]
+                content
+            ]
+
+
+{-| 生 JSON の箱。見出しは畳んでいる間も残す — 開き直す入口を、上の道具列まで
+戻らずに右ペインの中で押せるように。
+-}
+viewKnobJsonBox : Model -> Html Msg
+viewKnobJsonBox model =
+    div
+        [ HA.classList
+            [ ( "knob-json flex flex-col", True )
+            , ( "min-h-0 flex-1", model.jsonPaneOpen )
+            , ( "shrink-0", not model.jsonPaneOpen )
+            ]
+        ]
+        (button
+            [ HA.class "json-head flex w-full shrink-0 cursor-pointer items-center gap-1.5 px-3 py-1 text-left text-[10px] tracking-[0.14em] text-ink-faint uppercase hover:text-ink"
+            , HA.title
+                (if model.jsonPaneOpen then
+                    "JSON を畳む(⌘J / Ctrl+J)"
+
+                 else
+                    "JSON を出す(⌘J / Ctrl+J)"
+                )
+            , HE.onClick JsonPaneToggled
+            ]
+            [ span [ HA.class "flex-1" ] [ text "JSON" ]
+            , span []
+                [ text
+                    (if model.jsonPaneOpen then
+                        "✕"
+
+                     else
+                        "▸"
+                    )
+                ]
+            ]
+            :: (if model.jsonPaneOpen then
+                    [ viewJsonBox model ]
+
+                else
+                    []
+               )
+        )
+
+
+{-| 見せる物が何も無い Doc で JSON を畳んだ時の細い縦タブ(開き直す入口)。 -}
+viewJsonTab : Html Msg
+viewJsonTab =
+    button
+        [ HA.class "json-tab flex w-6 shrink-0 cursor-pointer items-center justify-center border-l border-edge bg-panel text-[10px] tracking-[0.14em] text-ink-faint uppercase hover:text-ink"
+        , HA.style "writing-mode" "vertical-rl"
+        , HA.title "JSON を出す(⌘J / Ctrl+J)"
+        , HE.onClick JsonPaneToggled
+        ]
+        [ text "JSON" ]
+
+
+{-| プレビュー枠に縦の場所が要るか(音の編集器を出す時)。 -}
+tallPreview : Model -> Bool
+tallPreview model =
+    sfxConfigOf model /= Nothing
+
+
+{-| 右上の「見え方」。音の文書なら ▶(選んでいる音)、絵のある文書なら
+これまでのプレビュー札。どちらでもなければ静かな一言。
+-}
+viewKnobPreview : Model -> Maybe (List (Html Msg))
+viewKnobPreview model =
+    case sfxConfigOf model of
+        -- 効果音のつまみ: 波形と ▶ を持つ既存の部品がそのまま preview になる
+        Just config ->
+            Just [ Html.map SfxMsg (SfxEditor.view config model.sfx) ]
+
+        Nothing ->
+            case DocKind.playableSound model.sounds (selectedSoundName model) of
+                Just name ->
+                    Just [ viewSoundPlayer model name ]
+
+                Nothing ->
+                    case viewPreviewCard model of
+                        [] ->
+                            -- 絵も音も無い文書。空の枠を出さない(呼び側が畳む)
+                            Nothing
+
+                        cards ->
+                            Just cards
+
+
+{-| 選んでいる場所の名前(音の宣言と突き合わせる材料)。
+一覧のエントリ名か、単一セクションのキー。
+-}
+selectedSoundName : Model -> Maybe String
+selectedSoundName model =
+    case model.entrySel of
+        Just (ByKey name) ->
+            Just name
+
+        _ ->
+            currentSection model |> Maybe.map Tuple.first
+
+
+{-| 焼いてある WAV を鳴らす札。焼き直しが要る間は、その旨を添える。 -}
+viewSoundPlayer : Model -> String -> Html Msg
+viewSoundPlayer model name =
+    div [ HA.class "sound-player flex flex-wrap items-center gap-1.5" ]
+        [ if model.playingSound == Just name then
+            button
+                [ HA.class "sound-stop btn btn-mini", HE.onClick SoundStopClicked ]
+                [ text "■ 止める" ]
+
+          else
+            button
+                [ HA.class "sound-play btn btn-mini"
+                , HA.title "焼いてある WAV をそのまま鳴らす(全体の音量つまみは掛かりません)"
+                , HE.onClick (SoundPlayClicked name)
+                ]
+                [ text ("▶ " ++ name) ]
+        , if model.dirty then
+            span
+                [ HA.class "rebake-badge shrink-0 rounded-sm bg-amber-500/20 px-1.5 py-px text-[10px] text-amber-300 ring-1 ring-amber-400/40"
+                , HA.title "つまみを変えました。ゲーム側で焼き直すまで、鳴るのは前の音です"
+                ]
+                [ text "焼き直しが要る" ]
+
+          else
+            text ""
+        ]
+
+
+{-| 生 JSON。分割モードのテキストと同じ部品(書き戻しも同じ経路)。 -}
+viewJsonBox : Model -> Html Msg
+viewJsonBox model =
+    textarea
+        [ HA.class "json-box min-h-0 flex-1 resize-none border-none bg-app p-3 font-mono text-[11px] leading-relaxed text-ink focus:outline-none"
+        , HA.id jsonBoxId
+        , HA.value model.docText
+        , HA.spellcheck False
+        , HE.onInput DocChanged
+        ]
+        []
+
+
+jsonBoxId : String
+jsonBoxId =
+    "knob-json-box"
 
 
 {-| kind value/field(セクション = 単一の値)を行フォーム機構に乗せる変換。
@@ -7471,7 +7763,12 @@ viewTopbar model =
 viewEditToolbar : Model -> Html Msg
 viewEditToolbar model =
     div [ HA.class "edit-toolbar flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge bg-panel px-3 py-1" ]
-        [ viewModeSeg model
+        [ if knobDoc model then
+            -- つまみ系はモードを持たない(常時 2 ペイン)。代わりに JSON の開閉だけ置く
+            viewJsonToggle model
+
+          else
+            viewModeSeg model
         , case currentGroup model of
             Just group ->
                 span [ HA.class "group-badge badge shrink-0 bg-accent/15 text-accent" ]
@@ -7581,6 +7878,20 @@ viewUndoCount model =
             , HE.onClick UndoPressed
             ]
             [ text ("↩ " ++ String.fromInt undoable) ]
+
+
+{-| 右の JSON ペインの開閉。「常設が邪魔」への逃げ道を、道具の列に常に置く。 -}
+viewJsonToggle : Model -> Html Msg
+viewJsonToggle model =
+    button
+        [ HA.classList
+            [ ( "json-toggle btn shrink-0", True )
+            , ( "bg-accent text-white hover:bg-accent", model.jsonPaneOpen )
+            ]
+        , HA.title "右の JSON を出す / 畳む(⌘J / Ctrl+J)"
+        , HE.onClick JsonPaneToggled
+        ]
+        [ text "⌨ JSON" ]
 
 
 {-| モード切替(flix_ge_editor と同じ 3 連セグメント)。光るのは選択でなく
@@ -8884,12 +9195,27 @@ viewKindGuide model =
 -- スキーマ駆動フォーム(右ペイン)
 
 
+{-| 分割モードの右ペイン(幅を持つ側)。 -}
 viewFormPane : Model -> Html Msg
 viewFormPane model =
-    div
+    viewFormPaneIn
         [ HA.class "pane-form shrink-0 overflow-y-auto border-l border-edge bg-panel p-3"
         , HA.style "width" (String.fromInt model.rightPaneW ++ "px")
         ]
+        model
+
+
+{-| つまみ系 2 ペインの左(伸びる側)。幅を持つのは右の JSON 側だけ —
+両方が同じ幅の値を見ていると、境界を引いた向きと反対に動いてしまう。
+-}
+viewKnobFormPane : Model -> Html Msg
+viewKnobFormPane model =
+    viewFormPaneIn [ HA.class "pane-form min-w-0 flex-1 overflow-y-auto bg-panel p-3" ] model
+
+
+viewFormPaneIn : List (Html.Attribute Msg) -> Model -> Html Msg
+viewFormPaneIn attrs model =
+    div attrs
         ((case ( model.current, model.schemaState ) of
             ( Nothing, _ ) ->
                 [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ] [ text "ファイルを開くとフォームが出ます" ] ]
@@ -10879,6 +11205,9 @@ searchKeyDecoder isOpen =
             (\k ->
                 if String.toLower k.key == "f" && (k.meta || k.ctrl) && k.shift then
                     D.succeed SearchToggled
+
+                else if String.toLower k.key == "j" && (k.meta || k.ctrl) then
+                    D.succeed JsonPaneToggled
 
                 else if k.key == "Escape" && isOpen then
                     D.succeed SearchClosed
