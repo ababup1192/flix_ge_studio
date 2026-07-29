@@ -2,7 +2,7 @@
 // jsonc-parser の modify/applyEdits は触ったキーの周りしか書き換えないので、
 // キー順・インデント・"//" 注釈キーが保たれる(全体を stringify し直さない)。
 
-import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser";
+import { applyEdits, findNodeAtLocation, getNodeValue, modify, parseTree } from "jsonc-parser";
 
 export type PathSeg = string | number;
 
@@ -10,6 +10,18 @@ export type PathSeg = string | number;
 // 小数点なしで書く(1 は 1 のまま、1.0 にしない)。スライダ由来の端数は四捨五入。
 function normalizeInt(value: unknown): unknown {
   return typeof value === "number" ? Math.round(value) : value;
+}
+
+// 編集する前に、その場所に何が書いてあったかを読む(元に戻すの逆操作を組む材料)。
+// found=false は「そこには何も無かった」— 旧値が null だった場合と区別する必要が
+// あるので、値だけでなく在り無しも返す。
+export function valueAt(text: string, path: PathSeg[]): { found: boolean; value: unknown } {
+  const root = parseTree(text);
+  const node = root === undefined ? undefined : findNodeAtLocation(root, path);
+  if (node === undefined) {
+    return { found: false, value: null };
+  }
+  return { found: true, value: getNodeValue(node) };
 }
 
 export function applyDocEdit(

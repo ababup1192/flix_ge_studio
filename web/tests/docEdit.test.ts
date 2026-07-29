@@ -2,7 +2,7 @@
 // キー順・インデント・"//" 注釈が保たれることを、結果テキスト全文で固定する。
 
 import { describe, expect, test } from "vitest";
-import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove } from "../src/js/docEdit";
+import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, valueAt } from "../src/js/docEdit";
 
 const doc = [
   "{",
@@ -281,5 +281,24 @@ describe("applyDocRemove — キー/要素の削除(エントリ削除の足)", 
   test("最後の 1 件を消すと空の入れ物が残る(キーごとは消えない)", () => {
     const single = ["{", '  "spawns": [', '    { "atX": 200 }', "  ]", "}", ""].join("\n");
     expect(applyDocRemove(single, ["spawns", 0])).toBe(["{", '  "spawns": []', "}", ""].join("\n"));
+  });
+});
+
+describe("valueAt — 編集する前の値を読む(元に戻すの材料)", () => {
+  test("スカラー・入れ子・配列要素・配列そのものを、書いてあるまま返す", () => {
+    expect(valueAt(doc, ["meta", "scrollSpeed"])).toEqual({ found: true, value: 60 });
+    expect(valueAt(doc, ["meta"])).toEqual({ found: true, value: { scrollSpeed: 60 } });
+    expect(valueAt(doc, ["spawns", 0])).toEqual({ found: true, value: { atX: 200, kind: "popcorn" } });
+    expect(valueAt(doc, ["spawns"])).toEqual({ found: true, value: [{ atX: 200, kind: "popcorn" }] });
+  });
+
+  test("書かれていない場所は found:false(値が null だった場合と区別できる)", () => {
+    expect(valueAt(doc, ["meta", "tint"])).toEqual({ found: false, value: null });
+    expect(valueAt(doc, ["spawns", 9])).toEqual({ found: false, value: null });
+    expect(valueAt('{ "a": null }', ["a"])).toEqual({ found: true, value: null });
+  });
+
+  test("壊れた JSON でも例外を投げない(読めない場所は無い扱い)", () => {
+    expect(valueAt("{ oops", ["a"])).toEqual({ found: false, value: null });
   });
 });

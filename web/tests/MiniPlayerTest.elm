@@ -12,6 +12,7 @@ import Expect
 import Journey
 import Json.Encode as E
 import Main
+import SceneView
 import Test exposing (Test, describe, test)
 
 
@@ -29,7 +30,7 @@ suite =
     describe "ミニプレイヤーの場面選び"
         [ test "自動は知らせの最新(列の末尾)の場面を追う" <|
             \() ->
-                Main.miniShownScene
+                SceneView.shownScene
                     { pin = Nothing
                     , changes = [ change "forest.png" 1, change "title.png" 2 ]
                     , scenes = [ "forest.png", "title.png", "cave.png" ]
@@ -37,7 +38,7 @@ suite =
                     |> Expect.equal (Just "title.png")
         , test "ピン留め中は知らせが進んでも動かない" <|
             \() ->
-                Main.miniShownScene
+                SceneView.shownScene
                     { pin = Just "cave.png"
                     , changes = [ change "forest.png" 1, change "title.png" 2 ]
                     , scenes = [ "forest.png", "title.png", "cave.png" ]
@@ -45,9 +46,9 @@ suite =
                     |> Expect.equal (Just "cave.png")
         , test "絵の URL はプロジェクトごとに異なる(定番名 title.png でもキャッシュが混ざらない)" <|
             \() ->
-                Main.galleryImageUrl "" "/Users/me/Desktop/flix_ge_village" "golden" "title.png"
+                SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_village" "golden" "title.png"
                     |> Expect.notEqual
-                        (Main.galleryImageUrl "" "/Users/me/Desktop/flix_ge_dungeon" "golden" "title.png")
+                        (SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_dungeon" "golden" "title.png")
         , test "プロジェクト切り替えでピン・場面一覧・知らせが初期化される" <|
             \() ->
                 let

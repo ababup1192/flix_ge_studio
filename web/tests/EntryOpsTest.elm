@@ -47,6 +47,7 @@ emptyField : FieldType -> Schema.Field
 emptyField type_ =
     { type_ = type_
     , label = Nothing
+    , help = Nothing
     , unit = Nothing
     , hint = Nothing
     , order = Nothing
@@ -70,6 +71,7 @@ routesSection : Schema.Section
 routesSection =
     { kind = Schema.Catalog
     , label = Nothing
+    , help = Nothing
     , group = Nothing
     , widget = Nothing
     , fields =
@@ -84,6 +86,7 @@ spawnsSection : Schema.Section
 spawnsSection =
     { kind = Schema.ListKind
     , label = Nothing
+    , help = Nothing
     , group = Nothing
     , widget = Nothing
     , fields =
@@ -163,16 +166,38 @@ suite =
                             , AtKey "slow_copy2"
                             )
                         )
-        , test "duplicateOp(list): 末尾へコピーを挿し、末尾の添字を選ばせる" <|
+        , test "duplicateOp(list): 元の行の直後へコピーを挿し、その行を選ばせる" <|
             \() ->
                 EntryOps.duplicateOp "spawns" doc (AtIndex 0)
                     |> Maybe.map (\plan -> ( opText plan.op, plan.select ))
                     |> Expect.equal
                         (Just
-                            ( """append spawns <- {"atX":200,"route":"slow"}"""
-                            , AtIndex 2
+                            ( """set spawns = [{"atX":200,"route":"slow"},{"atX":200,"route":"slow"},{"atX":400,"route":"slow_copy"}]"""
+                            , AtIndex 1
                             )
                         )
+        , test "listRowOp(MoveRow): 配列を丸ごと 1 本の set で書き、動かした行を選ばせる" <|
+            \() ->
+                let
+                    swapped =
+                        """set spawns = [{"atX":400,"route":"slow_copy"},{"atX":200,"route":"slow"}]"""
+                in
+                [ EntryOps.listRowOp "spawns" doc (EntryOps.MoveRow 1 -1)
+                , EntryOps.listRowOp "spawns" doc (EntryOps.MoveRow 0 1)
+                ]
+                    |> List.map (Maybe.map (\plan -> ( opText plan.op, plan.select )))
+                    |> Expect.equal
+                        [ Just ( swapped, AtIndex 0 )
+                        , Just ( swapped, AtIndex 1 )
+                        ]
+        , test "listRowOp: 端の外へ動かす操作・無い行の複製は何も出さない" <|
+            \() ->
+                [ EntryOps.listRowOp "spawns" doc (EntryOps.MoveRow 0 -1)
+                , EntryOps.listRowOp "spawns" doc (EntryOps.MoveRow 1 1)
+                , EntryOps.listRowOp "spawns" doc (EntryOps.DuplicateRow 9)
+                ]
+                    |> List.map (Maybe.map (\plan -> opText plan.op))
+                    |> Expect.equal [ Nothing, Nothing, Nothing ]
         , test "duplicateOp: 文書に無いエントリ(消えた直後の選択)は何も出さない" <|
             \() ->
                 [ EntryOps.duplicateOp "routes" doc (AtKey "ghost") |> Maybe.map (\p -> opText p.op)

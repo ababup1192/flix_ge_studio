@@ -65,7 +65,7 @@ sectionOf key =
         |> List.filter (\( k, _ ) -> k == key)
         |> List.head
         |> Maybe.map Tuple.second
-        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, group = Nothing, widget = Nothing, fields = [] }
+        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = [] }
 
 
 spawnRows : List Table.TableRow
@@ -88,6 +88,15 @@ suite =
                         [ { name = "atX", label = "出現位置", numeric = True }
                         , { name = "kind", label = "kind", numeric = False }
                         , { name = "pos", label = "pos", numeric = False }
+                        ]
+        , test "rows — 行に中身の 1 行見出し(最初の空でないスカラ)が付く" <|
+            \_ ->
+                spawnRows
+                    |> List.map (\r -> ( r.idText, r.summary ))
+                    |> Expect.equal
+                        [ ( "#0", "400" )
+                        , ( "#1", "200" )
+                        , ( "#2", "300" )
                         ]
         , test "rows — セル値は文字列化・入れ子は「…」・無いキーは空" <|
             \_ ->

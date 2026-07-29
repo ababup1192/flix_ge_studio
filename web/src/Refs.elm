@@ -6,6 +6,7 @@ module Refs exposing
     , refRewriteEdits
     , renameEdits
     , renameProblem
+    , siteLabel
     , usageKey
     , usages
     )
@@ -210,3 +211,31 @@ sitePath site =
             Nothing ->
                 []
         ]
+
+
+{-| 使用箇所の場所書き(「spawns #3 · route」)。表の吹き出しも削除の確認も
+同じ書き方で場所を言う。
+-}
+siteLabel : UsageSite -> String
+siteLabel site =
+    let
+        entryText =
+            case site.entry of
+                Just (AtKey name) ->
+                    " \"" ++ name ++ "\""
+
+                Just (AtIndex i) ->
+                    " #" ++ String.fromInt i
+
+                Nothing ->
+                    ""
+
+        elemText =
+            case site.elem of
+                Just j ->
+                    "[" ++ String.fromInt j ++ "]"
+
+                Nothing ->
+                    ""
+    in
+    site.sectionKey ++ entryText ++ " · " ++ site.fieldName ++ elemText

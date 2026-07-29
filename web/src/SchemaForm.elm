@@ -1,4 +1,4 @@
-module SchemaForm exposing (Context, Control(..), Row, rows)
+module SchemaForm exposing (Context, Control(..), ListEdit(..), Row, applyListEdit, rows)
 
 {-| スキーマのセクション+選択エントリの値 → フォーム行モデル。
 
@@ -20,6 +20,9 @@ type alias Row =
     , label : String
     , unit : Maybe String
     , hint : Maybe String
+
+    -- 畳んである説明書き("?" を押した時だけ画面に出す)
+    , help : Maybe String
     , required : Bool
     , control : Control
 
@@ -68,6 +71,8 @@ type Control
     | ColorControl (Maybe String)
     | TextureControl { value : Maybe String, choices : List String }
     | WeightsControl { config : Weights.Config, entries : List ( String, Float ) }
+      -- 文字列の列(type {"list":"text"} — 台詞など)。1 行 1 欄で並べる
+    | ListTextControl (List String)
       -- 対応の形でない値({hsv} の色等)は壊さず見せるだけ(v1 は変換を持たない)
     | ReadOnlyControl String
       -- 未対応 type(list / record / custom)や対応外の値の形の生 JSON 1 行
@@ -104,6 +109,7 @@ row ctx section entry name field =
     , label = Maybe.withDefault name field.label
     , unit = field.unit
     , hint = field.hint
+    , help = field.help
     , required = field.required
     , control = control ctx entry name field
     , condition = field.enabledWhen |> Maybe.map (condition section entry)
@@ -257,6 +263,21 @@ control ctx entry name field =
                 Nothing ->
                     TextureControl { value = Nothing, choices = ctx.textures }
 
+        TList TText ->
+            -- 文字列の列だけ行の並びで見せる。他の形(数の列・入れ子)は壊さず
+            -- 生 JSON へ倒す — 行ごとの書き戻しが刺さらない形を編集可能に見せない
+            case currentOr D.value of
+                Just raw ->
+                    case D.decodeValue (D.list D.string) raw of
+                        Ok items ->
+                            ListTextControl items
+
+                        Err _ ->
+                            rawJson (Just raw)
+
+                Nothing ->
+                    ListTextControl []
+
         TCustom "weights" ->
             case ( Weights.configFrom field.widget, currentOr D.value ) of
                 ( Just config, Just raw ) ->
@@ -276,6 +297,71 @@ control ctx entry name field =
 
         _ ->
             rawJson (currentOr D.value)
+
+
+{-| 文字列の列(ListTextControl)への 1 操作。書き戻しはフィールドへの set 1 本で
+配列を丸ごと書くので、「操作 → 新しい列」だけをここに置き、描画側は結果を書く。
+-}
+type ListEdit
+    = SetLine Int String
+    | AddLine
+    | RemoveLine Int
+      -- 行の入れ替え(dir = -1 で上へ・+1 で下へ)
+    | MoveLine Int Int
+
+
+{-| 空文字の行も落とさない — 勝手に間引くと「書いた空行が消える」ことになる。
+範囲の外を指す操作は何もしない(表示と文書がずれた瞬間のクリックで壊さない)。
+-}
+applyListEdit : ListEdit -> List String -> List String
+applyListEdit edit items =
+    case edit of
+        SetLine index text ->
+            items |> List.indexedMap (\i v -> ifIndex i index text v)
+
+        AddLine ->
+            items ++ [ "" ]
+
+        RemoveLine index ->
+            items
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( i, _ ) -> i /= index)
+                |> List.map Tuple.second
+
+        MoveLine index dir ->
+            let
+                other =
+                    index + dir
+            in
+            if index < 0 || other < 0 || index >= List.length items || other >= List.length items then
+                items
+
+            else
+                let
+                    at i =
+                        items |> List.drop i |> List.head |> Maybe.withDefault ""
+                in
+                items
+                    |> List.indexedMap
+                        (\i v ->
+                            if i == index then
+                                at other
+
+                            else if i == other then
+                                at index
+
+                            else
+                                v
+                        )
+
+
+ifIndex : Int -> Int -> a -> a -> a
+ifIndex i target replacement current =
+    if i == target then
+        replacement
+
+    else
+        current
 
 
 rawJson : Maybe D.Value -> Control

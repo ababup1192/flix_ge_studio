@@ -1,11 +1,13 @@
 module EntryOps exposing
     ( Op(..)
+    , RowEdit(..)
     , addCatalogOp
     , addListOp
     , addProblem
     , deleteOp
     , duplicateOp
     , freshId
+    , listRowOp
     , newEntry
     )
 
@@ -48,7 +50,7 @@ addListOp sectionKey section =
     AppendAt [ Key sectionKey ] (newEntry section)
 
 
-{-| 選択エントリのコピー。catalog は空いている id を作って挿し、list は末尾へ。
+{-| 選択エントリのコピー。catalog は空いている id を作って挿し、list は元の行の直後へ。
 select は複製後に選ばせたい行(呼び側が entrySel へ写す)。
 エントリが文書に無い(テキスト側で消えた直後等)なら Nothing。
 -}
@@ -70,19 +72,95 @@ duplicateOp sectionKey doc entry =
                     )
 
         AtIndex i ->
+            listRowOp sectionKey doc (DuplicateRow i)
+
+
+{-| 一覧(list)セクションの行そのものへの操作。行の入れ替え(dir = -1 で上へ・
++1 で下へ)と、選んだ行の直後への複製。
+-}
+type RowEdit
+    = MoveRow Int Int
+    | DuplicateRow Int
+
+
+{-| 行操作の書き戻しは「その配列を丸ごと 1 本の Set で書く」に畳む —
+挿入や入れ替えを添字ごとの編集に散らすと、途中状態の文書が画面に出る。
+select は操作のあと選ばせたい行(動かした行・複製された行)。
+範囲の外を指す操作は Nothing(表示と文書がずれた瞬間のクリックで壊さない)。
+-}
+listRowOp : String -> D.Value -> RowEdit -> Maybe { op : Op, select : Entry }
+listRowOp sectionKey doc edit =
+    let
+        items =
+            Doc.list sectionKey doc
+
+        write newItems =
+            SetAt [ Key sectionKey ] (E.list identity newItems)
+    in
+    case edit of
+        MoveRow index dir ->
             let
-                items =
-                    Doc.list sectionKey doc
+                other =
+                    index + dir
             in
+            if index < 0 || other < 0 || index >= List.length items || other >= List.length items then
+                Nothing
+
+            else
+                Just
+                    { op = write (swapped index other items)
+                    , select = AtIndex other
+                    }
+
+        DuplicateRow index ->
             items
-                |> List.drop i
+                |> List.drop index
                 |> List.head
                 |> Maybe.map
                     (\value ->
-                        { op = AppendAt [ Key sectionKey ] value
-                        , select = AtIndex (List.length items)
+                        { op = write (insertedAfter index value items)
+                        , select = AtIndex (index + 1)
                         }
                     )
+
+
+swapped : Int -> Int -> List E.Value -> List E.Value
+swapped a b items =
+    let
+        at i =
+            items |> List.drop i |> List.head
+    in
+    case ( at a, at b ) of
+        ( Just va, Just vb ) ->
+            items
+                |> List.indexedMap
+                    (\i v ->
+                        if i == a then
+                            vb
+
+                        else if i == b then
+                            va
+
+                        else
+                            v
+                    )
+
+        _ ->
+            items
+
+
+insertedAfter : Int -> E.Value -> List E.Value -> List E.Value
+insertedAfter index value items =
+    items
+        |> List.indexedMap
+            (\i v ->
+                if i == index then
+                    [ v, value ]
+
+                else
+                    [ v ]
+            )
+        |> List.concat
 
 
 deleteOp : String -> Entry -> Op

@@ -360,6 +360,41 @@ suite =
                     |> Result.map (\s -> s.sections |> List.map (\( key, sec ) -> ( key, sec.label )))
                     |> Expect.equal
                         (Ok [ ( "rooms", Just "部屋(矩形)" ), ( "grid", Nothing ) ])
+        , test "help: フィールドもセクションも読める(label は短い名前のまま)" <|
+            \_ ->
+                Schema.decodeString
+                    """{"sections": {
+                         "rooms": {"kind": "list", "label": "部屋", "help": "部屋の並べ方の説明。",
+                                   "fields": {"x": {"type": "int", "label": "横", "help": "右へ行くほど大きい。"}}}}}"""
+                    |> Result.map
+                        (\sc ->
+                            sc.sections
+                                |> List.map
+                                    (\( _, sec ) ->
+                                        ( ( sec.label, sec.help )
+                                        , sec.fields |> List.map (\( _, f ) -> ( f.label, f.help ))
+                                        )
+                                    )
+                        )
+                    |> Expect.equal
+                        (Ok [ ( ( Just "部屋", Just "部屋の並べ方の説明。" ), [ ( Just "横", Just "右へ行くほど大きい。" ) ] ) ])
+        , test "help を書いていない宣言は section も field も Nothing" <|
+            \_ ->
+                decoded
+                    |> Result.map
+                        (\sc ->
+                            sc.sections
+                                |> List.concatMap (\( _, sec ) -> sec.help :: List.map (\( _, f ) -> f.help) sec.fields)
+                                |> List.filterMap identity
+                        )
+                    |> Expect.equal (Ok [])
+        , test "宣言の未知キー(将来足す予定の default 以外の語)は黙って読み飛ばす" <|
+            \_ ->
+                Schema.decodeString
+                    """{"sections": {"grid": {"kind": "record", "legend": "まだ無い語",
+                        "fields": {"w": {"type": "int", "preview": {"kind": "swatch"}}}}}}"""
+                    |> Result.map (\sc -> sc.sections |> List.map (\( key, sec ) -> ( key, List.length sec.fields )))
+                    |> Expect.equal (Ok [ ( "grid", 1 ) ])
         , describe "パース失敗の振り分け(赤エラーか、フォーム対象外の案内か)"
             [ test "$schema/properties 持ち(draft-07 等)はフォーム対象外の種類 = 穏やか表示" <|
                 \_ ->

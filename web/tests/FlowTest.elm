@@ -193,6 +193,7 @@ schemaText =
       "kind": "record",
       "fields": {
         "scrollSpeed": { "type": "float", "label": "スクロール速度", "order": 1,
+                         "help": "背景が流れる速さ。上げるほど道中が短くなる。",
                          "min": 0, "max": 200, "widget": "slider", "default": 60 }
       }
     },
@@ -613,6 +614,105 @@ openedRawJson =
         |> ProgramTest.simulateDomEvent
             (Query.find [ tag "tr", containing [ text "stairs" ] ])
             ( "click", E.object [] )
+
+
+{-| マップ 1 枚(ビジュアルのマップエディタが開く宣言)。 -}
+mapResourcesBody : E.Value
+mapResourcesBody =
+    E.object
+        [ ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "rooms" )
+                    , ( "title", E.string "部屋" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/room.map.json" )
+                                , ( "schema", E.string "assets/map.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
+{-| kaidan の map と同じ骨格: マスを見ない行(on:enter)が 1 行だけ入った triggers。 -}
+mapText : String
+mapText =
+    """{
+  "rows": [ "####", "#..#", "####" ],
+  "triggers": [
+    { "on": "enter", "needs": "", "says": [ "だれも いない" ], "gives": "", "once": true }
+  ]
+}"""
+
+
+{-| triggers は x,y を宣言するが必須ではない(= マスを見ない行も書ける)。 -}
+mapSchemaText : String
+mapSchemaText =
+    """{
+  "version": 1,
+  "sections": {
+    "rows": { "kind": "field", "type": "grid", "label": "間取り" },
+    "triggers": {
+      "kind": "list",
+      "label": "マスの仕掛け",
+      "fields": {
+        "x": { "type": "int", "label": "x", "order": 1, "min": 0 },
+        "y": { "type": "int", "label": "y", "order": 2, "min": 0 },
+        "on": { "type": {"enum": ["step", "inspect", "enter"]}, "default": "step",
+                "label": "発火のしかた", "order": 3, "required": true },
+        "needs": { "type": "text", "label": "要る持ち物", "order": 4 },
+        "says": { "type": {"list": "text"}, "label": "言葉", "order": 5 },
+        "gives": { "type": "text", "label": "渡す物", "order": 6 },
+        "once": { "type": "bool", "label": "一度きり", "order": 7, "default": true }
+      }
+    }
+  }
+}"""
+
+
+{-| マップを開き、配置レイヤーへ切り替えた状態(パレットに triggers のチップが出る)。 -}
+openedMap : App
+openedMap =
+    bootedWith mapResourcesBody
+        |> ProgramTest.clickButton "assets/room.map.json"
+        |> ensureKinds [ "getFile", "getFile" ]
+        |> respondOk 4 "getFile" (fileBody "assets/room.map.json" mapText)
+        |> respondOk 5 "getFile" (fileBody "assets/map.schema.json" mapSchemaText)
+        -- レイヤーの行はボタンでなく行そのものが押せる(👁 だけが別ボタン)
+        |> ProgramTest.simulateDomEvent
+            (Query.find [ class "map-layer", containing [ text "配置" ] ])
+            ( "click", E.object [] )
+
+
+{-| 封筒の kind と payload.path(添字は文字列に揃える)。 -}
+kindAndPath : D.Decoder ( String, List String )
+kindAndPath =
+    D.map2 Tuple.pair
+        (D.field "kind" D.string)
+        (D.at [ "payload", "path" ] (D.list (D.oneOf [ D.string, D.int |> D.map String.fromInt ])))
+
+
+{-| 部屋の行(一覧の 1 行)を押す。見出しは #添字 と要約の 2 つの span なので
+clickButton の文字合わせでは当たらない。
+-}
+clickRoomRow : App -> App
+clickRoomRow =
+    ProgramTest.simulateDomEvent
+        (Query.find [ class "place-room-row" ])
+        ( "click", E.object [] )
+
+
+{-| 一覧の行に常設した操作ボタン(↑ ↓ 複製 ✕)の index 番目を押す。 -}
+clickRowOp : String -> Int -> App -> App
+clickRowOp className index =
+    ProgramTest.simulateDomEvent
+        (Query.findAll [ class className ] >> Query.index index)
+        ( "click", E.object [] )
 
 
 typeRawJson : String -> App -> App
@@ -1156,6 +1256,36 @@ suite =
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "content" ] D.string))
                         (Expect.equal [ ( "putFile", levelEditedText ) ])
+        , test "説明(help): 閉じている間は本文が DOM に無く、? を押すと出る(もう一度で消える)" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.ensureViewHasNot [ text "背景が流れる速さ。上げるほど道中が短くなる。" ]
+                    |> ProgramTest.simulateDomEvent (Query.find [ class "help-toggle" ]) ( "click", E.object [] )
+                    |> ProgramTest.ensureViewHas [ text "背景が流れる速さ。上げるほど道中が短くなる。" ]
+                    |> ProgramTest.simulateDomEvent (Query.find [ class "help-toggle" ]) ( "click", E.object [] )
+                    |> ProgramTest.expectViewHasNot [ text "背景が流れる速さ。上げるほど道中が短くなる。" ]
+        , test "行操作(list): ↑ は配列を丸ごと書く applyDocEdit 1 本になる" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.clickButton "spawns"
+                    |> clickRowOp "row-up" 1
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocEdit", [ "spawns" ] ) ])
+        , test "行操作(list): 複製も同じ 1 本の書き戻し、✕ はその行の applyDocRemove" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.clickButton "spawns"
+                    |> clickRowOp "row-dup" 0
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocEdit", [ "spawns" ] ) ])
+                    |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelWithThirdSpawn ) ])
+                    |> ensureKinds [ "previewItems" ]
+                    |> clickRowOp "row-delete" 1
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocRemove", [ "spawns", "1" ] ) ])
         , test "追加(list): applyDocAppend が飛び、応答が届くと新しい行のフォームが出る" <|
             \() ->
                 openedLevel
@@ -1565,4 +1695,39 @@ suite =
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.field "kind" D.string)
                         (Expect.equal [ "putFile" ])
+        , test "マップ(ビジュアル): マスを見ない行は一覧から選べ、選んだ行のフォームが右に出る" <|
+            \() ->
+                openedMap
+                    -- 印は 1 つも無いが、部屋の行はチップの下の一覧に出る
+                    |> ProgramTest.clickButton "▸ +部屋 1"
+                    |> clickRoomRow
+                    -- インスペクタ: 見出しと、その行のフィールド(言葉・要る持ち物…)
+                    |> ProgramTest.ensureViewHas [ text "triggers #0" ]
+                    |> ProgramTest.expectViewHas [ text "言葉", text "だれも いない" ]
+        , test "マップ(ビジュアル): 選んだ部屋の行の says に 1 行足すと、その行の添字つき path で書き戻す" <|
+            \() ->
+                openedMap
+                    |> ProgramTest.clickButton "▸ +部屋 1"
+                    |> clickRoomRow
+                    |> ProgramTest.clickButton "＋ 行を追加"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocEdit", [ "triggers", "0", "says" ] ) ])
+        , test "マップ(ビジュアル): 「＋ 部屋の行(enter)」は x,y を書かない enter の行を足す" <|
+            \() ->
+                openedMap
+                    |> ProgramTest.clickButton "＋ 部屋の行(enter)"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map3 (\kind path keys -> ( kind, path, keys ))
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "path" ] (D.list D.string))
+                            (D.at [ "payload", "value" ] (D.keyValuePairs D.value) |> D.map (List.map Tuple.first))
+                        )
+                        (Expect.equal
+                            [ ( "applyDocAppend"
+                              , [ "triggers" ]
+                              , [ "on", "needs", "says", "gives", "once" ]
+                              )
+                            ]
+                        )
         ]

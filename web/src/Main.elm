@@ -1,4 +1,4 @@
-port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, galleryImageUrl, init, main, miniShownScene, update, view)
+port module Main exposing (Model, Msg(..), PaneSide(..), clampPaneWidth, init, main, update, view)
 
 {-| リソース(スキーマ付き JSON)エディタ。
 
@@ -22,11 +22,14 @@ import Dashboards
 import Dict exposing (Dict)
 import Doc
 import Draft
+import Edit exposing (Op(..), Seg(..), encodeSeg, pathKey)
 import Effect exposing (Effect)
 import EntryOps
+import EntryTable
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
+import FormHelp
 import Html.Lazy as HL
 import Svg
 import Svg.Attributes as SA
@@ -41,8 +44,11 @@ import SfxEditor
 import Plugins
 import Progress
 import Refs
+import SceneView
 import Schema
 import SchemaForm
+import Selection exposing (EntrySel(..))
+import Set exposing (Set)
 import Sources
 import Time
 import Table
@@ -116,39 +122,9 @@ type SchemaState
     | SchemaReady Schema.Schema
 
 
-{-| catalog は名前・list は添字でエントリを指す。 -}
-type EntrySel
-    = ByKey String
-    | ByIndex Int
-
-
-{-| 文書パスの 1 段。JSON の中の場所(オブジェクトキー / 配列添字)を指す。 -}
-type Seg
-    = KeySeg String
-    | IdxSeg Int
-
-
-{-| 正本(docText)への編集の種類。Set=値の書き込み(無いキーは作る)・
-Append=配列末尾へ挿入・Remove=キー/要素の削除・
-BatchSet=複数 set を 1 回のテキスト当てに畳む(weights の連動書き戻し等。
-途中状態の文書を画面に見せないため、改名と同じ applyDocEdits に乗せる)。
--}
-type EditOp
-    = SetOp
-    | AppendOp
-    | RemoveOp
-    | BatchSetOp
-
-
+{-| 編集 1 件の封筒(語彙は Edit モジュール — 履歴も同じ形を運ぶ)。 -}
 type alias EditPayload =
-    { op : EditOp
-    , path : List Seg
-
-    -- BatchSet では中身の編集列({op,path,value,intField} の配列)を encode 済みで持つ。
-    -- path はその時「フィールドの場所」で、洪水を最新 1 件に畳む鍵にだけ使う
-    , value : E.Value
-    , isInt : Bool
-    }
+    Edit.Payload
 
 
 {-| 作業モード。ビジュアル=テーブル+フォーム主役(テキスト非表示)・
@@ -204,6 +180,9 @@ type DraftKind
       -- ASCII マップ(type "grid")。確定 = 改行で割った文字列列を書き戻す
     | GridDraft
     | RawJsonDraft
+      -- 文字列の列(type {"list":"text"})の 1 行。確定 = その行を差し替えた
+      -- 列を丸ごと書く。items は focus した瞬間の列(確定時に view から引き直さない)
+    | ListTextDraft { fieldPath : List Seg, index : Int, items : List String }
       -- weights の数値欄。確定 = 自分の値+他の行の比例配分をバッチ 1 本で書く。
       -- entries は focus した瞬間の配分(確定時に view から引き直さない流儀と同じ)
     | WeightsDraft
@@ -554,6 +533,10 @@ type alias Model =
     , tableSort : Maybe Table.SortState
     , tableFilter : String
 
+    -- 開いている説明書き("?" の押された欄・セクション)。中身は開いている間だけ
+    -- 画面に置く — 説明の長い文書でも、閉じている分は描く仕事が要らない
+    , helpOpen : Set String
+
     -- 問題パネルの開閉。問題一覧そのものはモデルに持たず view で毎回計算する —
     -- docText が変わるたびの再計算が構造で保証され、陳腐化のしようがない
     , problemsOpen : Bool
@@ -752,6 +735,7 @@ init _ =
         , entrySel = Nothing
         , tableSort = Nothing
         , tableFilter = ""
+        , helpOpen = Set.empty
         , problemsOpen = False
         , activeDraft = Nothing
         , editReq = Nothing
@@ -833,6 +817,9 @@ type Msg
     | DeleteCancelled
     | SortClicked String
     | FilterChanged String
+    | HelpToggled String
+    | RowOpClicked String EntryOps.RowEdit
+    | RowDeleteClicked String Int
     | ProblemBarToggled
     | ProblemClicked Lint.Problem
     | FieldEdited EditPayload
@@ -1379,6 +1366,16 @@ update msg model =
                     , rename = Nothing
                 }
 
+        HelpToggled key ->
+            ( { model | helpOpen = toggleMember key model.helpOpen }, Effect.none )
+
+        RowOpClicked sectionKey edit ->
+            rowOp sectionKey edit model
+
+        RowDeleteClicked sectionKey index ->
+            queueOp (EntryOps.deleteOp sectionKey (Refs.AtIndex index))
+                { model | entrySel = Nothing }
+
         AddClicked ->
             addEntry model
 
@@ -1407,7 +1404,7 @@ update msg model =
         DeleteConfirmed ->
             case model.deleteConfirm of
                 Just confirm ->
-                    queueOp (EntryOps.deleteOp confirm.sectionKey (selToRefs confirm.entry))
+                    queueOp (EntryOps.deleteOp confirm.sectionKey (Selection.toRefsEntry confirm.entry))
                         { model
                             | deleteConfirm = Nothing
                             , entrySel = Nothing
@@ -1555,7 +1552,19 @@ update msg model =
                             ( m1, Effect.none )
 
                         MapEditor.Edited edit ->
-                            queueEdits (mapPayloads edit) m1
+                            let
+                                ( m2, editFx ) =
+                                    queueEdits (mapPayloads m1 edit) (selectAddedEntry model edit m1)
+                            in
+                            -- 編集は通しつつ、気をつけたい形(部屋の行が 2 本目)は
+                            -- 一言だけ添える(止めはしない — 規則はゲーム側の話)
+                            case mapNotice edit of
+                                Just message ->
+                                    showToast message m2
+                                        |> Tuple.mapSecond (\fx -> Effect.batch [ editFx, fx ])
+
+                                Nothing ->
+                                    ( m2, editFx )
 
                         MapEditor.Noticed message ->
                             showToast message m1
@@ -3374,7 +3383,194 @@ pixelPayload edit =
 mapDocCurrent : Model -> Maybe MapEditor.Doc
 mapDocCurrent model =
     parsedDoc model
-        |> Maybe.andThen (MapEditor.fromDoc (terrainDocCurrent model))
+        |> Maybe.andThen (MapEditor.fromDoc (mapAddableKeys model) (terrainDocCurrent model))
+
+
+{-| 編集に添える一言(無ければ Nothing)。止める判断はしない。 -}
+mapNotice : MapEditor.Edit -> Maybe String
+mapNotice edit =
+    case edit of
+        MapEditor.RoomRowAdded added ->
+            if added.hadRoom then
+                Just ("「" ++ added.key ++ "」には部屋の行がもうあります(kaidan は 1 部屋 1 行まで)")
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| 雛形から生まれた行(triggers/props 等)は、中身(台詞など)をフォームで書く物
+なので、そのセクションの新しい行を選んでおく — 分割モードへ切り替えた先で
+「さっき置いた行」を探さずに済む。添字は追加前の長さ(= 末尾に入る位置)。
+-}
+selectAddedEntry : Model -> MapEditor.Edit -> Model -> Model
+selectAddedEntry before edit model =
+    let
+        atEnd key =
+            case parsedDoc before of
+                Just doc ->
+                    let
+                        index =
+                            List.length (Doc.list key doc)
+                    in
+                    { model
+                        | sectionKey = Just key
+                        , entrySel = Just (ByIndex index)
+
+                        -- ビジュアルのインスペクタも同じ行を映す
+                        , mapEd = MapEditor.select ( key, Just index ) model.mapEd
+                    }
+
+                Nothing ->
+                    model
+    in
+    case edit of
+        MapEditor.PointAdded added ->
+            if added.fromSchema then
+                atEnd added.key
+
+            else
+                model
+
+        MapEditor.RoomRowAdded added ->
+            atEnd added.key
+
+        _ ->
+            model
+
+
+{-| 空きマスのクリックで 1 行足せる配列。スキーマに list セクションの
+宣言があり、x と y を宣言している物だけ — 雛形(default 済み)の x,y を
+クリック先へ差し替えれば、欠けの無い行がその場で作れる。
+room = x,y が必須でない配列(triggers 型)。マスを見ない行(on:enter)も作れる。
+-}
+mapAddableKeys : Model -> List MapEditor.Addable
+mapAddableKeys model =
+    case model.schemaState of
+        SchemaReady schema ->
+            schema.sections
+                |> List.filter (\( _, section ) -> isListSection section && declaresXy section)
+                |> List.map (\( key, section ) -> { key = key, room = not (requiresXy section) })
+
+        _ ->
+            []
+
+
+isListSection : Schema.Section -> Bool
+isListSection section =
+    case section.kind of
+        Schema.ListKind ->
+            True
+
+        _ ->
+            False
+
+
+declaresXy : Schema.Section -> Bool
+declaresXy section =
+    let
+        has name =
+            List.any (\( n, _ ) -> n == name) section.fields
+    in
+    has "x" && has "y"
+
+
+{-| x,y が必須のセクション(props/exits 型)。必須なら「マスを見ない行」は
+そもそも書けない宣言なので、部屋の行の追加は出さない。
+-}
+requiresXy : Schema.Section -> Bool
+requiresXy section =
+    section.fields
+        |> List.any (\( name, field ) -> (name == "x" || name == "y") && field.required)
+
+
+{-| キーに対応する list セクション(雛形を作るのに使う)。 -}
+mapSection : Model -> String -> Maybe Schema.Section
+mapSection model key =
+    case model.schemaState of
+        SchemaReady schema ->
+            schema.sections
+                |> List.filter (\( k, section ) -> k == key && isListSection section)
+                |> List.head
+                |> Maybe.map Tuple.second
+
+        _ ->
+            Nothing
+
+
+{-| クリックしたマスに置く新しい行。スキーマの雛形(default で埋めた全フィールド)の
+x,y だけクリック先で上書きする。並びは宣言順のまま — 手で書いた行と同じ形で入る。
+-}
+mapNewEntry : Schema.Section -> Int -> Int -> E.Value
+mapNewEntry section x y =
+    mapEntryFrom section
+        []
+        (\name ->
+            if name == "x" then
+                Just (E.int x)
+
+            else if name == "y" then
+                Just (E.int y)
+
+            else
+                Nothing
+        )
+
+
+{-| マスを見ない行(部屋ぜんたいの仕掛け)の雛形。x,y は**書かない** —
+書くとマスの行として読まれる。発火の欄(enum に "enter" がある物)は "enter"。
+-}
+mapRoomEntry : Schema.Section -> E.Value
+mapRoomEntry section =
+    let
+        enterChoice name =
+            section.fields
+                |> List.filter (\( n, _ ) -> n == name)
+                |> List.head
+                |> Maybe.andThen
+                    (\( _, field ) ->
+                        case field.type_ of
+                            Schema.TEnum choices ->
+                                if List.member "enter" choices then
+                                    Just (E.string "enter")
+
+                                else
+                                    Nothing
+
+                            _ ->
+                                Nothing
+                    )
+    in
+    mapEntryFrom section [ "x", "y" ] enterChoice
+
+
+{-| 雛形 1 行。既定は EntryOps.newEntry(schema の default 済み)。
+dropped のフィールドは書かず、override が値を返したフィールドは差し替える。
+並びは宣言順 — 手で書いた行と同じ形で入る。
+-}
+mapEntryFrom : Schema.Section -> List String -> (String -> Maybe E.Value) -> E.Value
+mapEntryFrom section dropped override =
+    let
+        template =
+            EntryOps.newEntry section
+    in
+    E.object
+        (section.fields
+            |> List.filter (\( name, _ ) -> not (List.member name dropped))
+            |> List.filterMap
+                (\( name, _ ) ->
+                    case override name of
+                        Just value ->
+                            Just ( name, value )
+
+                        Nothing ->
+                            D.decodeValue (D.field name D.value) template
+                                |> Result.toMaybe
+                                |> Maybe.map (Tuple.pair name)
+                )
+        )
 
 
 {-| 地形パレットの素になる terrain Doc。editor.resources に宣言された
@@ -3393,8 +3589,8 @@ terrainDocCurrent model =
 配置の移動は x・y の 2 本(それ以外のフィールドは触らない)、追加は配列末尾へ、
 削除は該当添字 — どれも既存の編集直列(dirty・自動保存・409・保存後の焼き)に乗る。
 -}
-mapPayloads : MapEditor.Edit -> List EditPayload
-mapPayloads edit =
+mapPayloads : Model -> MapEditor.Edit -> List EditPayload
+mapPayloads model edit =
     case edit of
         MapEditor.RowsEdited rows ->
             [ { op = SetOp, path = [ KeySeg "rows" ], value = E.list E.string rows, isInt = False } ]
@@ -3410,12 +3606,42 @@ mapPayloads edit =
             ]
 
         MapEditor.PointAdded added ->
+            let
+                -- 雛形が要る配列(triggers/props 等)はスキーマから作る。
+                -- x,y だけの配列と、スキーマを引けなかったときは {x,y} 1 個
+                value =
+                    case
+                        if added.fromSchema then
+                            mapSection model added.key
+
+                        else
+                            Nothing
+                    of
+                        Just section ->
+                            mapNewEntry section added.x added.y
+
+                        Nothing ->
+                            E.object [ ( "x", E.int added.x ), ( "y", E.int added.y ) ]
+            in
             [ { op = AppendOp
               , path = [ KeySeg added.key ]
-              , value = E.object [ ( "x", E.int added.x ), ( "y", E.int added.y ) ]
+              , value = value
               , isInt = False
               }
             ]
+
+        MapEditor.RoomRowAdded added ->
+            case mapSection model added.key of
+                Just section ->
+                    [ { op = AppendOp
+                      , path = [ KeySeg added.key ]
+                      , value = mapRoomEntry section
+                      , isInt = False
+                      }
+                    ]
+
+                Nothing ->
+                    []
 
         MapEditor.PointRemoved removed ->
             [ { op = RemoveOp
@@ -3514,13 +3740,35 @@ confirmAdd model =
             ( model, Effect.none )
 
 
+toggleMember : comparable -> Set comparable -> Set comparable
+toggleMember key set =
+    if Set.member key set then
+        Set.remove key set
+
+    else
+        Set.insert key set
+
+
+{-| 一覧の行そのものへの操作(上へ・下へ・直後へ複製)。動かした行を選び直して
+から、既存の編集直列(queueOp)へ流す — 書き戻しの経路は CRUD と同じ 1 本。
+-}
+rowOp : String -> EntryOps.RowEdit -> Model -> ( Model, Effect )
+rowOp sectionKey edit model =
+    case parsedDoc model |> Maybe.andThen (\doc -> EntryOps.listRowOp sectionKey doc edit) of
+        Just plan ->
+            queueOp plan.op { model | entrySel = Just (Selection.fromRefsEntry plan.select) }
+
+        Nothing ->
+            ( model, Effect.none )
+
+
 duplicateEntry : Model -> ( Model, Effect )
 duplicateEntry model =
     case ( currentSection model, parsedDoc model, model.entrySel ) of
         ( Just ( key, _ ), Just doc, Just sel ) ->
-            case EntryOps.duplicateOp key doc (selToRefs sel) of
+            case EntryOps.duplicateOp key doc (Selection.toRefsEntry sel) of
                 Just plan ->
-                    queueOp plan.op { model | entrySel = Just (usageEntryToSel plan.select) }
+                    queueOp plan.op { model | entrySel = Just (Selection.fromRefsEntry plan.select) }
 
                 Nothing ->
                     ( model, Effect.none )
@@ -3573,33 +3821,13 @@ opPayload : EntryOps.Op -> EditPayload
 opPayload op =
     case op of
         EntryOps.SetAt path value ->
-            { op = SetOp, path = List.map refSegToSeg path, value = value, isInt = False }
+            { op = SetOp, path = List.map Edit.fromRefsSeg path, value = value, isInt = False }
 
         EntryOps.AppendAt path value ->
-            { op = AppendOp, path = List.map refSegToSeg path, value = value, isInt = False }
+            { op = AppendOp, path = List.map Edit.fromRefsSeg path, value = value, isInt = False }
 
         EntryOps.RemoveAt path ->
-            { op = RemoveOp, path = List.map refSegToSeg path, value = E.null, isInt = False }
-
-
-refSegToSeg : Refs.PathSeg -> Seg
-refSegToSeg seg =
-    case seg of
-        Refs.Key key ->
-            KeySeg key
-
-        Refs.Idx i ->
-            IdxSeg i
-
-
-selToRefs : EntrySel -> Refs.Entry
-selToRefs sel =
-    case sel of
-        ByKey name ->
-            Refs.AtKey name
-
-        ByIndex i ->
-            Refs.AtIndex i
+            { op = RemoveOp, path = List.map Edit.fromRefsSeg path, value = E.null, isInt = False }
 
 
 
@@ -3750,6 +3978,12 @@ draftPayload d =
                 |> Result.toMaybe
                 |> Maybe.map (\v -> ( { op = SetOp, path = d.path, value = v, isInt = False }, d.text ))
 
+        ListTextDraft l ->
+            Just
+                ( listTextPayload l.fieldPath (SchemaForm.applyListEdit (SchemaForm.SetLine l.index d.text) l.items)
+                , d.text
+                )
+
         WeightsDraft w ->
             Draft.parse (weightsSpec w.config) d.text
                 |> Maybe.map
@@ -3769,6 +4003,14 @@ draftPayload d =
                         , Weights.format w.config own
                         )
                     )
+
+
+{-| 文字列の列の書き戻し。行ごとの編集に散らさず、フィールドへ配列を丸ごと
+1 本の set で書く(周りの整形は jsonc の最小編集が保つ)。
+-}
+listTextPayload : List Seg -> List String -> EditPayload
+listTextPayload fieldPath items =
+    { op = SetOp, path = fieldPath, value = E.list E.string items, isInt = False }
 
 
 {-| weights の連動書き戻し 1 回ぶん(変わった行の set 列を applyDocEdits 1 本に)。 -}
@@ -3894,16 +4136,6 @@ sendEdit payload model =
                         model
     in
     ( { m1 | editReq = Just m1.reqCounter }, cmd )
-
-
-encodeSeg : Seg -> E.Value
-encodeSeg seg =
-    case seg of
-        KeySeg key ->
-            E.string key
-
-        IdxSeg i ->
-            E.int i
 
 
 
@@ -5747,8 +5979,8 @@ view model =
                             viewEditing model
                 , if model.tab == AtelierTab then
                     div []
-                        [ viewMiniPlayer model
-                        , viewMiniZoom model
+                        [ SceneView.view miniHandlers (miniState model)
+                        , SceneView.viewZoom miniHandlers (miniState model)
                         ]
 
                   else
@@ -5806,235 +6038,40 @@ viewNavTabs tab =
 知らせの最新の場面を追い、場面チップでピン留めできる。知らせの既読(seen)は
 ここでは付けない — 通知と見比べモーダルの責務を侵さない。
 -}
-viewMiniPlayer : Model -> Html Msg
-viewMiniPlayer model =
-    div [ HA.class "mini-player fixed bottom-4 right-4 z-40" ]
-        [ if model.miniPlayerOpen then
-            div [ HA.class "w-72 rounded-lg border border-edge bg-panel p-3 shadow-[0_4px_16px_rgb(0_0_0/0.45)]" ]
-                [ viewMiniHeader model
-                , viewMiniChips model
-                , viewMiniPicture model
-                , viewMiniStatus model
-                ]
-
-          else
-            button
-                [ HA.class "mini-player-pill flex cursor-pointer items-center gap-1.5 rounded-full border border-edge bg-panel px-3 py-1.5 text-xs text-ink shadow-[0_2px_8px_rgb(0_0_0/0.35)] hover:bg-white/5"
-                , HE.onClick MiniPlayerToggled
-                ]
-                [ text "🎞️ ミニプレイヤー" ]
-        ]
+miniHandlers : SceneView.Handlers Msg
+miniHandlers =
+    { onToggle = MiniPlayerToggled
+    , onScene = MiniSceneClicked
+    , onZoomOpen = MiniZoomOpened
+    , onZoomClosed = MiniZoomClosed
+    , onStart = MiniStartClicked
+    }
 
 
-{-| ヘッダ。クリックで畳む/開く。差し替え直後だけ「✓ 差し替わりました」を添える。 -}
-viewMiniHeader : Model -> Html Msg
-viewMiniHeader model =
-    button
-        [ HA.class "flex w-full cursor-pointer items-center gap-1.5 text-left text-xs font-semibold text-ink"
-        , HE.onClick MiniPlayerToggled
-        ]
-        [ text "🎞️ ミニプレイヤー"
-        , if model.miniSwapNotice then
-            span [ HA.class "mini-swap shrink-0 text-[10px] font-normal text-ok" ]
-                [ text "✓ 差し替わりました" ]
-
-          else
-            text ""
-        , span [ HA.class "flex-1" ] []
-        , span [ HA.class "shrink-0 text-[11px] font-normal text-ink-faint" ] [ text "たたむ" ]
-        ]
-
-
-{-| 場面チップ列。「自動(変わった場面)」が既定、場面チップでピン留め。
-場面がまだ無ければ列ごと出さない(絵の枠の空の一言に任せる)。
+{-| 小窓が映すのに要る状態だけを渡す。走っているか(running)と起動しかけか
+(starting)は、起動の事情を知っている Main が判じてから渡す。
 -}
-viewMiniChips : Model -> Html Msg
-viewMiniChips model =
-    if List.isEmpty model.miniScenes then
-        text ""
+miniState : Model -> SceneView.State
+miniState model =
+    { open = model.miniPlayerOpen
+    , swapNotice = model.miniSwapNotice
+    , scenes = model.miniScenes
+    , pin = model.miniPin
+    , changes = model.miniChanges
+    , baking = model.changesBaking
+    , zoom = model.miniZoom
+    , refresh = model.miniRefresh
+    , serverBase = model.serverBase
+    , root = model.root
+    , running = projectGameRunning model
+    , starting =
+        case model.atelier.launch of
+            Atelier.LaunchStarting _ ->
+                True
 
-    else
-        let
-            chip cls label active msg =
-                button
-                    [ HA.classList
-                        [ ( cls ++ " badge cursor-pointer", True )
-                        , ( "bg-accent/20 text-accent", active )
-                        , ( "text-ink-faint hover:text-ink-soft", not active )
-                        ]
-                    , HE.onClick msg
-                    ]
-                    [ text label ]
-        in
-        div [ HA.class "mini-chips mt-2 flex max-h-16 flex-wrap gap-1 overflow-y-auto" ]
-            (chip "mini-chip-auto" "自動(変わった場面)" (model.miniPin == Nothing) (MiniSceneClicked Nothing)
-                :: List.map
-                    (\name ->
-                        chip "mini-chip"
-                            (miniSceneLabel name)
-                            (model.miniPin == Just name)
-                            (MiniSceneClicked (Just name))
-                    )
-                    model.miniScenes
-            )
-
-
-{-| 選択中の場面の絵(golden/ の PNG)。描き直し中はオーバーレイを重ねる。
-場面が 1 つも無い時は静かな一言 — 枠は出したまま(下段の起動は生きている)。
--}
-viewMiniPicture : Model -> Html Msg
-viewMiniPicture model =
-    case miniShownScene { pin = model.miniPin, changes = model.miniChanges, scenes = model.miniScenes } of
-        Nothing ->
-            div [ HA.class "mini-empty mt-2 flex h-28 items-center justify-center rounded border border-edge bg-well px-3 text-center text-[11px] text-ink-faint" ]
-                [ text "場面の絵はまだありません" ]
-
-        Just name ->
-            div [ HA.class "relative mt-2" ]
-                [ img
-                    [ HA.class "scene-shot mini-shot block w-full cursor-zoom-in rounded border border-edge bg-well"
-                    , HA.src (miniImageUrl model name)
-                    , HA.alt name
-                    , HA.title "クリックで拡大"
-                    , HE.onClick (MiniZoomOpened name)
-                    ]
-                    []
-                , if model.changesBaking then
-                    div [ HA.class "mini-baking absolute inset-0 flex items-center justify-center gap-2 rounded bg-black/60 text-[11px] text-ink" ]
-                        [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
-                        , text "描き直しています…"
-                        ]
-
-                  else
-                    text ""
-                ]
-
-
-{-| 下段 — 起動状態と「▶ 起動する」。起動はアトリエと同じ経路
-(StartGameClicked)に委譲するので二度押しの守りもそのまま。
--}
-viewMiniStatus : Model -> Html Msg
-viewMiniStatus model =
-    let
-        running =
-            projectGameRunning model
-    in
-    div []
-        [ div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
-            [ span
-                [ HA.classList
-                    [ ( "inline-block h-2 w-2 rounded-full", True )
-                    , ( "bg-ok", running )
-                    , ( "bg-ink-faint", not running )
-                    ]
-                ]
-                []
-            , text
-                (if running then
-                    "起動中"
-
-                 else
-                    "停止中"
-                )
-            , span [ HA.class "flex-1" ] []
-            , if running then
-                text ""
-
-              else
-                case model.atelier.launch of
-                    Atelier.LaunchStarting _ ->
-                        button [ HA.class "btn btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]
-
-                    _ ->
-                        button [ HA.class "btn btn-mini", HE.onClick MiniStartClicked ] [ text "▶ 起動する" ]
-            ]
-        , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
-            [ text
-                (if running then
-                    "保存はゲームの画面にすぐ反映されます(ここは焼き上がりの記録)"
-
-                 else
-                    "▶ 起動すると、保存が実際のゲームにすぐ反映されます"
-                )
-            ]
-        ]
-
-
-{-| ミニプレイヤーが映す場面の決めごと(純関数)。ピン留めが最優先。
-「自動」は知らせの最新 — サーバ(Changes)は新しい変化を列の末尾へ積むので
-末尾を取る。知らせがまだ無ければ一覧の先頭、場面が無ければ Nothing(空の一言)。
--}
-miniShownScene : { pin : Maybe String, changes : List Journey.Change, scenes : List String } -> Maybe String
-miniShownScene info =
-    case info.pin of
-        Just name ->
-            Just name
-
-        Nothing ->
-            case List.reverse info.changes of
-                latest :: _ ->
-                    Just latest.name
-
-                [] ->
-                    List.head info.scenes
-
-
-{-| 場面チップの見出し(拡張子は落とす — チップは日常語の場面名だけ)。 -}
-miniSceneLabel : String -> String
-miniSceneLabel name =
-    if String.endsWith ".png" name then
-        String.dropRight 4 name
-
-    else
-        name
-
-
-{-| 場面の絵(golden/ の PNG)の URL。焼き直しで中身が入れ替わるファイルなので
-v でキャッシュを破る(知らせの版 + 描き直しの目盛り — 同じ URL のまま古い絵を
-出さない)。ミニプレイヤー本体と拡大表示で同じ式(同じ絵)を使う。
--}
-miniImageUrl : Model -> String -> String
-miniImageUrl model name =
-    let
-        ver =
-            model.miniChanges
-                |> List.filter (\c -> c.name == name)
-                |> List.head
-                |> Maybe.map .ver
-                |> Maybe.withDefault 0
-    in
-    galleryImageUrl model.serverBase model.root "golden" name
-        ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt model.miniRefresh)
-
-
-{-| ミニプレイヤーの絵の拡大。アトリエのプレビュー拡大(lightbox)と同じ流儀 —
-暗幕の上に PNG を大きく(〜90vw / 85vh・ドットのまま)、場面名を添える。
-閉じるのはクリック・閉じる ボタン・Esc(Esc の購読は subscriptions)。
-開いた時の場面名を持つので裏の自動追従で別場面へは切り替わらない —
-差し替え(同じ場面の新しい絵)だけが v の進みで映る。
--}
-viewMiniZoom : Model -> Html Msg
-viewMiniZoom model =
-    case model.miniZoom of
-        Nothing ->
-            text ""
-
-        Just name ->
-            div
-                [ HA.class "mini-zoom fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/80"
-                , HE.onClick MiniZoomClosed
-                ]
-                [ img
-                    [ HA.class "scene-shot h-[85vh] max-w-[90vw] object-contain"
-                    , HA.src (miniImageUrl model name)
-                    , HA.alt name
-                    ]
-                    []
-                , div [ HA.class "flex items-center gap-3" ]
-                    [ div [ HA.class "font-mono text-[11px] text-ink" ] [ text (miniSceneLabel name) ]
-                    , button [ HA.class "btn btn-mini", HE.onClick MiniZoomClosed ] [ text "閉じる" ]
-                    ]
-                ]
+            _ ->
+                False
+    }
 
 
 {-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
@@ -6143,9 +6180,9 @@ viewChangesModal model =
                                 [ text ("v" ++ String.fromInt current.ver) ]
                             ]
                         , div [ HA.class "flex flex-wrap gap-4" ]
-                            [ changePane "前" (galleryImageUrl model.serverBase model.root "golden/archive" (baseName current.before))
+                            [ changePane "前" (SceneView.galleryImageUrl model.serverBase model.root "golden/archive" (baseName current.before))
                             , changePane "今"
-                                (galleryImageUrl model.serverBase model.root "golden" (baseName current.after)
+                                (SceneView.galleryImageUrl model.serverBase model.root "golden" (baseName current.after)
                                     -- 中身が入れ替わるファイルなので v でキャッシュを避ける
                                     ++ ("&t=" ++ String.fromInt current.ver)
                                 )
@@ -6222,7 +6259,7 @@ viewScenesModal model =
                                     div [ HA.class "overflow-hidden rounded border border-edge bg-panel" ]
                                         [ img
                                             [ HA.class "scene-shot block w-full bg-well"
-                                            , HA.src (galleryImageUrl model.serverBase model.root "gallery" name)
+                                            , HA.src (SceneView.galleryImageUrl model.serverBase model.root "gallery" name)
                                             , HA.alt name
                                             , HA.attribute "loading" "lazy"
                                             ]
@@ -6233,23 +6270,6 @@ viewScenesModal model =
                                 )
                         )
                 ]
-
-
-{-| 画像の URL。base(接続先サーバ)+ クエリで組む — vite dev(別オリジン)
-でも .app(同一オリジン = base 空)でも同じ式で通すため。
-p= はプロジェクトの識別子(root 由来)— title.png 等の定番名はプロジェクト間で
-同名になるので、URL に混ぜないと前のプロジェクトの絵がブラウザキャッシュから
-出てしまう。サーバは未知のクエリを無視する(変更不要)。
--}
-galleryImageUrl : String -> String -> String -> String -> String
-galleryImageUrl base root dir name =
-    base
-        ++ "/gallery/image?p="
-        ++ Api.projectKey root
-        ++ "&dir="
-        ++ Url.percentEncode dir
-        ++ "&name="
-        ++ Url.percentEncode name
 
 
 {-| 候補プロジェクトの dir が、走っているゲームの cwd 一覧のどれかと同じ場所を
@@ -6418,7 +6438,7 @@ viewEditing model =
                                                 -- マップは 1 枚のマップエディタで完結
                                                 -- (道具・グリッド・パレットを内側に持つ)
                                                 ( Just mdoc, _ ) ->
-                                                    [ Html.map MapMsg (MapEditor.view mdoc model.mapEd) ]
+                                                    [ MapEditor.view MapMsg (viewMapInspector model) mdoc model.mapEd ]
 
                                                 -- ドット絵は 1 枚のピクセルエディタで完結
                                                 ( _, Just pdoc ) ->
@@ -6484,7 +6504,7 @@ viewEditing model =
 -}
 valueSectionsAsRecord : List ( String, Schema.Field ) -> Schema.Section
 valueSectionsAsRecord fields =
-    { kind = Schema.RecordKind, label = Nothing, group = Nothing, widget = Nothing, fields = fields }
+    { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = fields }
 
 
 {-| ペイン境界のつまみ(縦帯)。ドラッグで隣のペインの幅を変える。
@@ -7642,7 +7662,7 @@ viewVisualBody model schema doc =
 
         -- 逆参照は文書全体を 1 回歩けば足りる(セクションごとに数え直さない)
         usageDict =
-            usageDicts model schema doc
+            EntryTable.usageDicts schema doc (crossSources model)
     in
     [ div [ HA.class "visual-tabs flex h-9 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b border-edge bg-panel px-3" ]
         (tabsOf schema |> List.map (viewTab activeKey))
@@ -7659,49 +7679,54 @@ viewVisualBody model schema doc =
                         activeTab schema model
                             |> Maybe.map .sections
                             |> Maybe.withDefault []
-                            |> List.concatMap
-                        (\( key, section ) ->
-                            case section.kind of
-                                Schema.RecordKind ->
-                                    if Schema.widgetIs "sfx" section.widget then
-                                        [ Html.map SfxMsg
-                                            (SfxEditor.view
-                                                { sound = key
-                                                , label = Maybe.withDefault key section.label
-                                                , values = sfxValues key model
-                                                }
-                                                model.sfx
-                                            )
-                                        ]
-
-                                    else
-                                        [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
-                                            [ text "この設定は一覧を持ちません。右のフォームで編集します。" ]
-                                        ]
-
-                                Schema.ValueKind _ ->
-                                    []
-
-                                Schema.Catalog ->
-                                    [ viewCrudBar model doc key section
-
-                                    -- flex-1 で伸ばさない: 行が少ない表の下に空の枠を広げない
-                                    , viewTableBox "min-h-0 shrink" model doc key section (Just usageDict)
-                                    ]
-                                        ++ viewUsagePop model key (Just usageDict)
-
-                                Schema.ListKind ->
-                                    [ viewCrudBar model doc key section
-                                    , viewTableBox "min-h-0 shrink" model doc key section Nothing
-                                    ]
-
-                                -- supportedSections が濾すのでここへは来ない
-                                Schema.Unsupported _ ->
-                                    []
-                        )
+                            |> List.concatMap (viewVisualCenterSection model doc usageDict)
                )
         )
     ]
+
+
+{-| ビジュアルの中央に出すセクション 1 枚ぶん(一覧の表か、盤面を持たない
+種類の案内)。フォームは右ペインの持ち場なので、ここには出さない。
+-}
+viewVisualCenterSection : Model -> D.Value -> EntryTable.UsageDicts -> ( String, Schema.Section ) -> List (Html Msg)
+viewVisualCenterSection model doc usageDict ( key, section ) =
+    case section.kind of
+        Schema.RecordKind ->
+            if Schema.widgetIs "sfx" section.widget then
+                [ Html.map SfxMsg
+                    (SfxEditor.view
+                        { sound = key
+                        , label = Maybe.withDefault key section.label
+                        , values = sfxValues key model
+                        }
+                        model.sfx
+                    )
+                ]
+
+            else
+                [ div [ HA.class "form-note text-[11px] leading-relaxed text-ink-faint" ]
+                    [ text "この設定は一覧を持ちません。右のフォームで編集します。" ]
+                ]
+
+        Schema.ValueKind _ ->
+            []
+
+        Schema.Catalog ->
+            [ EntryTable.viewCrudBar tableHandlers (tableState model) doc key section
+
+            -- flex-1 で伸ばさない: 行が少ない表の下に空の枠を広げない
+            , EntryTable.viewBox tableHandlers (tableState model) "min-h-0 shrink" doc key section (Just usageDict)
+            ]
+                ++ EntryTable.viewUsagePop tableHandlers (tableState model) key (Just usageDict)
+
+        Schema.ListKind ->
+            [ EntryTable.viewCrudBar tableHandlers (tableState model) doc key section
+            , EntryTable.viewBox tableHandlers (tableState model) "min-h-0 shrink" doc key section Nothing
+            ]
+
+        -- supportedSections が濾すのでここへは来ない
+        Schema.Unsupported _ ->
+            []
 
 
 {-| ビジュアルの右: 選択エントリのフォーム。未選択は案内カード —
@@ -7748,45 +7773,52 @@ viewVisualSideBody model schema doc =
                     [ guide ]
 
                 Just ( key, section ) ->
-                    case section.kind of
-                        Schema.RecordKind ->
-                            [ viewSideHead key "設定"
-                            , viewRows model doc section (Doc.record key doc) [ KeySeg key ]
-                            ]
+                    FormHelp.section HelpToggled model.helpOpen key section
+                        ++ viewVisualSideSection model doc guide key section
 
-                        Schema.ValueKind field ->
-                            [ viewSideHead key "値"
-                            , viewRows model doc (valueSectionsAsRecord [ ( key, field ) ]) doc []
-                            ]
 
-                        Schema.Catalog ->
-                            case selectedCatalogName model key doc of
-                                Just name ->
-                                    viewEntryPortrait model section (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
-                                        ++ [ viewRenameHeader model key name
-                                           , viewRows model
-                                                doc
-                                                section
-                                                (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
-                                                [ KeySeg key, KeySeg name ]
-                                           ]
+{-| 右ペインのセクション 1 枚ぶん(選択エントリのフォーム)。 -}
+viewVisualSideSection : Model -> D.Value -> Html Msg -> String -> Schema.Section -> List (Html Msg)
+viewVisualSideSection model doc guide key section =
+    case section.kind of
+        Schema.RecordKind ->
+            [ viewSideHead key "設定"
+            , viewRows model doc section (Doc.record key doc) [ KeySeg key ]
+            ]
 
-                                Nothing ->
-                                    [ guide ]
+        Schema.ValueKind field ->
+            [ viewSideHead key "値"
+            , viewRows model doc (valueSectionsAsRecord [ ( key, field ) ]) doc []
+            ]
 
-                        Schema.ListKind ->
-                            case selectedListEntry model key doc of
-                                Just ( i, entry ) ->
-                                    [ viewSideHead ("#" ++ String.fromInt i) key
-                                    , viewRows model doc section entry [ KeySeg key, IdxSeg i ]
-                                    ]
+        Schema.Catalog ->
+            case Selection.catalogName model.entrySel key doc of
+                Just name ->
+                    viewEntryPortrait model section (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
+                        ++ [ viewRenameHeader model key name
+                           , viewRows model
+                                doc
+                                section
+                                (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
+                                [ KeySeg key, KeySeg name ]
+                           ]
 
-                                Nothing ->
-                                    [ guide ]
+                Nothing ->
+                    [ guide ]
 
-                        -- supportedSections が濾すのでここへは来ない
-                        Schema.Unsupported _ ->
-                            []
+        Schema.ListKind ->
+            case Selection.listEntry model.entrySel key doc of
+                Just ( i, entry ) ->
+                    [ viewSideHead ("#" ++ String.fromInt i) key
+                    , viewRows model doc section entry [ KeySeg key, IdxSeg i ]
+                    ]
+
+                Nothing ->
+                    [ guide ]
+
+        -- supportedSections が濾すのでここへは来ない
+        Schema.Unsupported _ ->
+            []
 
 
 viewSideHead : String -> String -> Html Msg
@@ -7827,31 +7859,6 @@ viewKindGuide model =
 
         _ ->
             []
-
-
-{-| 選択中の catalog エントリ名。テキスト側の編集で消えた後の選択は無効。 -}
-selectedCatalogName : Model -> String -> D.Value -> Maybe String
-selectedCatalogName model key doc =
-    case model.entrySel of
-        Just (ByKey name) ->
-            if List.member name (Doc.catalogKeys key doc) then
-                Just name
-
-            else
-                Nothing
-
-        _ ->
-            Nothing
-
-
-selectedListEntry : Model -> String -> D.Value -> Maybe ( Int, D.Value )
-selectedListEntry model key doc =
-    case model.entrySel of
-        Just (ByIndex i) ->
-            Doc.list key doc |> List.drop i |> List.head |> Maybe.map (\entry -> ( i, entry ))
-
-        _ ->
-            Nothing
 
 
 
@@ -8115,7 +8122,7 @@ viewForm model schema =
 
                 -- 逆参照は文書全体を 1 回歩けば足りる(セクションごとに数え直さない)
                 usageDict =
-                    usageDicts model schema doc
+                    EntryTable.usageDicts schema doc (crossSources model)
             in
             div [ HA.class "form-tabs mb-2.5 flex flex-nowrap gap-1 overflow-x-auto" ]
                 (tabsOf schema |> List.map (viewTab activeKey))
@@ -8151,8 +8158,13 @@ viewTab activeKey tab =
         [ text tab.label ]
 
 
-viewSection : Model -> D.Value -> UsageDicts -> String -> Schema.Section -> List (Html Msg)
+viewSection : Model -> D.Value -> EntryTable.UsageDicts -> String -> Schema.Section -> List (Html Msg)
 viewSection model doc usageDict key section =
+    FormHelp.section HelpToggled model.helpOpen key section ++ viewSectionBody model doc usageDict key section
+
+
+viewSectionBody : Model -> D.Value -> EntryTable.UsageDicts -> String -> Schema.Section -> List (Html Msg)
+viewSectionBody model doc usageDict key section =
     case section.kind of
         Schema.RecordKind ->
             [ viewRows model doc section (Doc.record key doc) [ KeySeg key ] ]
@@ -8161,8 +8173,8 @@ viewSection model doc usageDict key section =
             [ viewRows model doc (valueSectionsAsRecord [ ( key, field ) ]) doc [] ]
 
         Schema.Catalog ->
-            viewEntryTable model doc key section (Just usageDict)
-                ++ (case selectedCatalogName model key doc of
+            EntryTable.view tableHandlers (tableState model) doc key section (Just usageDict)
+                ++ (case Selection.catalogName model.entrySel key doc of
                         Just name ->
                             viewEntryPortrait model section (Doc.catalog key doc |> Dict.get name |> Maybe.withDefault E.null)
                                 ++ [ viewRenameHeader model key name
@@ -8178,8 +8190,8 @@ viewSection model doc usageDict key section =
                    )
 
         Schema.ListKind ->
-            viewEntryTable model doc key section Nothing
-                ++ (case selectedListEntry model key doc of
+            EntryTable.view tableHandlers (tableState model) doc key section Nothing
+                ++ (case Selection.listEntry model.entrySel key doc of
                         Just ( i, entry ) ->
                             [ viewRows model doc section entry [ KeySeg key, IdxSeg i ] ]
 
@@ -8283,336 +8295,88 @@ commitCancelKeys commitMsg cancelMsg =
 
 
 
--- テーブルビュー(catalog / list)
+-- 一覧の表(EntryTable)と選んだ 1 行のフォーム
 
 
-{-| 並べ替え・絞り込みは表示の行リストにだけ効く。各行が論理の指し先(rowId)を
-持っているので、クリック時はそこから EntrySel を作る — 表示位置は使わない。
-フォーム(選択 1 件)は表示と独立で、絞り込みで行が隠れても選択は生きる。
+{-| ビジュアルの右ペインに出す「選んだ 1 行のフォーム」。スキーマ駆動で、
+中身は分割モードと同じ部品(viewRows)を使う — 同じ欄が画面ごとに違う顔に
+ならないように。選択が無い/文書にその行が無いなら何も出さない(閉じる)。
 -}
-viewEntryTable : Model -> D.Value -> String -> Schema.Section -> Maybe UsageDicts -> List (Html Msg)
-viewEntryTable model doc key section usageDict =
-    [ viewCrudBar model doc key section
-    , viewTableBox "max-h-64" model doc key section usageDict
-    ]
-        ++ viewUsagePop model key usageDict
+viewMapInspector : Model -> List (Html Msg)
+viewMapInspector model =
+    case ( MapEditor.selectedRow model.mapEd, parsedDoc model ) of
+        ( Just ( key, index ), Just doc ) ->
+            case Selection.mapTarget (sectionByKey model key) doc key index of
+                Just target ->
+                    [ div [ HA.class "map-inspector border-t border-edge" ]
+                        [ div [ HA.class "flex items-center gap-1 px-3 pt-2 pb-1.5" ]
+                            [ span [ HA.class "min-w-0 flex-1 truncate text-[11px] tracking-wider text-ink-faint" ]
+                                [ text target.title ]
+                            , case index of
+                                Just _ ->
+                                    button
+                                        [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                                        , HA.title "この行を削除"
+                                        , HE.onClick (MapMsg MapEditor.RemovePressed)
+                                        ]
+                                        [ text "✕" ]
 
-
-{-| テーブル上部の操作列: 追加・複製・削除+絞り込み。ビジュアル完結の入口。
-複製と削除は、このセクションに実在する行が選ばれている時だけ生きる。
--}
-viewCrudBar : Model -> D.Value -> String -> Schema.Section -> Html Msg
-viewCrudBar model doc key section =
-    let
-        hasSelection =
-            case ( section.kind, model.entrySel ) of
-                ( Schema.Catalog, Just (ByKey name) ) ->
-                    List.member name (Doc.catalogKeys key doc)
-
-                ( Schema.ListKind, Just (ByIndex i) ) ->
-                    i < List.length (Doc.list key doc)
-
-                _ ->
-                    False
-    in
-    -- ボタンの格: 追加=secondary / 複製・削除=tertiary(テキスト系)。
-    -- 削除の確定(danger)はダイアログ側の持ち場
-    div [ HA.class "crud-bar mb-1.5 flex shrink-0 items-center gap-1.5" ]
-        [ button [ HA.class "crud-add btn", HE.onClick AddClicked ] [ text "+ 追加" ]
-        , button [ HA.class "crud-dup btn btn-ghost", HE.onClick DuplicateClicked, HA.disabled (not hasSelection) ] [ text "複製" ]
-        , button [ HA.class "crud-delete btn btn-ghost hover:text-danger", HE.onClick DeleteClicked, HA.disabled (not hasSelection) ] [ text "削除" ]
-        , input
-            [ HA.class "table-filter field ml-auto w-40 min-w-0"
-            , HA.type_ "text"
-            , HA.placeholder "絞り込み"
-            , HA.value model.tableFilter
-            , HE.onInput FilterChanged
-            ]
-            []
-        ]
-
-
-{-| 使用数の 2 冊: own = 開いている文書の中から、ext = 他ファイルから。 -}
-type alias UsageDicts =
-    { own : Dict.Dict String (List Refs.UsageSite)
-    , ext : Dict.Dict String (List Sources.ExternalUsage)
-    }
-
-
-{-| 開いている文書のスキーマから両冊を組む(view のたびに全計算 — 問題一覧と同じ流儀)。 -}
-usageDicts : Model -> Schema.Schema -> D.Value -> UsageDicts
-usageDicts model schema doc =
-    { own = Refs.usages schema doc
-    , ext = Sources.externalUsages (crossSources model)
-    }
-
-
-viewTableBox : String -> Model -> D.Value -> String -> Schema.Section -> Maybe UsageDicts -> Html Msg
-viewTableBox heightClass model doc key section usageDict =
-    let
-        cols =
-            Table.columns section
-
-        shownRows =
-            Table.rows key section doc
-                |> Table.filterRows model.tableFilter
-                |> Table.sortRows model.tableSort
-
-        idLabel =
-            case section.kind of
-                Schema.Catalog ->
-                    "id"
-
-                _ ->
-                    "#"
-
-        numericCols =
-            cols |> List.filter .numeric |> List.map .name
-
-        -- 使用列は catalog だけ(list/record の行は id を持たず参照されない)
-        usageHeader =
-            case usageDict of
-                Just _ ->
-                    [ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "使用" ] ]
+                                Nothing ->
+                                    text ""
+                            ]
+                        , div [ HA.class "px-2 pb-3" ]
+                            [ viewRows model doc target.section target.entry target.path ]
+                        ]
+                    ]
 
                 Nothing ->
                     []
-    in
-    div [ HA.class ("table-wrap mb-2.5 overflow-auto rounded border border-edge " ++ heightClass) ]
-        [ table [ HA.class "entry-table w-full border-collapse font-mono text-[11px] tabular-nums whitespace-nowrap" ]
-            [ thead []
-                [ tr []
-                    ((viewHeaderCell model.tableSort Table.idColumn idLabel False
-                        :: (cols |> List.map (\c -> viewHeaderCell model.tableSort c.name c.label c.numeric))
-                     )
-                        ++ usageHeader
-                    )
-                ]
-            , tbody []
-                (shownRows
-                    |> List.map (viewTableRow model.entrySel numericCols (usageDict |> Maybe.map (\dict -> ( key, dict ))))
-                )
-            ]
-        ]
-
-
-{-| 使用箇所の一覧(バッジをクリックで開く小さなリスト)。項目クリックで
-問題ジャンプと同じ経路(セクション+エントリ選択)へ飛ぶ。
--}
-viewUsagePop : Model -> String -> Maybe UsageDicts -> List (Html Msg)
-viewUsagePop model key usageDict =
-    case ( model.usagesOpenFor, usageDict ) of
-        ( Just openKey, Just dicts ) ->
-            if String.startsWith (key ++ "/") openKey then
-                let
-                    id =
-                        String.dropLeft (String.length key + 1) openKey
-
-                    sites =
-                        Dict.get openKey dicts.own |> Maybe.withDefault []
-
-                    extSites =
-                        Dict.get openKey dicts.ext |> Maybe.withDefault []
-
-                    total =
-                        List.length sites + List.length extSites
-                in
-                [ div [ HA.class "usage-pop mb-2.5 rounded border border-edge bg-raised p-2" ]
-                    (div [ HA.class "usage-pop-head mb-1 text-[11px] text-ink-soft" ]
-                        [ text ("\"" ++ id ++ "\" の使用箇所(" ++ String.fromInt total ++ ")") ]
-                        :: (sites |> List.map viewUsageSite)
-                        ++ (extSites |> List.map viewExternalUsageSite)
-                    )
-                ]
-
-            else
-                []
 
         _ ->
             []
 
 
-viewUsageSite : Refs.UsageSite -> Html Msg
-viewUsageSite site =
-    button
-        [ HA.class "usage-site block w-full cursor-pointer rounded px-1.5 py-0.5 text-left font-mono text-[11px] text-ink-soft hover:bg-white/5 hover:text-ink"
-        , HE.onClick
-            (UsageJumped
-                { sectionKey = site.sectionKey
-                , entry = site.entry |> Maybe.map usageEntryToSel
-                }
-            )
-        ]
-        [ text (usageSiteLabel site) ]
-
-
-{-| 他ファイルからの使用箇所 1 行。クリックでそのファイルを開いて該当エントリを選ぶ
-(dirty の関所はジャンプ側 DashJumped が通す)。
+{-| 表が押された時にどの便りを投げるか。EntryTable は Main の Msg を知らないので、
+配線はこの 1 か所に集まる。
 -}
-viewExternalUsageSite : Sources.ExternalUsage -> Html Msg
-viewExternalUsageSite usage =
-    button
-        [ HA.class "usage-site usage-site-ext block w-full cursor-pointer rounded px-1.5 py-0.5 text-left font-mono text-[11px] text-ink-soft hover:bg-white/5 hover:text-ink"
-        , HE.onClick
-            (DashJumped
-                { path = usage.path
-                , sectionKey = usage.site.sectionKey
-                , entry =
-                    usage.site.entry
-                        |> Maybe.map usageEntryToSel
-                        |> Maybe.withDefault (ByKey "")
-                }
-            )
-        ]
-        [ text (usage.path ++ ": " ++ usageSiteLabel usage.site) ]
+tableHandlers : EntryTable.Handlers Msg
+tableHandlers =
+    { onSelect = EntryClicked
+    , onSort = SortClicked
+    , onFilter = FilterChanged
+    , onAdd = AddClicked
+    , onDuplicate = DuplicateClicked
+    , onDelete = DeleteClicked
+    , onRowOp = RowOpClicked
+    , onRowDelete = RowDeleteClicked
+    , onUsagesToggle = UsagesToggled
+    , onUsageJump = UsageJumped
+    , onExternalJump = DashJumped
+    }
 
 
-usageEntryToSel : Refs.Entry -> EntrySel
-usageEntryToSel entry =
-    case entry of
-        Refs.AtKey name ->
-            ByKey name
-
-        Refs.AtIndex i ->
-            ByIndex i
-
-
-{-| 場所書きは問題パネルと同じ流儀(「spawns #3 · route」)。 -}
-usageSiteLabel : Refs.UsageSite -> String
-usageSiteLabel site =
-    let
-        entryText =
-            case site.entry of
-                Just (Refs.AtKey name) ->
-                    " \"" ++ name ++ "\""
-
-                Just (Refs.AtIndex i) ->
-                    " #" ++ String.fromInt i
-
-                Nothing ->
-                    ""
-
-        elemText =
-            case site.elem of
-                Just j ->
-                    "[" ++ String.fromInt j ++ "]"
-
-                Nothing ->
-                    ""
-    in
-    site.sectionKey ++ entryText ++ " · " ++ site.fieldName ++ elemText
+{-| 表の見え方に効く今の状態だけを渡す(Model 丸ごとは渡さない)。 -}
+tableState : Model -> EntryTable.State
+tableState model =
+    { entrySel = model.entrySel
+    , sort = model.tableSort
+    , filter = model.tableFilter
+    , usagesOpenFor = model.usagesOpenFor
+    }
 
 
-viewHeaderCell : Maybe Table.SortState -> String -> String -> Bool -> Html Msg
-viewHeaderCell sort column label numeric =
-    let
-        marker =
-            case sort of
-                Just st ->
-                    if st.column == column then
-                        case st.dir of
-                            Table.Asc ->
-                                " ▲"
-
-                            Table.Desc ->
-                                " ▼"
-
-                    else
-                        ""
-
-                Nothing ->
-                    ""
-    in
-    th
-        [ HA.classList
-            [ ( "sticky top-0 z-10 cursor-pointer border-b border-edge bg-raised px-2 py-1 font-normal text-ink-soft select-none hover:text-ink", True )
-            , ( "text-right", numeric )
-            , ( "text-left", not numeric )
-            ]
-        , HE.onClick (SortClicked column)
-        ]
-        [ text (label ++ marker) ]
-
-
-viewTableRow : Maybe EntrySel -> List String -> Maybe ( String, UsageDicts ) -> Table.TableRow -> Html Msg
-viewTableRow entrySel numericCols catalogUsage row =
-    let
-        sel =
-            case row.rowId of
-                Table.ById name ->
-                    ByKey name
-
-                Table.ByIdx i ->
-                    ByIndex i
-
-        isOn =
-            entrySel == Just sel
-    in
-    tr
-        [ HA.classList
-            [ ( "cursor-pointer", True )
-
-            -- 選択は hover と見間違えない濃さ+左の色帯で示す
-            , ( "on bg-accent/20 shadow-[inset_2px_0_0_var(--color-accent)]", isOn )
-            , ( "hover:bg-white/5", not isOn )
-            ]
-        , HE.onClick (EntryClicked sel)
-        ]
-        ((td
-            [ HA.classList
-                [ ( "id-cell border-t border-edge px-2 py-0.5", True )
-                , ( "text-accent", isOn )
-                , ( "text-ink-faint", not isOn )
-                ]
-            ]
-            [ text row.idText ]
-            :: (row.cells
-                    |> List.map
-                        (\c ->
-                            td
-                                [ HA.classList
-                                    [ ( "border-t border-edge px-2 py-0.5", True )
-                                    , ( "text-right", List.member c.column numericCols )
-                                    ]
-                                ]
-                                [ text c.text ]
-                        )
-               )
-         )
-            ++ viewUsageCell catalogUsage row.rowId
-        )
-
-
-{-| 使用数のセル。0 は薄い数字、1 以上はクリックで一覧が開くバッジ。
-クリックは行選択(EntryClicked)に食わせない — 数を見る操作と行を選ぶ操作は別。
--}
-viewUsageCell : Maybe ( String, UsageDicts ) -> Table.RowId -> List (Html Msg)
-viewUsageCell catalogUsage rowId =
-    case ( catalogUsage, rowId ) of
-        ( Just ( key, dicts ), Table.ById name ) ->
-            let
-                ukey =
-                    Refs.usageKey key name
-
-                count =
-                    (Dict.get ukey dicts.own |> Maybe.map List.length |> Maybe.withDefault 0)
-                        + (Dict.get ukey dicts.ext |> Maybe.map List.length |> Maybe.withDefault 0)
-            in
-            [ td [ HA.class "usage-cell border-t border-edge px-2 py-0.5" ]
-                [ if count == 0 then
-                    span [ HA.class "usage-zero text-ink-faint" ] [ text "0" ]
-
-                  else
-                    button
-                        [ HA.class "usage-badge badge cursor-pointer bg-accent/15 font-semibold text-accent hover:bg-accent/25"
-                        , HE.stopPropagationOn "click" (D.succeed ( UsagesToggled ukey, True ))
-                        ]
-                        [ text (String.fromInt count) ]
-                ]
-            ]
+{-| キーのセクション(種類は問わない — 配列も単体も同じフォームに掛ける)。 -}
+sectionByKey : Model -> String -> Maybe Schema.Section
+sectionByKey model key =
+    case model.schemaState of
+        SchemaReady schema ->
+            schema.sections
+                |> List.filter (\( k, _ ) -> k == key)
+                |> List.head
+                |> Maybe.map Tuple.second
 
         _ ->
-            []
+            Nothing
 
 
 viewRows : Model -> D.Value -> Schema.Section -> D.Value -> List Seg -> Html Msg
@@ -8687,7 +8451,11 @@ viewRow model basePath row =
 
                     Nothing ->
                         text ""
+                , FormHelp.toggle HelpToggled model.helpOpen helpKey row.help
                 ]
+
+        helpKey =
+            pathKey path
 
         -- 効き目のひとこと。ラベルは名前、こちらは「上げると何がどうなるか」
         hintText =
@@ -8702,6 +8470,7 @@ viewRow model basePath row =
     div [ HA.class "form-row mb-2" ]
         [ labelText
         , hintText
+        , FormHelp.body model.helpOpen helpKey row.help
         , viewControl model path row.control
         ]
 
@@ -8955,6 +8724,9 @@ viewControl model path control =
 
         SchemaForm.TextureControl t ->
             viewTexture model.activeDraft path t
+
+        SchemaForm.ListTextControl items ->
+            viewListText model path items
 
         SchemaForm.WeightsControl w ->
             viewWeights model path w
@@ -9362,6 +9134,70 @@ viewWeightsAdd model path =
                 , HE.onClick (WeightsAddOpened path)
                 ]
                 [ text "＋ 行を追加" ]
+
+
+{-| 文字列の列(台詞など)。1 行 1 欄で縦に並べ、行ごとに ↑↓ と ✕、末尾に
+「行を追加」。どの操作も「新しい列を丸ごと書く」1 本の編集に落ちる。
+空行もそのまま持つ — 書いた空行を勝手に間引かない。
+-}
+viewListText : Model -> List Seg -> List String -> Html Msg
+viewListText model path items =
+    div [ HA.class "control-listtext w-full rounded border border-edge bg-well/40 p-1.5" ]
+        ((if List.isEmpty items then
+            [ div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "(まだ 1 行も無い)" ] ]
+
+          else
+            items |> List.indexedMap (viewListTextRow model path items)
+         )
+            ++ [ button
+                    [ HA.class "listtext-add btn btn-ghost btn-mini mt-0.5"
+                    , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit SchemaForm.AddLine items)))
+                    ]
+                    [ text "＋ 行を追加" ]
+               ]
+        )
+
+
+viewListTextRow : Model -> List Seg -> List String -> Int -> String -> Html Msg
+viewListTextRow model path items index value =
+    let
+        seed =
+            { path = path ++ [ IdxSeg index ]
+            , kind = ListTextDraft { fieldPath = path, index = index, items = items }
+            , original = value
+            }
+
+        listButton label title_ enabled edit =
+            button
+                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                , HA.title title_
+                , HA.disabled (not enabled)
+                , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit edit items)))
+                ]
+                [ text label ]
+    in
+    div [ HA.class "listtext-row mb-1 flex items-center gap-1" ]
+        [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
+            [ text (String.fromInt (index + 1)) ]
+        , input
+            [ HA.class "field min-w-0 flex-1"
+            , HA.type_ "text"
+            , HA.value (draftTextFor model.activeDraft seed.path value)
+            , HE.onFocus (DraftStarted seed)
+            , HE.onInput (DraftTyped seed)
+            , HE.onBlur (DraftCommitted { release = True })
+            , onDraftKeys seed False
+            ]
+            []
+        , listButton "↑" "1 つ上へ" (index > 0) (SchemaForm.MoveLine index -1)
+        , listButton "↓" "1 つ下へ" (index < List.length items - 1) (SchemaForm.MoveLine index 1)
+        , button
+            [ HA.class "listtext-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+            , HA.title "この行を削除"
+            , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit (SchemaForm.RemoveLine index) items)))
+            ]
+            [ text "✕" ]
+        ]
 
 
 matching : List Seg -> WeightsAddState -> Maybe WeightsAddState
@@ -9994,7 +9830,7 @@ viewDeleteDialog confirm =
                 |> List.map
                     (\site ->
                         div [ HA.class "py-0.5 font-mono text-[11px] text-ink-soft" ]
-                            [ text (usageSiteLabel site) ]
+                            [ text (Refs.siteLabel site) ]
                     )
             )
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]

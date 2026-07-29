@@ -39,7 +39,29 @@ parse text =
 
 mapDoc : Maybe MapEditor.Doc
 mapDoc =
-    MapEditor.fromDoc Nothing (parse mapJson)
+    MapEditor.fromDoc [] Nothing (parse mapJson)
+
+
+{-| kaidan の triggers と同じ形: マスを見ない行(on:enter)と、マスを踏む行が
+1 つの配列に混ざる。
+-}
+mixedJson : String
+mixedJson =
+    """
+{
+  "rows": [ "....", "...." ],
+  "triggers": [
+    { "on": "enter", "once": true, "says": [ "…" ] },
+    { "on": "step", "x": 1, "y": 1, "says": [ "…" ] },
+    { "on": "step", "x": 2, "y": 0, "says": [ "…" ] }
+  ]
+}
+"""
+
+
+mixedDoc : Maybe MapEditor.Doc
+mixedDoc =
+    MapEditor.fromDoc [] Nothing (parse mixedJson)
 
 
 terrainJson : String
@@ -55,7 +77,7 @@ terrainJson =
 suite : Test
 suite =
     describe "MapEditor — ルール(読み取り・広げる・移動・パレット導出)"
-        [ test "読み取り — トップレベルの x,y 持ちだけが配置になる(単体と配列、xyOnly の区別。空配列・数値は拾わない)" <|
+        [ test "読み取り — トップレベルの x,y 持ちだけが配置になる(単体と配列、足せるかの区別。空配列・数値は拾わない)" <|
             \_ ->
                 case mapDoc of
                     Nothing ->
@@ -65,11 +87,121 @@ suite =
                         doc.groups
                             |> List.map (\g -> ( g.key, kindShape g.kind ))
                             |> Expect.equal
-                                [ ( "start", ( "single", 1, False ) )
-                                , ( "villagers", ( "many", 1, False ) )
-                                , ( "door", ( "single", 1, False ) )
-                                , ( "herbs", ( "many", 2, True ) )
+                                -- villagers はスキーマのキーに挙げていないので足せない
+                                [ ( "start", ( "single", 1, "-" ) )
+                                , ( "villagers", ( "many", 1, "no" ) )
+                                , ( "door", ( "single", 1, "-" ) )
+                                , ( "herbs", ( "many", 2, "xyOnly" ) )
                                 ]
+        , test "読み取り — x,y の無い行が混ざっても捨てない。印は元の配列の添字を覚え、置けない行は件数だけ" <|
+            \_ ->
+                let
+                    shape doc =
+                        doc |> Maybe.map (.groups >> List.map (\g -> ( g.key, marks g.kind )))
+
+                    -- マスを見ない行だけの配列(kaidan の musicroom)も件数として残る
+                    enterOnly =
+                        MapEditor.fromDoc [] Nothing
+                            (parse """{ "rows": [ "..", ".." ], "triggers": [ { "on": "enter", "says": [ "…" ] } ] }""")
+                in
+                ( shape mixedDoc, shape enterOnly )
+                    |> Expect.equal
+                        ( Just [ ( "triggers", ( [ ( 1, ( 1, 1 ) ), ( 2, ( 2, 0 ) ) ], 1 ) ) ]
+                        , Just [ ( "triggers", ( [], 1 ) ) ]
+                        )
+        , test "移動(混在) — 印を動かすと、詰めた順ではなく元の配列の添字で書き戻す" <|
+            \_ ->
+                case mixedDoc of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        let
+                            ( m1, _ ) =
+                                MapEditor.update doc (MapEditor.PlaceChosen "triggers") MapEditor.init
+
+                            -- 先頭の印(元の添字 1)を選び、別のマスへ
+                            ( m2, _ ) =
+                                MapEditor.update doc (MapEditor.CellPressed 1 1 0) m1
+                        in
+                        MapEditor.update doc (MapEditor.CellPressed 3 1 0) m2
+                            |> Tuple.second
+                            |> Expect.equal
+                                (MapEditor.Edited
+                                    (MapEditor.PointMoved { key = "triggers", index = Just 1, x = 3, y = 1 })
+                                )
+        , test "追加(雛形) — スキーマ宣言のある配列は空きマスのクリックで足せる。宣言が無ければ足さない" <|
+            \_ ->
+                let
+                    clickEmpty doc =
+                        let
+                            ( m1, _ ) =
+                                MapEditor.update doc (MapEditor.PlaceChosen "triggers") MapEditor.init
+                        in
+                        MapEditor.update doc (MapEditor.CellPressed 3 1 0) m1
+
+                    withSchema =
+                        MapEditor.fromDoc [ { key = "triggers", room = True } ] Nothing (parse mixedJson) |> Maybe.map clickEmpty
+
+                    withoutSchema =
+                        mixedDoc |> Maybe.map clickEmpty
+                in
+                ( withSchema |> Maybe.map Tuple.second
+                  -- 生まれた行(元の配列の末尾 = 添字 3)を選んでおく
+                , withSchema |> Maybe.andThen (Tuple.first >> .picked)
+                , withoutSchema |> Maybe.map Tuple.second
+                )
+                    |> Expect.equal
+                        ( Just
+                            (MapEditor.Edited
+                                (MapEditor.PointAdded { key = "triggers", x = 3, y = 1, fromSchema = True })
+                            )
+                        , Just ( "triggers", Just 3 )
+                        , Just (MapEditor.Noticed "動かしたい印をクリックで選んでください")
+                        )
+        , test "部屋の行 — 一覧の見出しは値から作り、選ぶと選択に乗る。追加は既に部屋の行があるかを添える" <|
+            \_ ->
+                case MapEditor.fromDoc [ { key = "triggers", room = True } ] Nothing (parse mixedJson) of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        let
+                            ( m1, _ ) =
+                                MapEditor.update doc (MapEditor.OffRowChosen "triggers" 0) MapEditor.init
+
+                            ( _, added ) =
+                                MapEditor.update doc (MapEditor.RoomRowPressed "triggers") m1
+                        in
+                        ( doc.groups |> List.concatMap (\g -> offRows g.kind)
+                        , MapEditor.selectedRow m1
+                        , added
+                        )
+                            |> Expect.equal
+                                ( [ ( 0, "enter — …" ) ]
+                                , Just ( "triggers", Just 0 )
+                                , MapEditor.Edited (MapEditor.RoomRowAdded { key = "triggers", hadRoom = True })
+                                )
+        , test "追加(x,y だけの配列) — 従来どおり {x,y} の行を足し、続けて置けるよう選ばない" <|
+            \_ ->
+                case mapDoc of
+                    Nothing ->
+                        Expect.fail "fixture が読めるべき"
+
+                    Just doc ->
+                        let
+                            ( m1, _ ) =
+                                MapEditor.update doc (MapEditor.PlaceChosen "herbs") MapEditor.init
+
+                            ( m2, out ) =
+                                MapEditor.update doc (MapEditor.CellPressed 2 1 0) m1
+                        in
+                        ( out, m2.picked )
+                            |> Expect.equal
+                                ( MapEditor.Edited
+                                    (MapEditor.PointAdded { key = "herbs", x = 2, y = 1, fromSchema = False })
+                                , Nothing
+                                )
         , test "広げる — + で全行が「一番長い行+1」に揃い、元の中身は無傷・新セルは既定の文字" <|
             \_ ->
                 let
@@ -136,11 +268,11 @@ suite =
             \_ ->
                 let
                     without =
-                        MapEditor.fromDoc Nothing (parse mapJson)
+                        MapEditor.fromDoc [] Nothing (parse mapJson)
                             |> Maybe.map (.terrain >> List.map .ch)
 
                     withDoc =
-                        MapEditor.fromDoc (Just (parse terrainJson)) (parse mapJson)
+                        MapEditor.fromDoc [] (Just (parse terrainJson)) (parse mapJson)
                             |> Maybe.map (.terrain >> List.map (\sw -> ( sw.ch, sw.name, sw.css == "#334455" )))
                 in
                 ( without, withDoc )
@@ -190,14 +322,14 @@ suite =
             \_ ->
                 let
                     course =
-                        MapEditor.fromDoc Nothing (parse """{ "version": 1, "rows": [ "..##..", "..##.." ] }""")
+                        MapEditor.fromDoc [] Nothing (parse """{ "version": 1, "rows": [ "..##..", "..##.." ] }""")
 
                     sprite =
-                        MapEditor.fromDoc Nothing
+                        MapEditor.fromDoc [] Nothing
                             (parse """{ "sprites": { "hero": { "frames": { "idle": [ "..ii..", ".iiii." ] } } } }""")
 
                     emptyRows =
-                        MapEditor.fromDoc Nothing (parse """{ "rows": [] }""")
+                        MapEditor.fromDoc [] Nothing (parse """{ "rows": [] }""")
                 in
                 Expect.all
                     [ \_ -> course |> Maybe.map (.rows >> List.length) |> Expect.equal (Just 2)
@@ -209,7 +341,7 @@ suite =
             \_ ->
                 let
                     swatches =
-                        MapEditor.fromDoc Nothing (parse """{ "rows": [ "#,~*", "...." ] }""")
+                        MapEditor.fromDoc [] Nothing (parse """{ "rows": [ "#,~*", "...." ] }""")
                             |> Maybe.map .terrain
                             |> Maybe.withDefault []
 
@@ -263,14 +395,50 @@ pairs items =
             []
 
 
-kindShape : MapEditor.GroupKind -> ( String, Int, Bool )
+kindShape : MapEditor.GroupKind -> ( String, Int, String )
 kindShape kind =
     case kind of
         MapEditor.Single _ ->
-            ( "single", 1, False )
+            ( "single", 1, "-" )
 
         MapEditor.Many many ->
-            ( "many", List.length many.points, many.xyOnly )
+            ( "many", List.length many.points, addLabel many.add )
+
+
+addLabel : MapEditor.AddKind -> String
+addLabel add =
+    case add of
+        MapEditor.XyOnly ->
+            "xyOnly"
+
+        MapEditor.FromSchema ->
+            "schema"
+
+        MapEditor.NoAdd ->
+            "no"
+
+
+{-| 印(元の添字つき)と、マスに置かれていない行の数。
+-}
+marks : MapEditor.GroupKind -> ( List ( Int, ( Int, Int ) ), Int )
+marks kind =
+    case kind of
+        MapEditor.Single point ->
+            ( [ ( 0, point ) ], 0 )
+
+        MapEditor.Many many ->
+            ( many.points |> List.map (\mark -> ( mark.index, mark.at )), List.length many.offRows )
+
+
+{-| マスを見ない行(添字と見出し)。 -}
+offRows : MapEditor.GroupKind -> List ( Int, String )
+offRows kind =
+    case kind of
+        MapEditor.Single _ ->
+            []
+
+        MapEditor.Many many ->
+            many.offRows |> List.map (\row -> ( row.index, row.summary ))
 
 
 points : MapEditor.GroupKind -> List ( Int, Int )
@@ -280,4 +448,4 @@ points kind =
             [ p ]
 
         MapEditor.Many many ->
-            many.points
+            List.map .at many.points

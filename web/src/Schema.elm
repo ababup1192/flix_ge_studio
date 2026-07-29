@@ -50,6 +50,10 @@ type alias Section =
     -- タブの表示名(無ければ呼び側がキー名にフォールバック)
     , label : Maybe String
 
+    -- 説明書き。label は短い名前のまま置き、長い文はこちらへ分ける
+    -- (画面では "?" を押した時だけ開く)
+    , help : Maybe String
+
     -- 同じ group 名を書いた単一値のセクションは、1 枚のタブに束ねて表として並ぶ。
     -- 設定が数十個ある文書で「1 値 = 1 タブ」になるのを防ぐための、見せ方だけの指定。
     -- 書かなければ「基本」タブへ束ねる。セクションの種類は変えないので、
@@ -66,6 +70,9 @@ type alias Section =
 type alias Field =
     { type_ : FieldType
     , label : Maybe String
+
+    -- 説明書き(label は名前・hint は 1 行の効き目・こちらは畳んで置く長い文)
+    , help : Maybe String
 
     -- 値の単位(秒・px・度・%)。数字だけでは何を表すか読めないので、欄の右に添える
     , unit : Maybe String
@@ -154,8 +161,9 @@ schemaDecoder =
 
 sectionDecoder : D.Decoder Section
 sectionDecoder =
-    D.map4 (\label group widget body -> { body | label = label, group = group, widget = widget })
+    D.map5 (\label help group widget body -> { body | label = label, help = help, group = group, widget = widget })
         (opt "label" D.string)
+        (opt "help" D.string)
         (opt "group" D.string)
         (opt "widget" D.value)
         sectionBodyDecoder
@@ -198,7 +206,7 @@ sectionBodyDecoder =
 {-| label 抜きの Section を組む(label は sectionDecoder が後載せする)。 -}
 section : SectionKind -> List ( String, Field ) -> Section
 section kind fields =
-    { kind = kind, label = Nothing, group = Nothing, widget = Nothing, fields = fields }
+    { kind = kind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = fields }
 
 
 fieldsDecoder : D.Decoder (List ( String, Field ))
@@ -242,6 +250,7 @@ fieldDecoder =
     D.succeed Field
         |> andMap (D.field "type" (D.lazy (\_ -> fieldTypeDecoder)))
         |> andMap (opt "label" D.string)
+        |> andMap (opt "help" D.string)
         |> andMap (opt "unit" D.string)
         |> andMap (opt "hint" D.string)
         |> andMap (opt "order" D.int)

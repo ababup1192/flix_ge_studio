@@ -26,6 +26,7 @@ import Doc
 import Json.Decode as D
 import Json.Encode as E
 import Schema
+import Summary
 
 
 type alias Column =
@@ -63,6 +64,10 @@ type alias Cell =
 type alias TableRow =
     { rowId : RowId
     , idText : String
+
+    -- 中身の見当をつけるための 1 行見出し(盤面の行一覧と同じ規則)。
+    -- id を持たない list の行で、番号だけの行に何が書いてあるかを言う
+    , summary : String
     , cells : List Cell
     }
 
@@ -124,6 +129,7 @@ buildRow : List Column -> RowId -> String -> D.Value -> TableRow
 buildRow cols rowId idText entry =
     { rowId = rowId
     , idText = idText
+    , summary = Summary.line entry
     , cells = cols |> List.map (\col -> cell col.name entry)
     }
 

@@ -1,8 +1,11 @@
 module MapEditor exposing
-    ( Doc
+    ( AddKind(..)
+    , Addable
+    , Doc
     , Edit(..)
     , GroupKind(..)
     , Layer(..)
+    , Mark
     , Model
     , Msg(..)
     , Out(..)
@@ -14,6 +17,8 @@ module MapEditor exposing
     , layerAlpha
     , paletteChips
     , release
+    , select
+    , selectedRow
     , strokeActive
     , update
     , view
@@ -30,6 +35,8 @@ module MapEditor exposing
 
   - 配置(手前)… map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
     オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
+    配列に x,y を持たない行(triggers の on:enter など)が混ざっていたら、
+    その行だけマスに置かずパレットの件数に回す(編集は分割モードのフォーム)。
   - 地形 … rows に塗る文字。terrain Doc(entries[].{char,name,fill})が
     読めればそこから、無ければ rows に実際に出る文字+'.' を候補にする
     (fail-open)。色は #rrggbb ならそのまま、それ以外はパレット内の並び順から
@@ -51,6 +58,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import PixelEditor exposing (floodAt, goldenHue, paintAt, pickAt)
+import Summary
 import Svg
 import Svg.Attributes as SA
 
@@ -67,8 +75,6 @@ type alias Doc =
 
 
 {-| 配置 1 キーぶん。単体({x,y} オブジェクト)か配列かで動かし方が変わる。
-xyOnly = 要素が x,y だけ(herbs/lamps 型)。それ以外(villagers 型)は追加に
-別のフィールドが要るので、ここでは足せない(移動・削除のみ)。
 -}
 type alias PlaceGroup =
     { key : String
@@ -78,7 +84,51 @@ type alias PlaceGroup =
 
 type GroupKind
     = Single ( Int, Int )
-    | Many { xyOnly : Bool, points : List ( Int, Int ) }
+    | Many
+        { add : AddKind
+
+        -- マスを見ない行(on:enter 等)も雛形から足せるか
+        , roomAdd : Bool
+        , points : List Mark
+        , offRows : List OffRow
+        }
+
+
+{-| マスに置かれていない行(x,y を持たない行)。グリッドには描けないので、
+パレットのチップから一覧で開いて選ぶ。summary は中身の見当をつけるための
+1 行の見出し(スキーマは知らないので、値そのものから作る)。
+-}
+type alias OffRow =
+    { index : Int, summary : String }
+
+
+{-| 親が渡す「雛形から足せる配列」の宣言。room = マスを見ない行(x,y を書かない
+行)も作れるか。スキーマを読むのは親の仕事なので、ここは結果だけ受ける。
+-}
+type alias Addable =
+    { key : String, room : Bool }
+
+
+{-| 空きマスのクリックで行を足せるか。
+
+  - XyOnly … 要素が x,y だけ(herbs/lamps 型)。{x,y} の行をその場で足す(従来)。
+  - FromSchema … x,y 以外のフィールドも要る配列(triggers/props 型)だが、
+    スキーマに宣言があるので雛形(default で埋めた行)の x,y をクリック先にして足せる。
+  - NoAdd … スキーマにも無い配列。足すと欠けた行ができるので、移動・削除のみ。
+
+-}
+type AddKind
+    = XyOnly
+    | FromSchema
+    | NoAdd
+
+
+{-| 配列のうち「マスに置かれている 1 要素」。index は元の配列の添字
+(x,y を持たない行を飛ばしても書き戻し先がずれないように、詰めた順ではなく
+ドキュメントの添字をそのまま覚える)。
+-}
+type alias Mark =
+    { index : Int, at : ( Int, Int ) }
 
 
 type alias Swatch =
@@ -98,9 +148,11 @@ defaultChar =
 {-| パース済み map Doc の読み取り。rows(文字列配列・空でない)が無い文書は
 Nothing — 呼び側は従来のフォーム/コード表示へ倒す(壊さない)。
 terrainDoc は読めた terrain Doc(無ければ Nothing で rows から導く)。
+addables は「雛形から 1 行足せる配列」(スキーマに x,y つき list セクションの
+宣言がある物)。ここはスキーマを知らないので、結果だけ親から受ける。
 -}
-fromDoc : Maybe D.Value -> D.Value -> Maybe Doc
-fromDoc terrainDoc value =
+fromDoc : List Addable -> Maybe D.Value -> D.Value -> Maybe Doc
+fromDoc schemaKeys terrainDoc value =
     case D.decodeValue (D.field "rows" (D.list D.string)) value of
         Ok rows ->
             if List.isEmpty rows then
@@ -109,7 +161,7 @@ fromDoc terrainDoc value =
             else
                 Just
                     { rows = rows
-                    , groups = placeGroups value
+                    , groups = placeGroups schemaKeys value
                     , terrain = terrainSwatches terrainDoc rows
                     }
 
@@ -119,8 +171,8 @@ fromDoc terrainDoc value =
 
 {-| トップレベルから x,y 持ちを機械的に拾う。順序は JSON のキー順のまま。
 -}
-placeGroups : D.Value -> List PlaceGroup
-placeGroups value =
+placeGroups : List Addable -> D.Value -> List PlaceGroup
+placeGroups schemaKeys value =
     D.decodeValue (D.keyValuePairs D.value) value
         |> Result.withDefault []
         |> List.filterMap
@@ -132,20 +184,32 @@ placeGroups value =
                     Err _ ->
                         D.decodeValue (D.list D.value) v
                             |> Result.toMaybe
-                            |> Maybe.andThen (manyKind key)
+                            |> Maybe.andThen (manyKind schemaKeys key)
             )
 
 
-{-| 配列が「全要素 x,y 持ち・空でない」なら配置グループ。
-空配列は x,y 持ちか判別できないので拾わない(fail-open)。
+{-| オブジェクトの配列なら配置グループ。x,y を持つ要素だけをマスに置き、
+持たない行(triggers の on:enter のような、マスを見ない行)はグリッドに描かず
+一覧(offRows)に回す — 混ざっているからとグループごと落とすと、
+同じキーの他の印まで見えなくなる。
+空配列と、文字列など非オブジェクトの配列(rows 等)は配置ではない(fail-open)。
 -}
-manyKind : String -> List D.Value -> Maybe PlaceGroup
-manyKind key items =
+manyKind : List Addable -> String -> List D.Value -> Maybe PlaceGroup
+manyKind addables key items =
     let
-        points =
-            List.filterMap (\v -> D.decodeValue pointDecoder v |> Result.toMaybe) items
+        rows =
+            items
+                |> List.indexedMap
+                    (\index v ->
+                        case D.decodeValue pointDecoder v of
+                            Ok at ->
+                                Ok { index = index, at = at }
+
+                            Err _ ->
+                                Err { index = index, summary = Summary.line v }
+                    )
     in
-    if List.isEmpty points || List.length points /= List.length items then
+    if List.isEmpty items || not (List.all isObjectValue items) then
         Nothing
 
     else
@@ -153,15 +217,45 @@ manyKind key items =
             { key = key
             , kind =
                 Many
-                    { xyOnly = List.all xyOnlyValue items
-                    , points = points
+                    { add = addKind addables key items
+                    , roomAdd =
+                        addables |> List.any (\a -> a.key == key && a.room)
+                    , points = rows |> List.filterMap Result.toMaybe
+                    , offRows = rows |> List.filterMap errOf
                     }
             }
+
+
+errOf : Result e a -> Maybe e
+errOf result =
+    case result of
+        Err e ->
+            Just e
+
+        Ok _ ->
+            Nothing
+
+
+addKind : List Addable -> String -> List D.Value -> AddKind
+addKind addables key items =
+    if List.all xyOnlyValue items then
+        XyOnly
+
+    else if List.any (\a -> a.key == key) addables then
+        FromSchema
+
+    else
+        NoAdd
 
 
 pointDecoder : D.Decoder ( Int, Int )
 pointDecoder =
     D.map2 Tuple.pair (D.field "x" D.int) (D.field "y" D.int)
+
+
+isObjectValue : D.Value -> Bool
+isObjectValue v =
+    D.decodeValue (D.keyValuePairs D.value) v |> Result.toMaybe |> (/=) Nothing
 
 
 xyOnlyValue : D.Value -> Bool
@@ -353,8 +447,9 @@ type Confirm
 type Step
     = RowsStep { before : List String, after : List String }
     | MoveStep { key : String, index : Maybe Int, from : ( Int, Int ), to : ( Int, Int ) }
-    | AddStep { key : String, point : ( Int, Int ) }
-    | RemoveStep { key : String, point : ( Int, Int ), index : Int }
+    | AddStep { key : String, point : ( Int, Int ), fromSchema : Bool }
+      -- point = 消した行の印(マスを見ない行は Nothing。戻す先が無い)
+    | RemoveStep { key : String, point : Maybe ( Int, Int ), index : Int }
 
 
 type alias Model =
@@ -371,8 +466,12 @@ type alias Model =
     , terrainCh : Maybe Char
     , placeKey : Maybe String
 
-    -- 配列グループで選択中の 1 個(次のクリックで動かす対象)
-    , picked : Maybe ( String, Int )
+    -- 選択中の 1 行(次のクリックで動かす対象・インスペクタが映す行)。
+    -- 添字はドキュメント配列の添字(Mark.index)で、単体グループは Nothing
+    , picked : Maybe ( String, Maybe Int )
+
+    -- 「マスを見ない行」の一覧を開いているグループ(パレットのチップ 1 つぶん)
+    , expanded : Maybe String
     , cellPx : Int
     , hover : Maybe ( Int, Int )
 
@@ -395,6 +494,7 @@ init =
     , terrainCh = Nothing
     , placeKey = Nothing
     , picked = Nothing
+    , expanded = Nothing
     , cellPx = baseCellPx
     , hover = Nothing
     , stroke = Nothing
@@ -441,17 +541,31 @@ type Msg
     | ConfirmDismissed
     | UndoPressed
     | RedoPressed
+      -- パレットのチップ「(+部屋 N)」の開閉
+    | GroupToggled String
+      -- マスを見ない行を一覧から選ぶ(インスペクタが映す)
+    | OffRowChosen String Int
+      -- マスを見ない行(on:enter 等)を雛形から 1 行足す
+    | RoomRowPressed String
+      -- 選択中の行を消す(インスペクタの削除。確認へ進む)
+    | RemovePressed
       -- contextmenu を抑えるためだけの空打ち(右クリック=消しゴムを活かす)
     | Swallowed
 
 
 {-| 編集 1 件。親が docEdit の payload へ翻訳する:
 rows は配列丸ごと 1 本、配置は該当 path(villagers.0.x 等)。
+index はドキュメント配列の添字そのまま(印だけ詰めた順ではない)。
 -}
 type Edit
     = RowsEdited (List String)
     | PointMoved { key : String, index : Maybe Int, x : Int, y : Int }
-    | PointAdded { key : String, x : Int, y : Int }
+      -- fromSchema = スキーマの雛形(default 済みの全フィールド)から作る行か。
+      -- False は従来どおり {x,y} だけの行
+    | PointAdded { key : String, x : Int, y : Int, fromSchema : Bool }
+      -- マスを見ない行(x,y を書かない雛形)を 1 行。hadRoom = 既に同じ配列に
+      -- そういう行があったか(親が注意書きを出すため)
+    | RoomRowAdded { key : String, hadRoom : Bool }
     | PointRemoved { key : String, index : Int }
 
 
@@ -513,6 +627,44 @@ update doc msg model =
         PlaceChosen key ->
             -- 配置に効く道具はペンだけ(バケツ等は残しても迷うだけ)
             ( { model | placeKey = Just key, layer = PlaceLayer, picked = Nothing, tool = Pen }, Silent )
+
+        GroupToggled key ->
+            ( { model
+                | expanded =
+                    if model.expanded == Just key then
+                        Nothing
+
+                    else
+                        Just key
+              }
+            , Silent
+            )
+
+        OffRowChosen key index ->
+            -- マスを見ない行は動かせない(印が無い)。選ぶ=インスペクタで開く
+            ( { model | placeKey = Just key, layer = PlaceLayer, picked = Just ( key, Just index ) }, Silent )
+
+        RoomRowPressed key ->
+            case groupKind doc key of
+                Just (Many many) ->
+                    if many.roomAdd then
+                        ( { model | placeKey = Just key, layer = PlaceLayer, expanded = Just key }
+                        , Edited (RoomRowAdded { key = key, hadRoom = not (List.isEmpty many.offRows) })
+                        )
+
+                    else
+                        ( model, Silent )
+
+                _ ->
+                    ( model, Silent )
+
+        RemovePressed ->
+            case model.picked of
+                Just ( key, Just index ) ->
+                    ( { model | confirm = Just (RemovePointConfirm { key = key, index = index }) }, Silent )
+
+                _ ->
+                    ( model, Noticed "この行は消せません(動かすだけにしてあります)" )
 
         ZoomStepped dir ->
             ( { model | cellPx = zoomStep dir model.cellPx }, Silent )
@@ -625,7 +777,7 @@ erasePress doc cell model =
 
 
 {-| 配置ブラシでのクリック。単体はクリック先へ即移動。配列は
-印をクリック=選ぶ → 別セルをクリック=移動。x,y だけの配列は
+印をクリック=選ぶ → 別セルをクリック=移動。足せる配列(AddKind)は
 何も選んでいない空セルへのクリック=追加。
 -}
 placePress : Doc -> String -> ( Int, Int ) -> Model -> ( Model, Out )
@@ -635,53 +787,72 @@ placePress doc key cell model =
             ( model, Silent )
 
         Just (Single point) ->
+            -- 単体は動かすだけ。同じマスをもう一度なら「選ぶ」だけになる
+            -- (インスペクタで中身を書くための選択)
             if point == cell then
-                ( model, Silent )
+                ( { model | picked = Just ( key, Nothing ) }, Silent )
 
             else
-                commitMove { key = key, index = Nothing, from = point, to = cell } model
+                commitMove { key = key, index = Nothing, from = point, to = cell }
+                    { model | picked = Just ( key, Nothing ) }
 
         Just (Many many) ->
             let
                 hitIndex =
                     many.points
-                        |> List.indexedMap Tuple.pair
-                        |> List.filter (\( _, p ) -> p == cell)
+                        |> List.filter (\mark -> mark.at == cell)
                         |> List.head
-                        |> Maybe.map Tuple.first
+                        |> Maybe.map .index
             in
             case ( model.picked, hitIndex ) of
                 ( _, Just index ) ->
                     -- 印の上: 選ぶ(同じ印をもう一度なら選択解除)
                     ( { model
                         | picked =
-                            if model.picked == Just ( key, index ) then
+                            if model.picked == Just ( key, Just index ) then
                                 Nothing
 
                             else
-                                Just ( key, index )
+                                Just ( key, Just index )
                       }
                     , Silent
                     )
 
-                ( Just ( pickedKey, index ), Nothing ) ->
+                ( Just ( pickedKey, Just index ), Nothing ) ->
                     if pickedKey == key then
-                        case many.points |> List.drop index |> List.head of
-                            Just from ->
-                                commitMove { key = key, index = Just index, from = from, to = cell } model
+                        case many.points |> List.filter (\mark -> mark.index == index) |> List.head of
+                            Just mark ->
+                                commitMove { key = key, index = Just index, from = mark.at, to = cell } model
 
                             Nothing ->
+                                -- 印を持たない行(マスを見ない行)を選んでいた: 解除だけ
                                 ( { model | picked = Nothing }, Silent )
 
                     else
                         ( { model | picked = Nothing }, Silent )
 
-                ( Nothing, Nothing ) ->
-                    if many.xyOnly then
-                        commitAdd key cell model
+                ( Just ( _, Nothing ), Nothing ) ->
+                    ( { model | picked = Nothing }, Silent )
 
-                    else
-                        ( model, Noticed "動かしたい印をクリックで選んでください" )
+                ( Nothing, Nothing ) ->
+                    case many.add of
+                        XyOnly ->
+                            -- 続けて何個も置けるよう、足した行は選ばない(従来どおり)
+                            commitAdd { key = key, point = cell, fromSchema = False, select = Nothing } model
+
+                        FromSchema ->
+                            -- 雛形から生まれた行は中身をフォームで書くので、
+                            -- どれが生まれたか分かるよう選んでおく(添字は配列末尾)
+                            commitAdd
+                                { key = key
+                                , point = cell
+                                , fromSchema = True
+                                , select = Just (List.length many.points + List.length many.offRows)
+                                }
+                                model
+
+                        NoAdd ->
+                            ( model, Noticed "動かしたい印をクリックで選んでください" )
 
 
 commitMove : { key : String, index : Maybe Int, from : ( Int, Int ), to : ( Int, Int ) } -> Model -> ( Model, Out )
@@ -694,32 +865,49 @@ commitMove move model =
     )
 
 
-commitAdd : String -> ( Int, Int ) -> Model -> ( Model, Out )
-commitAdd key (( x, y ) as point) model =
+commitAdd : { key : String, point : ( Int, Int ), fromSchema : Bool, select : Maybe Int } -> Model -> ( Model, Out )
+commitAdd add model =
+    let
+        ( x, y ) =
+            add.point
+    in
     ( { model
-        | undo = pushHistory (AddStep { key = key, point = point }) model.undo
+        | undo = pushHistory (AddStep { key = add.key, point = add.point, fromSchema = add.fromSchema }) model.undo
         , redo = []
+        , picked = add.select |> Maybe.map (\i -> ( add.key, Just i ))
       }
-    , Edited (PointAdded { key = key, x = x, y = y })
+    , Edited (PointAdded { key = add.key, x = x, y = y, fromSchema = add.fromSchema })
     )
 
 
+{-| 配列 1 行の削除。印のある行も、マスを見ない行(インスペクタからの削除)も
+同じ道を通る。文書に無い添字なら何もしない。
+-}
 commitRemove : Doc -> { key : String, index : Int } -> Model -> ( Model, Out )
 commitRemove doc target model =
-    case groupPoints doc target.key |> List.drop target.index |> List.head of
-        Just point ->
-            ( { model
-                | undo = pushHistory (RemoveStep { key = target.key, point = point, index = target.index }) model.undo
-                , redo = []
+    let
+        point =
+            groupMarks doc target.key
+                |> List.filter (\mark -> mark.index == target.index)
+                |> List.head
+                |> Maybe.map .at
 
-                -- 添字がずれるので選択は持ち越さない
-                , picked = Nothing
-              }
-            , Edited (PointRemoved { key = target.key, index = target.index })
-            )
+        isRoomRow =
+            groupOffRows doc target.key |> List.any (\row -> row.index == target.index)
+    in
+    if point == Nothing && not isRoomRow then
+        ( model, Silent )
 
-        Nothing ->
-            ( model, Silent )
+    else
+        ( { model
+            | undo = pushHistory (RemoveStep { key = target.key, point = point, index = target.index }) model.undo
+            , redo = []
+
+            -- 添字がずれるので選択は持ち越さない
+            , picked = Nothing
+          }
+        , Edited (PointRemoved { key = target.key, index = target.index })
+        )
 
 
 startStroke : Char -> ( Int, Int ) -> Doc -> Model -> Model
@@ -843,27 +1031,53 @@ applyStep doc isUndo step model =
                 removeLast doc add.key m1
 
             else
-                ( m1, Edited (PointAdded { key = add.key, x = Tuple.first add.point, y = Tuple.second add.point }) )
+                ( m1
+                , Edited
+                    (PointAdded
+                        { key = add.key
+                        , x = Tuple.first add.point
+                        , y = Tuple.second add.point
+                        , fromSchema = add.fromSchema
+                        }
+                    )
+                )
 
         RemoveStep removed ->
             if isUndo then
-                ( m1, Edited (PointAdded { key = removed.key, x = Tuple.first removed.point, y = Tuple.second removed.point }) )
+                -- 消した行の中身までは覚えていないので、戻るのは印(x,y)だけ。
+                -- 雛形から生まれる配列なら、欠けた行にならないよう雛形で戻す
+                case removed.point of
+                    Just ( x, y ) ->
+                        ( m1
+                        , Edited
+                            (PointAdded
+                                { key = removed.key
+                                , x = x
+                                , y = y
+                                , fromSchema = addKindOf doc removed.key == FromSchema
+                                }
+                            )
+                        )
+
+                    Nothing ->
+                        -- マスを見ない行は印が無く、戻す手がかりを持っていない
+                        ( m1, Noticed "マスを見ない行は戻せません(中身を覚えていません)" )
 
             else
                 removeLast doc removed.key m1
 
 
+{-| 追加は配列末尾へ入るので、その取り消しで消すのは印の中で添字が一番後ろの物
+(x,y を持たない行には手を出さない)。
+-}
 removeLast : Doc -> String -> Model -> ( Model, Out )
 removeLast doc key model =
-    let
-        len =
-            List.length (groupPoints doc key)
-    in
-    if len <= 0 then
-        ( model, Silent )
+    case groupMarks doc key |> List.map .index |> List.maximum of
+        Just index ->
+            ( model, Edited (PointRemoved { key = key, index = index }) )
 
-    else
-        ( model, Edited (PointRemoved { key = key, index = len - 1 }) )
+        Nothing ->
+            ( model, Silent )
 
 
 pushHistory : Step -> List Step -> List Step
@@ -1051,11 +1265,51 @@ groupKind doc key =
         |> Maybe.map .kind
 
 
-groupPoints : Doc -> String -> List ( Int, Int )
-groupPoints doc key =
-    groupKind doc key
-        |> Maybe.map kindPoints
-        |> Maybe.withDefault []
+addKindOf : Doc -> String -> AddKind
+addKindOf doc key =
+    case groupKind doc key of
+        Just (Many many) ->
+            many.add
+
+        _ ->
+            NoAdd
+
+
+{-| そのキーの、マスに置かれている要素(元の添字つき)。単体は添字を持たないので空。
+-}
+groupMarks : Doc -> String -> List Mark
+groupMarks doc key =
+    case groupKind doc key of
+        Just (Many many) ->
+            many.points
+
+        _ ->
+            []
+
+
+groupOffRows : Doc -> String -> List OffRow
+groupOffRows doc key =
+    case groupKind doc key of
+        Just (Many many) ->
+            many.offRows
+
+        _ ->
+            []
+
+
+{-| いま選んでいる 1 行(キーと、配列なら添字)。親のインスペクタが映す行 —
+どの行を書いているかの正本はここ 1 つに置く。
+-}
+selectedRow : Model -> Maybe ( String, Maybe Int )
+selectedRow model =
+    model.picked
+
+
+{-| 親から選択を張り直す(足した行をそのままインスペクタで開くため)。
+-}
+select : ( String, Maybe Int ) -> Model -> Model
+select picked model =
+    { model | picked = Just picked }
 
 
 kindPoints : GroupKind -> List ( Int, Int )
@@ -1065,7 +1319,7 @@ kindPoints kind =
             [ point ]
 
         Many many ->
-            many.points
+            List.map .at many.points
 
 
 allPoints : PlaceGroup -> List ( Int, Int )
@@ -1079,19 +1333,15 @@ allPoints group =
 pointAt : Doc -> ( Int, Int ) -> Maybe ( String, Maybe Int )
 pointAt doc cell =
     let
-        hits toIndex points key =
-            points
-                |> List.indexedMap Tuple.pair
-                |> List.filter (\( _, p ) -> p == cell)
-                |> List.map (\( i, _ ) -> ( key, toIndex i ))
-
         manyHits =
             doc.groups
                 |> List.concatMap
                     (\g ->
                         case g.kind of
                             Many many ->
-                                hits Just many.points g.key
+                                many.points
+                                    |> List.filter (\mark -> mark.at == cell)
+                                    |> List.map (\mark -> ( g.key, Just mark.index ))
 
                             Single _ ->
                                 []
@@ -1158,18 +1408,21 @@ zoomStep dir current =
 -- 表示
 
 
-view : Doc -> Model -> Html Msg
-view doc model =
+{-| toSelf はここの Msg を親の Msg へ包む物、inspector は「選んだ 1 行のフォーム」
+(スキーマを読む親が描く。ここは中身を知らず、右ペインの置き場所だけ用意する)。
+-}
+view : (Msg -> msg) -> List (Html msg) -> Doc -> Model -> Html msg
+view toSelf inspector doc model =
     div [ HA.class "map-editor relative flex min-w-0 flex-1 flex-col bg-app" ]
-        [ viewTopStatus doc model
+        [ Html.map toSelf (viewTopStatus doc model)
         , div [ HA.class "relative flex min-h-0 min-w-0 flex-1" ]
-            ([ viewTools doc model
-             , viewCenter doc model
-             , viewSide doc model
+            ([ Html.map toSelf (viewTools doc model)
+             , Html.map toSelf (viewCenter doc model)
+             , viewSide toSelf inspector doc model
              ]
                 ++ (case model.confirm of
                         Just confirm ->
-                            [ viewConfirm confirm ]
+                            [ Html.map toSelf (viewConfirm confirm) ]
 
                         Nothing ->
                             []
@@ -1408,18 +1661,18 @@ viewGroupMarks : Model -> PlaceGroup -> List (Html Msg)
 viewGroupMarks model group =
     case group.kind of
         Single point ->
-            [ viewMark model group.key False point ]
+            [ viewMark model group.key (model.picked == Just ( group.key, Nothing )) point ]
 
         Many many ->
             many.points
-                |> List.indexedMap
-                    (\i point ->
-                        viewMark model group.key (model.picked == Just ( group.key, i )) point
+                |> List.map
+                    (\mark ->
+                        viewMark model group.key (model.picked == Just ( group.key, Just mark.index )) mark.at
                     )
 
 
 viewMark : Model -> String -> Bool -> ( Int, Int ) -> Html Msg
-viewMark model key selected ( x, y ) =
+viewMark model key isPicked ( x, y ) =
     div
         [ HA.class "pointer-events-none absolute flex items-center justify-center"
         , HA.style "left" (String.fromInt (x * model.cellPx) ++ "px")
@@ -1430,7 +1683,7 @@ viewMark model key selected ( x, y ) =
         [ span
             [ HA.classList
                 [ ( "flex h-4 w-4 items-center justify-center rounded-full border bg-panel font-mono text-[9px] leading-none text-ink", True )
-                , ( "border-accent ring-2 ring-accent/70", selected )
+                , ( "border-accent ring-2 ring-accent/70", isPicked )
                 ]
             , HA.style "border-color" (markCss key)
             ]
@@ -1525,19 +1778,29 @@ viewStatus model rows =
         ]
 
 
-{-| 右: レイヤーパネル(上=配置・手前、下=地形)+ 選択中レイヤーのパレット。
+{-| 右ペイン: レイヤーパネル(上=配置・手前、下=地形)/ 選択中レイヤーのパレット /
+インスペクタ(親が描く「選んだ 1 行のフォーム」)。下 2 つは 1 本の
+スクロール域に入れる — 縦に長くなっても、区切りは既存の枠線と見出しで見せる。
 -}
-viewSide : Doc -> Model -> Html Msg
-viewSide doc model =
+viewSide : (Msg -> msg) -> List (Html msg) -> Doc -> Model -> Html msg
+viewSide toSelf inspector doc model =
     div [ HA.class "map-side flex w-56 shrink-0 flex-col border-l border-edge bg-panel" ]
-        [ div [ HA.class "border-b border-edge pb-2" ]
-            [ paneTitle "レイヤー"
-            , viewLayerRow model PlaceLayer
-            , viewLayerRow model TerrainLayer
-            ]
-        , paneTitle (layerName model.layer)
-        , div [ HA.class "map-palette flex-1 overflow-y-auto px-2 pb-3" ]
-            [ viewPalette doc model ]
+        [ Html.map toSelf
+            (div [ HA.class "border-b border-edge pb-2" ]
+                [ paneTitle "レイヤー"
+                , viewLayerRow model PlaceLayer
+                , viewLayerRow model TerrainLayer
+                ]
+            )
+        , div [ HA.class "flex min-h-0 flex-1 flex-col overflow-y-auto" ]
+            (Html.map toSelf
+                (div []
+                    [ paneTitle (layerName model.layer)
+                    , div [ HA.class "map-palette px-2 pb-3" ] [ viewPalette doc model ]
+                    ]
+                )
+                :: inspector
+            )
         ]
 
 
@@ -1632,6 +1895,10 @@ viewSwatch doc model swatch =
         ]
 
 
+{-| 配置チップ 1 つ。マスに置かれた印の数と、マスを見ない行の数(+部屋 N)を出す。
+「+部屋 N」は押すと一覧が開き、行を選ぶとインスペクタで中身を書ける。
+雛形からその種の行を作れる配列には「＋ 部屋の行」も添える。
+-}
 viewPlaceEntry : Doc -> Model -> PlaceGroup -> Html Msg
 viewPlaceEntry doc model group =
     let
@@ -1640,32 +1907,107 @@ viewPlaceEntry doc model group =
 
         count =
             List.length (allPoints group)
+
+        ( offRows, roomAdd ) =
+            case group.kind of
+                Many many ->
+                    ( many.offRows, many.roomAdd )
+
+                Single _ ->
+                    ( [], False )
+
+        open =
+            model.expanded == Just group.key
+
+        countText =
+            case group.kind of
+                Single _ ->
+                    ""
+
+                Many _ ->
+                    String.fromInt count
+    in
+    div [ HA.class "place-entry" ]
+        ([ button
+            [ HA.classList
+                [ ( "flex w-full cursor-pointer items-center gap-2 rounded border px-2 py-1 text-left text-xs", True )
+                , ( "border-accent bg-accent/10 text-accent", selected )
+                , ( "border-edge text-ink-soft hover:border-ink-faint hover:text-ink", not selected )
+                ]
+            , HA.title group.key
+            , HE.onClick (PlaceChosen group.key)
+            ]
+            [ span
+                [ HA.class "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-panel font-mono text-[9px] leading-none text-ink"
+                , HA.style "border-color" (markCss group.key)
+                ]
+                [ text (String.left 1 group.key) ]
+            , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] [ text group.key ]
+            , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ] [ text countText ]
+            ]
+         ]
+            ++ (if List.isEmpty offRows then
+                    []
+
+                else
+                    [ button
+                        [ HA.class "place-room-toggle mt-0.5 flex w-full cursor-pointer items-center gap-1 px-2 text-left text-[10px] text-ink-faint hover:text-ink"
+                        , HA.title "マスを見ない行(on:enter など)。えらぶとこの下のフォームで書けます"
+                        , HE.onClick (GroupToggled group.key)
+                        ]
+                        [ text
+                            ((if open then
+                                "▾ "
+
+                              else
+                                "▸ "
+                             )
+                                ++ "+部屋 "
+                                ++ String.fromInt (List.length offRows)
+                            )
+                        ]
+                    ]
+               )
+            ++ (if open then
+                    offRows |> List.map (viewOffRow model group.key)
+
+                else
+                    []
+               )
+            ++ (if roomAdd then
+                    [ button
+                        [ HA.class "place-room-add mt-0.5 ml-2 cursor-pointer text-[10px] text-ink-faint hover:text-accent"
+                        , HA.title "マスを見ない行(on:enter)を 1 行足す。部屋に入った拍の言葉に使います"
+                        , HE.onClick (RoomRowPressed group.key)
+                        ]
+                        [ text "＋ 部屋の行(enter)" ]
+                    ]
+
+                else
+                    []
+               )
+        )
+
+
+{-| マスを見ない行 1 行(一覧の中身)。見出しは値から作った要約。
+-}
+viewOffRow : Model -> String -> OffRow -> Html Msg
+viewOffRow model key row =
+    let
+        isPicked =
+            model.picked == Just ( key, Just row.index )
     in
     button
         [ HA.classList
-            [ ( "flex cursor-pointer items-center gap-2 rounded border px-2 py-1 text-left text-xs", True )
-            , ( "border-accent bg-accent/10 text-accent", selected )
-            , ( "border-edge text-ink-soft hover:border-ink-faint hover:text-ink", not selected )
+            [ ( "place-room-row mt-0.5 flex w-full cursor-pointer items-center gap-1 rounded border px-2 py-0.5 text-left text-[10px]", True )
+            , ( "border-accent bg-accent/10 text-accent", isPicked )
+            , ( "border-edge text-ink-soft hover:border-ink-faint hover:text-ink", not isPicked )
             ]
-        , HA.title group.key
-        , HE.onClick (PlaceChosen group.key)
+        , HA.title row.summary
+        , HE.onClick (OffRowChosen key row.index)
         ]
-        [ span
-            [ HA.class "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-panel font-mono text-[9px] leading-none text-ink"
-            , HA.style "border-color" (markCss group.key)
-            ]
-            [ text (String.left 1 group.key) ]
-        , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] [ text group.key ]
-        , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
-            [ text
-                (case group.kind of
-                    Single _ ->
-                        ""
-
-                    Many _ ->
-                        String.fromInt count
-                )
-            ]
+        [ span [ HA.class "shrink-0 font-mono text-ink-faint" ] [ text ("#" ++ String.fromInt row.index) ]
+        , span [ HA.class "min-w-0 flex-1 truncate" ] [ text row.summary ]
         ]
 
 
@@ -1675,7 +2017,7 @@ viewConfirm confirm =
         ( message, okLabel ) =
             case confirm of
                 RemovePointConfirm target ->
-                    ( "「" ++ target.key ++ "」の印をひとつ削除します。よろしいですか?", "削除する" )
+                    ( "「" ++ target.key ++ "」の行をひとつ削除します。よろしいですか?", "削除する" )
 
                 ShrinkConfirm Cols ->
                     ( "右端の列は空ではありません。消しますか?", "消す" )

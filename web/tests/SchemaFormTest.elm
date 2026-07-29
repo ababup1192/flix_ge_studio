@@ -28,7 +28,8 @@ schemaFixture =
     "spawns": {
       "kind": "list",
       "fields": {
-        "route": { "type": {"ref": "routes"}, "label": "軌道", "order": 2, "required": true },
+        "route": { "type": {"ref": "routes"}, "label": "軌道", "order": 2, "required": true,
+                   "help": "軌道は routes で定義した動きの名前。" },
         "atX":   { "type": "int", "order": 1, "min": 0 },
         "pos":   { "type": "vec2", "order": 3 },
         "note":  { "type": "text" },
@@ -88,7 +89,7 @@ sectionOf key =
         |> List.filter (\( k, _ ) -> k == key)
         |> List.head
         |> Maybe.map Tuple.second
-        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, group = Nothing, widget = Nothing, fields = [] }
+        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = [] }
 
 
 rowsIn : String -> D.Value -> List SchemaForm.Row
@@ -135,6 +136,17 @@ suite =
                         , ( "pos", "pos", False )
                         , ( "boss", "boss", False )
                         , ( "note", "note", False )
+                        ]
+        , test "help — 書いた欄だけ行に載る(書いていない欄は Nothing のまま)" <|
+            \_ ->
+                spawnRows
+                    |> List.map (\r -> ( r.name, r.help ))
+                    |> Expect.equal
+                        [ ( "atX", Nothing )
+                        , ( "route", Just "軌道は routes で定義した動きの名前。" )
+                        , ( "pos", Nothing )
+                        , ( "boss", Nothing )
+                        , ( "note", Nothing )
                         ]
         , test "ref — 選択肢は参照先 catalog のエントリ名(文書順)・現在値が選択される" <|
             \_ ->
@@ -316,4 +328,51 @@ suite =
                         )
                     |> Expect.equal
                         (Just [ GridControl { text = Just "##T##\n#...#", lineCount = 2 } ])
+        , test "type list(text) — 文字列の列は行の並び。値が無ければ空・文字列でない列は生 JSON へ" <|
+            \_ ->
+                let
+                    saysControls entry =
+                        linesSection
+                            |> Maybe.map
+                                (\sec ->
+                                    SchemaForm.rows { doc = E.null, textures = [], others = [] } sec entry
+                                        |> List.map .control
+                                )
+                in
+                ( saysControls (E.object [ ( "says", E.list E.string [ "あれ……", "" ] ) ])
+                , saysControls (E.object [])
+                , saysControls (E.object [ ( "says", E.list E.int [ 1, 2 ] ) ])
+                )
+                    |> Expect.equal
+                        ( Just [ ListTextControl [ "あれ……", "" ] ]
+                        , Just [ ListTextControl [] ]
+                        , Just [ RawJsonControl "[1,2]" ]
+                        )
+        , test "文字列の列の 1 操作 — 差し替え・追加・削除・入れ替え(空行は間引かない・範囲外は何もしない)" <|
+            \_ ->
+                let
+                    items =
+                        [ "a", "", "c" ]
+
+                    apply edit =
+                        SchemaForm.applyListEdit edit items
+                in
+                ( ( apply (SchemaForm.SetLine 1 "b"), apply SchemaForm.AddLine )
+                , ( apply (SchemaForm.RemoveLine 0), apply (SchemaForm.MoveLine 2 -1) )
+                , ( apply (SchemaForm.MoveLine 0 -1), apply (SchemaForm.SetLine 9 "x") )
+                )
+                    |> Expect.equal
+                        ( ( [ "a", "b", "c" ], [ "a", "", "c", "" ] )
+                        , ( [ "", "c" ], [ "a", "c", "" ] )
+                        , ( items, items )
+                        )
         ]
+
+
+{-| 文字列の列(台詞など)1 フィールドだけのセクション。 -}
+linesSection : Maybe Schema.Section
+linesSection =
+    """{"sections": {"trigger": {"kind": "record", "fields": {"says": {"type": {"list": "text"}}}}}}"""
+        |> Schema.decodeString
+        |> Result.toMaybe
+        |> Maybe.andThen (\s -> s.sections |> List.head |> Maybe.map Tuple.second)
