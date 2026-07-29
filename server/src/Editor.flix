@@ -147,6 +147,30 @@ mod Editor {
             case ("GET", "/resources") => withProject(selection, exchange, dir -> handleResources(dir, exchange))
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
             case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, gamePorts, readBody(exchange), exchange))
+            // ファイルそのものへの動詞 (新規 / 複製 / 名前を変える / 消す)。
+            // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
+            // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
+            // 横断検索。宣言済み Doc の文字列値だけを単純一致で探す (大きな生成物は名前だけ)
+            case ("GET", "/search") => withProject(selection, exchange, dir -> {
+                let (status, json) = Search.respond(dir, params);
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/file/new") => withProject(selection, exchange, dir -> {
+                let (status, json) = FileVerbs.create(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/file/duplicate") => withProject(selection, exchange, dir -> {
+                let (status, json) = FileVerbs.duplicate(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/file/rename") => withProject(selection, exchange, dir -> {
+                let (status, json) = FileVerbs.rename(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/file/delete") => withProject(selection, exchange, dir -> {
+                let (status, json) = FileVerbs.delete(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("POST", "/preview/ui") => withProject(selection, exchange, dir -> {
                 let (status, json) = PreviewUi.respond(dir, caches, readBody(exchange));
                 sendJson(status, json, exchange)

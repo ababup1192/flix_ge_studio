@@ -21,6 +21,7 @@ module Atelier exposing
     , autoCopyName
     , cleanReason
     , copyDone
+    , toStorehouse
     , copyFailed
     , copyRetry
     , createAnchored
@@ -3086,3 +3087,11 @@ civilFromDays z0 =
     , m
     , d
     )
+
+
+{-| 調整(エディタ)の画面へ移る。ホームや入口から「このファイルを開く」と
+言われた時に、開く前の場所を整える口(開くのは Main の仕事)。
+-}
+toStorehouse : Model -> Model
+toStorehouse model =
+    switchSection SectionStorehouse model

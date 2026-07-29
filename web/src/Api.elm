@@ -17,6 +17,8 @@ module Api exposing
     , ResourceFile
     , ResourceGroup
     , Resources
+    , SearchHit
+    , SearchResults
     , SpriteColors
     , changesDecoder
     , envelopeDecoder
@@ -31,12 +33,14 @@ module Api exposing
     , putFileResultDecoder
     , resourcesDecoder
     , runningGamesDecoder
+    , searchResultsDecoder
     , spriteColorsDecoder
     )
 
 {-| editor_server 応答のデコーダ集。サーバが契約の正で、ずれたらこちらを直す。 -}
 
 import Dict exposing (Dict)
+import Edit exposing (Seg(..))
 import Json.Decode as D
 import Set exposing (Set)
 
@@ -209,6 +213,10 @@ filesDecoder =
 -}
 type alias ResourceGroup =
     { id : String
+
+    -- 宣言の照合パターン("assets/*.map.json" 等)。新しいファイルの置き場と
+    -- 名前の決まりでもあるので、一覧を出す側だけでなく「+ 新規」も見る
+    , pattern : String
     , title : Maybe String
     , plugin : Maybe String
     , files : List ResourceFile
@@ -265,8 +273,9 @@ dashboardDecoder =
 
 resourceGroupDecoder : D.Decoder ResourceGroup
 resourceGroupDecoder =
-    D.map4 ResourceGroup
+    D.map5 ResourceGroup
         (D.field "id" D.string)
+        (withDefault "" (D.field "pattern" D.string))
         (opt "title" D.string)
         (opt "plugin" D.string)
         (D.field "files" (D.list resourceFileDecoder))
@@ -470,3 +479,50 @@ envelopeDecoder =
         (D.field "kind" D.string)
         (D.field "ok" D.bool)
         (D.field "body" D.value)
+
+
+{-| GET /search の当たり 1 件。path は文書の中の場所(キーと添字が混ざる)、
+value はその文字列値まるごと(置換はこれを元に組む)、excerpt は当たりの前後。
+-}
+type alias SearchHit =
+    { file : String
+    , path : List Seg
+    , value : String
+    , excerpt : String
+    }
+
+
+{-| files はファイル名が一致したパス(中身は見ていない)、hits は中身の当たり。
+total / filesTotal は打ち切り前の総数で、truncated が真なら「他 N 件」を出す。
+-}
+type alias SearchResults =
+    { files : List String
+    , filesTotal : Int
+    , hits : List SearchHit
+    , total : Int
+    , truncated : Bool
+    }
+
+
+searchResultsDecoder : D.Decoder SearchResults
+searchResultsDecoder =
+    D.map5 SearchResults
+        (withDefault [] (D.field "files" (D.list D.string)))
+        (withDefault 0 (D.field "filesTotal" D.int))
+        (D.field "results" (D.list searchHitDecoder))
+        (withDefault 0 (D.field "total" D.int))
+        (withDefault False (D.field "truncated" D.bool))
+
+
+searchHitDecoder : D.Decoder SearchHit
+searchHitDecoder =
+    D.map4 SearchHit
+        (D.field "file" D.string)
+        (D.field "path" (D.list segDecoder))
+        (withDefault "" (D.field "value" D.string))
+        (withDefault "" (D.field "excerpt" D.string))
+
+
+segDecoder : D.Decoder Seg
+segDecoder =
+    D.oneOf [ D.map KeySeg D.string, D.map IdxSeg D.int ]

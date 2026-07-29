@@ -56,6 +56,10 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.SfxWaitTick info.seq)
 
+        Effect.SearchDebounce info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.SearchDebounced info.seq)
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 

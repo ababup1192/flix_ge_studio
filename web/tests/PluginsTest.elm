@@ -16,6 +16,7 @@ import Test exposing (Test, describe, test)
 levelGroup : Api.ResourceGroup
 levelGroup =
     { id = "level"
+    , pattern = "assets/*.level.json"
     , title = Just "レベル"
     , plugin = Just "shooterLevel"
     , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json" } ]
@@ -26,6 +27,7 @@ levelGroup =
 plainGroup : Api.ResourceGroup
 plainGroup =
     { id = "misc"
+    , pattern = "assets/*.misc.json"
     , title = Nothing
     , plugin = Nothing
     , files = [ { path = "assets/player.hitbox.json", schema = Nothing } ]
@@ -36,6 +38,7 @@ plainGroup =
 futureGroup : Api.ResourceGroup
 futureGroup =
     { id = "board"
+    , pattern = "assets/*.board.json"
     , title = Nothing
     , plugin = Just "puzzleBoard"
     , files = [ { path = "assets/board.json", schema = Nothing } ]

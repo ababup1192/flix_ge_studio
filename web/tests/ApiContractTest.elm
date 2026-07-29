@@ -202,6 +202,7 @@ suite =
                             (Ok
                                 (Just
                                     { id = "level"
+                                    , pattern = "assets/level.json"
                                     , title = Just "レベル"
                                     , plugin = Just "shooterLevel"
                                     , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json" } ]
@@ -215,6 +216,7 @@ suite =
                         |> Expect.equal
                             (Ok
                                 [ { id = "misc"
+                                  , pattern = "assets/*.hitbox.json"
                                   , title = Nothing
                                   , plugin = Nothing
                                   , files = [ { path = "assets/player.hitbox.json", schema = Nothing } ]

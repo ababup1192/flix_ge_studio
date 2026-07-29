@@ -20,6 +20,14 @@ payloadText payload =
     opName payload.op ++ " " ++ Edit.pathKey payload.path ++ " = " ++ E.encode 0 payload.value
 
 
+{-| 手の中身(ファイルをまたぐ列)を 1 行に。単一ファイルの手は 1 件だけ並ぶ。 -}
+stepsText : List EditHistory.Step -> String
+stepsText steps =
+    steps
+        |> List.map (\step -> step.file ++ ": " ++ payloadText step.payload)
+        |> String.join " / "
+
+
 opName : Op -> String
 opName op =
     case op of
@@ -142,12 +150,12 @@ suite =
                         Just ( first, afterFirst ) ->
                             case EditHistory.undo afterFirst of
                                 Just ( second, afterSecond ) ->
-                                    ( List.map payloadText [ first, second ]
+                                    ( List.map stepsText [ first, second ]
                                     , EditHistory.depth afterSecond
                                     , EditHistory.undo afterSecond |> Maybe.map (\_ -> "まだ戻せる")
                                     )
                                         |> Expect.equal
-                                            ( [ "set b = 10", "set a = 1" ], ( 0, 2 ), Nothing )
+                                            ( [ "level.json: set b = 10", "level.json: set a = 1" ], ( 0, 2 ), Nothing )
 
                                 Nothing ->
                                     Expect.fail "2 手目が戻せない"
@@ -160,8 +168,8 @@ suite =
                         |> pushed "level.json" Nothing (set [ KeySeg "a" ] (E.int 2)) (EditHistory.Value (Just (E.int 1)))
                         |> EditHistory.undo
                         |> Maybe.andThen (\( _, h ) -> EditHistory.redo h)
-                        |> Maybe.map (\( payload, h ) -> ( payloadText payload, EditHistory.depth h ))
-                        |> Expect.equal (Just ( "set a = 2", ( 1, 0 ) ))
+                        |> Maybe.map (\( steps, h ) -> ( stepsText steps, EditHistory.depth h ))
+                        |> Expect.equal (Just ( "level.json: set a = 2", ( 1, 0 ) ))
             , test "戻した後に新しい手を積むと、やり直しの先は消える(枝分かれを持たない)" <|
                 \() ->
                     EditHistory.empty
@@ -181,9 +189,9 @@ suite =
                             EditHistory.empty |> drag 61 60 |> drag 62 61 |> drag 63 62
                     in
                     ( EditHistory.depth history
-                    , EditHistory.undo history |> Maybe.map (Tuple.first >> payloadText)
+                    , EditHistory.undo history |> Maybe.map (Tuple.first >> stepsText)
                     )
-                        |> Expect.equal ( ( 1, 0 ), Just "set speed = 60" )
+                        |> Expect.equal ( ( 1, 0 ), Just "level.json: set speed = 60" )
             , test "group が違えば別の手(畳まない)" <|
                 \() ->
                     EditHistory.empty
@@ -214,6 +222,62 @@ suite =
                         |> Maybe.map EditHistory.cutOnExternalChange
                         |> Maybe.map (\h -> ( EditHistory.depth h, EditHistory.canUndo h, EditHistory.canRedo h ))
                         |> Expect.equal (Just ( ( 0, 0 ), False, False ))
+            ]
+        , describe "ファイルをまたぐ 1 手(横断置換)"
+            [ test "1 手で全ファイルぶんが戻る(戻す順は当てた順の逆)" <|
+                \() ->
+                    let
+                        step file path old new =
+                            { file = file
+                            , payload = set [ KeySeg path ] (E.string new)
+                            , before = EditHistory.Value (Just (E.string old))
+                            }
+
+                        history =
+                            EditHistory.empty
+                                |> EditHistory.pushCross
+                                    { file = "a.json"
+                                    , label = "置換"
+                                    , steps =
+                                        [ step "a.json" "title" "旧" "新"
+                                        , step "b.json" "name" "旧" "新"
+                                        ]
+                                    }
+                    in
+                    ( EditHistory.depth history
+                    , EditHistory.undo history |> Maybe.map (Tuple.first >> stepsText)
+                    )
+                        |> Expect.equal
+                            ( ( 1, 0 )
+                            , Just "b.json: set name = \"旧\" / a.json: set title = \"旧\""
+                            )
+            , test "やり直すと、当てた順のまま同じ編集が並ぶ" <|
+                \() ->
+                    EditHistory.empty
+                        |> EditHistory.pushCross
+                            { file = "a.json"
+                            , label = "置換"
+                            , steps =
+                                [ { file = "a.json", payload = set [ KeySeg "t" ] (E.string "新"), before = EditHistory.Value (Just (E.string "旧")) }
+                                , { file = "b.json", payload = set [ KeySeg "t" ] (E.string "新"), before = EditHistory.Value (Just (E.string "旧")) }
+                                ]
+                            }
+                        |> EditHistory.undo
+                        |> Maybe.andThen (\( _, h ) -> EditHistory.redo h)
+                        |> Maybe.map (Tuple.first >> stepsText)
+                        |> Expect.equal (Just "a.json: set t = \"新\" / b.json: set t = \"新\"")
+            , test "逆を組めない中身が混ざった横断手は積まない(履歴ごと切る)" <|
+                \() ->
+                    EditHistory.empty
+                        |> pushed "a.json" Nothing (set [ KeySeg "x" ] (E.int 1)) (EditHistory.Value (Just (E.int 0)))
+                        |> EditHistory.pushCross
+                            { file = "a.json"
+                            , label = "置換"
+                            , steps =
+                                [ { file = "a.json", payload = remove [ KeySeg "s", IdxSeg 0 ], before = EditHistory.Value Nothing } ]
+                            }
+                        |> EditHistory.depth
+                        |> Expect.equal ( 0, 0 )
             ]
         , test "batchPaths — BatchSet の中身から、旧値を控えるべき場所が読める" <|
             \() ->

@@ -23,9 +23,11 @@ import Dict exposing (Dict)
 import Doc
 import Draft
 import Edit exposing (Op(..), Seg(..), encodeSeg, pathKey)
+import EditHistory
 import Effect exposing (Effect)
 import EntryOps
 import EntryTable
+import FileVerbs
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -44,10 +46,14 @@ import SfxEditor
 import Plugins
 import Progress
 import Refs
+import ContextMenu
+import CrossEdit
 import SceneView
+import SearchView
 import Schema
 import SchemaForm
 import Selection exposing (EntrySel(..))
+import Skeleton
 import Set exposing (Set)
 import Sources
 import Time
@@ -544,6 +550,32 @@ type alias Model =
     -- フォーカス中フィールドの打ちかけ(Nothing = 打ちかけ無し)
     , activeDraft : Maybe ActiveDraft
 
+    -- 横断検索・置換のパネルと、置換の進行(開いていないファイルへの直列書き戻し)
+    , search : SearchView.Model
+    , crossEdit : Maybe CrossEdit.Run
+
+    -- 検索から飛んだ先で、届いた後に画面を送る欄(送ったら消す)
+    , scrollTarget : Maybe (List Seg)
+
+    -- 一覧の行の右クリックメニュー(開いている場所と対象)と、その場の名前変更
+    , fileMenu : Maybe { anchor : ContextMenu.Anchor, path : String }
+    , fileRename : Maybe { path : String, text : String }
+
+    -- ファイルそのものへの動詞(新規 / 複製 / 改名 / 削除)の聞き取り中の物。
+    -- skelReq は「新規」で骨格を組むためのスキーマ待ち(id と作る先)
+    , fileVerb : Maybe FileVerbs.Dialog
+    , skelReq : Maybe { id : Int, path : String }
+
+    -- 動詞が通った後の行き先。open=True は作った / 名前を変えたファイルを開く、
+    -- False は消したファイル(開いていたなら閉じる)
+    , verbTarget : Maybe { path : String, open : Bool }
+
+    -- 元に戻す / やり直すの履歴(編集はすべて queueEdit を通るので、そこで積む)。
+    -- editSeq は「1 回のやり取り」の通し番号 — 打ちかけ・ドラッグの間に出る
+    -- 編集の洪水を 1 手に畳む鍵にする
+    , history : EditHistory.History
+    , editSeq : Int
+
     -- 文書編集(docEdit ポート)の in-flight id と、反映待ちの列。
     -- 往復中に来た編集を古い本文へ重ねると先の編集が消えるので、直列に流す。
     -- Maybe(最新 1 件)でなく List なのは、ドラッグ確定が atX・y の 2 本組で
@@ -738,6 +770,16 @@ init _ =
         , helpOpen = Set.empty
         , problemsOpen = False
         , activeDraft = Nothing
+        , search = SearchView.init
+        , crossEdit = Nothing
+        , scrollTarget = Nothing
+        , fileMenu = Nothing
+        , fileRename = Nothing
+        , fileVerb = Nothing
+        , skelReq = Nothing
+        , verbTarget = Nothing
+        , history = EditHistory.empty
+        , editSeq = 0
         , editReq = Nothing
         , pendingEdits = []
         , preview = PreviewNone
@@ -818,6 +860,30 @@ type Msg
     | SortClicked String
     | FilterChanged String
     | HelpToggled String
+    | SearchToggled
+    | SearchClosed
+    | SearchTyped String
+    | SearchDebounced Int
+    | SearchReplacementTyped String
+    | SearchMoved Int
+    | SearchActivated
+    | SearchFileClicked String
+    | SearchHitClicked Api.SearchHit
+    | ReplaceRunClicked
+    | FileMenuOpened String ContextMenu.Anchor
+    | FileMenuClosed
+    | FileRenameStarted String
+    | FileRenameTyped String
+    | FileRenameCommitted
+    | FileRenameCancelled
+    | FileNewClicked Api.ResourceGroup
+    | FileDuplicateClicked String
+    | FileDeleteClicked String
+    | VerbTyped String
+    | VerbConfirmed
+    | VerbCancelled
+    | UndoPressed
+    | RedoPressed
     | RowOpClicked String EntryOps.RowEdit
     | RowDeleteClicked String Int
     | ProblemBarToggled
@@ -1282,6 +1348,7 @@ update msg model =
                                     | pendingNav = Nothing
                                     , dirty = False
                                     , activeDraft = Nothing
+                                    , history = EditHistory.cutOnExternalChange model.history
                                 }
                     in
                     case target of
@@ -1304,8 +1371,17 @@ update msg model =
             ( { model | pendingNav = Nothing }, Effect.none )
 
         DocChanged text_ ->
+            -- テキストを手で書き換えたら、控えてある旧値はもう今の文書のものではない
             scheduleAutosave
-                (requestPreview (withDoc model.current text_ { model | dirty = text_ /= model.openedText }))
+                (requestPreview
+                    (withDoc model.current
+                        text_
+                        { model
+                            | dirty = text_ /= model.openedText
+                            , history = EditHistory.cutOnExternalChange model.history
+                        }
+                    )
+                )
 
         SaveClicked ->
             case ( model.current, model.savingText ) of
@@ -1365,6 +1441,148 @@ update msg model =
                     , usagesOpenFor = Nothing
                     , rename = Nothing
                 }
+
+        SearchToggled ->
+            ( { model
+                | search =
+                    if SearchView.isOpen model.search then
+                        SearchView.close model.search
+
+                    else
+                        SearchView.open model.search
+              }
+            , Effect.none
+            )
+
+        SearchClosed ->
+            ( { model | search = SearchView.close model.search }, Effect.none )
+
+        SearchTyped text_ ->
+            let
+                search =
+                    SearchView.typedQuery text_ model.search
+            in
+            ( { model | search = search }
+            , if text_ == "" then
+                Effect.none
+
+              else
+                Effect.SearchDebounce { seq = search.seq, afterMs = 150 }
+            )
+
+        SearchDebounced seq ->
+            -- 打っている間に追い越された予約は捨てる(最後の 1 回だけが探す)
+            if seq == model.search.seq && model.search.query /= "" then
+                request "search" (E.object [ ( "q", E.string model.search.query ) ]) model
+
+            else
+                ( model, Effect.none )
+
+        SearchReplacementTyped text_ ->
+            ( { model | search = SearchView.typedReplacement text_ model.search }, Effect.none )
+
+        SearchMoved dir ->
+            let
+                search =
+                    SearchView.moveSelection dir model.search
+            in
+            -- 選んだ行が一覧の外なら、そこまで送る(端まで来ていれば何も動かない)
+            request "scrollTo"
+                (E.object
+                    [ ( "id", E.string (SearchView.selectedDomId search) )
+                    , ( "block", E.string "nearest" )
+                    , ( "flash", E.bool False )
+                    ]
+                )
+                { model | search = search }
+
+        SearchActivated ->
+            case SearchView.activeRow model.search of
+                Just (SearchView.FileRow path) ->
+                    update (SearchFileClicked path) model
+
+                Just (SearchView.HitRow hit) ->
+                    jumpToHit hit model
+
+                Nothing ->
+                    ( model, Effect.none )
+
+        SearchFileClicked path ->
+            -- ファイル名の当たり: そのファイルを開くだけ(飛ぶ欄は無い)
+            update (FileClicked path)
+                (toEditorScreen { model | search = SearchView.close model.search })
+
+        SearchHitClicked hit ->
+            jumpToHit hit model
+
+        ReplaceRunClicked ->
+            startReplace model
+
+        FileNewClicked group ->
+            ( { model
+                | fileVerb =
+                    Just
+                        (FileVerbs.forNew
+                            { groupId = group.id
+                            , groupLabel = Maybe.withDefault group.id group.title
+                            , pattern = group.pattern
+                            , schemaPath = groupSchemaPath group
+                            }
+                        )
+              }
+            , Effect.none
+            )
+
+        FileDuplicateClicked path ->
+            ( { model | fileMenu = Nothing, fileVerb = Just (FileVerbs.forDuplicate (patternFor model path) path) }
+            , Effect.none
+            )
+
+        FileDeleteClicked path ->
+            ( { model | fileMenu = Nothing, fileVerb = Just (FileVerbs.forDelete path) }, Effect.none )
+
+        FileMenuOpened path anchor ->
+            ( { model | fileMenu = Just { anchor = anchor, path = path } }, Effect.none )
+
+        FileMenuClosed ->
+            ( { model | fileMenu = Nothing }, Effect.none )
+
+        FileRenameStarted path ->
+            -- その場編集(IDE の F2)。初期値は宣言の飾りを外した名前だけ。
+            -- 欄が描かれてからカーソルを置きたいので、focus は頼み事として出す
+            request "focusId"
+                (E.object [ ( "id", E.string fileRenameBoxId ) ])
+                { model
+                    | fileMenu = Nothing
+                    , fileRename = Just { path = path, text = Skeleton.bareNameOf (patternFor model path) path }
+                }
+
+        FileRenameTyped text_ ->
+            ( { model | fileRename = model.fileRename |> Maybe.map (\r -> { r | text = text_ }) }, Effect.none )
+
+        FileRenameCommitted ->
+            commitFileRename model
+
+        FileRenameCancelled ->
+            ( { model | fileRename = Nothing }, Effect.none )
+
+        VerbTyped text_ ->
+            -- 打ち直しで前の断りを引きずらない(理由は次の確定で判定し直す)
+            ( { model | fileVerb = model.fileVerb |> Maybe.map (\d -> { d | text = text_, error = Nothing }) }
+            , Effect.none
+            )
+
+        VerbConfirmed ->
+            confirmVerb model
+
+        VerbCancelled ->
+            ( { model | fileVerb = Nothing }, Effect.none )
+
+        UndoPressed ->
+            stepHistory EditHistory.undo model
+
+        RedoPressed ->
+            stepHistory EditHistory.redo model
 
         HelpToggled key ->
             ( { model | helpOpen = toggleMember key model.helpOpen }, Effect.none )
@@ -1676,10 +1894,10 @@ update msg model =
                         ( model, Effect.none )
 
                     else
-                        ( { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
+                        ( startInteraction { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
 
                 Nothing ->
-                    ( { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
+                    ( startInteraction { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
 
         DraftTyped seed text_ ->
             let
@@ -1723,9 +1941,13 @@ update msg model =
                 ( PreviewShowing p, Just plugin ) ->
                     let
                         -- 掴んだ瞬間に行選択も済ませる(押した点と選択行がずれない)
-                        ( m1, cmd ) =
+                        ( selected, cmd ) =
                             update (EntryClicked (ByIndex press.index))
                                 { model | sectionKey = Just plugin.sectionKey, tableFilter = "" }
+
+                        -- 掴んだ所からの一連のドラッグは 1 手(戻すとき 1 回で元へ)
+                        m1 =
+                            startInteraction selected
                     in
                     ( { m1
                         | drag =
@@ -4058,22 +4280,569 @@ encodeNumber spec v =
 -}
 queueEdit : EditPayload -> Model -> ( Model, Effect )
 queueEdit payload model =
-    if model.editReq /= Nothing then
-        ( { model | pendingEdits = enqueueEdit payload model.pendingEdits }, Effect.none )
+    queueEditWith Derive payload model
+
+
+{-| 履歴への積み方。Derive=今の状況から 1 手のまとまりを決める・
+Forced=呼び側が「この 2 本は 1 手」と言う(1 回の操作が複数の編集を生む場合)・
+NoHistory=積まない(戻す / やり直すが流す逆操作。積むと自分の記録を食べて回り出す)。
+-}
+type Grouping
+    = Derive
+    | Forced String
+    | NoHistory
+
+
+queueEditWith : Grouping -> EditPayload -> Model -> ( Model, Effect )
+queueEditWith grouping payload model =
+    let
+        m0 =
+            case grouping of
+                NoHistory ->
+                    model
+
+                Derive ->
+                    recordEdit (editGroup model payload) payload model
+
+                Forced group ->
+                    recordEdit (Just group) payload model
+    in
+    if m0.editReq /= Nothing then
+        ( { m0 | pendingEdits = enqueueEdit payload m0.pendingEdits }, Effect.none )
 
     else
-        sendEdit payload model
+        sendEdit payload m0
 
 
-{-| 複数の編集を順序を保って列に積む(weights の削除=Remove+BatchSet の 2 本組等)。 -}
+{-| その場の名前変更の確定。名前が変わっていなければ黙って畳む(やめたのと同じ)。
+断る理由があれば、その場に留まってトーストで伝える。
+-}
+commitFileRename : Model -> ( Model, Effect )
+commitFileRename model =
+    case model.fileRename of
+        Nothing ->
+            ( model, Effect.none )
+
+        Just renaming ->
+            let
+                pattern =
+                    patternFor model renaming.path
+
+                target =
+                    FileVerbs.renameTarget pattern renaming.text
+            in
+            case FileVerbs.renameProblem (knownPaths model) { pattern = pattern, path = renaming.path, text = renaming.text } of
+                Just reason ->
+                    showToast reason model
+
+                Nothing ->
+                    if target == renaming.path then
+                        ( { model | fileRename = Nothing }, Effect.none )
+
+                    else
+                        request "fileRename"
+                            (E.object [ ( "path", E.string renaming.path ), ( "toPath", E.string target ) ])
+                            { model
+                                | fileRename = Nothing
+                                , verbTarget = Just { path = target, open = model.current == Just renaming.path }
+                            }
+
+
+{-| 検索結果から飛ぶ。開くのは既存のジャンプ経路(dirty の関所も通る)で、
+そのうえで「どの欄か」を控えておき、届いた後に画面をそこまで送る。
+-}
+jumpToHit : Api.SearchHit -> Model -> ( Model, Effect )
+jumpToHit hit model =
+    let
+        jump =
+            { path = hit.file
+            , sectionKey = hitSectionKey hit
+            , entry = hitEntry hit
+            }
+
+        m1 =
+            toEditorScreen { model | search = SearchView.close model.search, scrollTarget = Just hit.path }
+    in
+    if Just hit.file == model.current && model.tab == AtelierTab then
+        -- 開いているファイルの中。選び直して欄まで送るだけ
+        scrollToField hit.path
+            { m1
+                | sectionKey = Just jump.sectionKey
+                , entrySel = Just jump.entry
+                , scrollTarget = Nothing
+            }
+
+    else
+        update (DashJumped jump) m1
+
+
+{-| 検索から飛ぶ先は必ず調整(エディタ)の画面。ホームや入口に居ても、
+結果を押したらそこへ移ってから開く — 押した物が出ない方が驚きになる。
+-}
+toEditorScreen : Model -> Model
+toEditorScreen model =
+    { model | tab = AtelierTab, atelier = Atelier.toStorehouse model.atelier }
+
+
+{-| 当たりのパスの 1 段目がセクション、2 段目がエントリ。
+それより浅い当たり(文書直下の値)はセクションだけ選ぶ。
+-}
+hitSectionKey : Api.SearchHit -> String
+hitSectionKey hit =
+    case hit.path of
+        (KeySeg key) :: _ ->
+            key
+
+        _ ->
+            ""
+
+
+hitEntry : Api.SearchHit -> EntrySel
+hitEntry hit =
+    case hit.path of
+        _ :: (KeySeg name) :: _ ->
+            ByKey name
+
+        _ :: (IdxSeg i) :: _ ->
+            ByIndex i
+
+        _ ->
+            ByKey ""
+
+
+{-| 欄まで画面を送る(描き終わるのを待つのはブラウザ側の仕事)。 -}
+scrollToField : List Seg -> Model -> ( Model, Effect )
+scrollToField path model =
+    request "scrollTo" (E.object [ ( "id", E.string (fieldDomId path) ) ]) model
+
+
+{-| フォーム行の DOM id。検索から飛んだ欄を名指しするためだけの物。 -}
+fieldDomId : List Seg -> String
+fieldDomId path =
+    "row-" ++ pathDomId path
+
+
+{-| 置換の実行。ファイルごとに 1 本の直列で書き戻し、履歴には
+「1 手 = 1 回の置換」として全ファイルぶんをまとめて積む(⌘Z 1 回で全部戻る)。
+-}
+startReplace : Model -> ( Model, Effect )
+startReplace model =
+    let
+        files =
+            SearchView.plan model.search
+    in
+    if List.isEmpty files || model.search.query == "" then
+        ( model, Effect.none )
+
+    else
+        let
+            -- 旧値は検索結果が持っている(当たった文字列そのもの)ので、
+            -- 戻すための読み直しは要らない
+            steps =
+                model.search.results.hits
+                    |> List.filter (\hit -> not (List.isEmpty hit.path))
+                    |> List.map
+                        (\hit ->
+                            { file = hit.file
+                            , payload =
+                                { op = SetOp
+                                , path = hit.path
+                                , value = E.string (SearchView.replacedValue model.search.query model.search.replacement hit.value)
+                                , isInt = False
+                                }
+                            , before = EditHistory.Value (Just (E.string hit.value))
+                            }
+                        )
+
+            history =
+                case model.current of
+                    Just file ->
+                        EditHistory.pushCross
+                            { file = file, label = "置換", steps = steps }
+                            model.history
+
+                    Nothing ->
+                        model.history
+        in
+        advanceCrossEdit
+            { model
+                | crossEdit = Just (CrossEdit.start "置換しました" files)
+                , history = history
+                , search = SearchView.close model.search
+            }
+
+
+{-| 直列を 1 歩進める(次のファイルの本文を取りに行く)。終わっていれば報せて畳む。
+触ったファイルの中に開いている物があれば、最後に取り直して画面と揃える。
+-}
+advanceCrossEdit : Model -> ( Model, Effect )
+advanceCrossEdit model =
+    case model.crossEdit of
+        Nothing ->
+            ( model, Effect.none )
+
+        Just run ->
+            case CrossEdit.takeNext run of
+                Just ( fileEdits, rest ) ->
+                    let
+                        ( m1, fx ) =
+                            request "getFile" (E.object [ ( "path", E.string fileEdits.file ) ]) model
+                    in
+                    ( { m1 | crossEdit = Just (CrossEdit.getting m1.reqCounter fileEdits rest) }, fx )
+
+                Nothing ->
+                    let
+                        ( m1, fx ) =
+                            showToast (CrossEdit.doneText run) { model | crossEdit = Nothing }
+                    in
+                    case model.current of
+                        Just path ->
+                            let
+                                ( m2, reloadFx ) =
+                                    openFile path m1
+                            in
+                            ( m2, Effect.batch [ fx, reloadFx ] )
+
+                        Nothing ->
+                            ( m1, fx )
+
+
+{-| 直列の応答受け(Nothing = この進行の封筒ではない)。
+取得 → 最小編集 → 保存の 3 拍を、id の突き合わせで 1 本ずつ進める。
+-}
+crossEditOk : Api.Envelope -> Model -> Maybe ( Model, Effect )
+crossEditOk env model =
+    model.crossEdit
+        |> Maybe.andThen
+            (\run ->
+                case run.step of
+                    Just (CrossEdit.Getting reqId file edits) ->
+                        if env.id == reqId && env.kind == "getFile" then
+                            Just (crossEditApply file edits run env model)
+
+                        else
+                            Nothing
+
+                    Just (CrossEdit.Editing reqId file count) ->
+                        if env.id == reqId && env.kind == "applyDocEdits" then
+                            Just (crossEditSave file count run env model)
+
+                        else
+                            Nothing
+
+                    Just (CrossEdit.Putting reqId _ count) ->
+                        if env.id == reqId && env.kind == "putFile" then
+                            Just (advanceCrossEdit { model | crossEdit = Just (CrossEdit.tookFile count run) })
+
+                        else
+                            Nothing
+
+                    Nothing ->
+                        Nothing
+            )
+
+
+crossEditApply : String -> List EditPayload -> CrossEdit.Run -> Api.Envelope -> Model -> ( Model, Effect )
+crossEditApply file edits run env model =
+    case D.decodeValue Api.fileContentDecoder env.body of
+        Ok fc ->
+            let
+                ( m1, fx ) =
+                    request "applyDocEdits"
+                        (E.object
+                            [ ( "text", E.string fc.content )
+                            , ( "edits", E.list encodeSetEdit edits )
+                            ]
+                        )
+                        model
+            in
+            ( { m1 | crossEdit = Just (CrossEdit.editing m1.reqCounter file (List.length edits) run) }, fx )
+
+        Err _ ->
+            crossEditAbort file "本文が読めませんでした" model
+
+
+crossEditSave : String -> Int -> CrossEdit.Run -> Api.Envelope -> Model -> ( Model, Effect )
+crossEditSave file count run env model =
+    case D.decodeValue (D.field "text" D.string) env.body of
+        Ok newText ->
+            let
+                ( m1, fx ) =
+                    request "putFile"
+                        (E.object [ ( "path", E.string file ), ( "content", E.string newText ) ])
+                        model
+            in
+            ( { m1 | crossEdit = Just (CrossEdit.putting m1.reqCounter file count run) }, fx )
+
+        Err _ ->
+            crossEditAbort file "編集応答が読めませんでした" model
+
+
+{-| 中断: 進行を捨てて理由を出す。ここまでに保存できたファイルはそのまま
+(戻すのは履歴の 1 手として残っている)。
+-}
+crossEditAbort : String -> String -> Model -> ( Model, Effect )
+crossEditAbort file reason model =
+    showToast ("書き戻しに失敗(" ++ file ++ "): " ++ reason) { model | crossEdit = Nothing }
+
+
+{-| 値の書き込み 1 件を applyDocEdits の形へ(改名バッチと同じ封筒)。 -}
+encodeSetEdit : EditPayload -> E.Value
+encodeSetEdit payload =
+    E.object
+        [ ( "op", E.string "set" )
+        , ( "path", E.list encodeSeg payload.path )
+        , ( "value", payload.value )
+        , ( "intField", E.bool payload.isInt )
+        ]
+
+
+{-| 宣言のパターン。動詞のダイアログが「置き場と拡張子」を埋めるのに使う。
+どのグループにも属さないファイル(その他)は、パスそのものを 1 本の型とみなす。
+-}
+patternFor : Model -> String -> String
+patternFor model path =
+    model.groups
+        |> List.filter (\g -> g.files |> List.any (\f -> f.path == path))
+        |> List.head
+        |> Maybe.map .pattern
+        |> Maybe.withDefault path
+
+
+{-| グループの骨格に使うスキーマ。宣言済みファイルが 1 つでもあれば、その
+スキーマを兄弟として使い回す(同じ宣言に属す物は同じ形)。
+-}
+groupSchemaPath : Api.ResourceGroup -> Maybe String
+groupSchemaPath group =
+    group.files |> List.filterMap .schema |> List.head
+
+
+{-| 動詞の確定。新規だけは骨格を組むためにスキーマを 1 往復取りに行き、
+残りはそのままサーバの動詞へ流す。
+-}
+confirmVerb : Model -> ( Model, Effect )
+confirmVerb model =
+    case model.fileVerb of
+        Nothing ->
+            ( model, Effect.none )
+
+        Just dialog ->
+            case FileVerbs.problem (knownPaths model) dialog of
+                Just reason ->
+                    ( { model | fileVerb = Just { dialog | error = Just reason } }, Effect.none )
+
+                Nothing ->
+                    let
+                        target =
+                            FileVerbs.targetPath dialog
+                    in
+                    case dialog.kind of
+                        FileVerbs.NewFile _ ->
+                            case FileVerbs.schemaPathOf dialog.kind of
+                                Just schemaPath ->
+                                    let
+                                        ( m1, fx ) =
+                                            request "getFile" (E.object [ ( "path", E.string schemaPath ) ]) model
+                                    in
+                                    ( { m1 | skelReq = Just { id = m1.reqCounter, path = target } }, fx )
+
+                                Nothing ->
+                                    -- スキーマが無い宣言。空の入れ物だけ作る(旗の立てようがない)
+                                    createFile target (Skeleton.docText Nothing) model
+
+                        FileVerbs.Duplicate d ->
+                            request "fileDuplicate"
+                                (E.object [ ( "path", E.string d.path ), ( "toPath", E.string target ) ])
+                                { model | fileVerb = Nothing, verbTarget = Just { path = target, open = True } }
+
+                        FileVerbs.Delete d ->
+                            request "fileDelete"
+                                (E.object [ ( "path", E.string d.path ) ])
+                                { model | fileVerb = Nothing, verbTarget = Just { path = d.path, open = False } }
+
+
+createFile : String -> String -> Model -> ( Model, Effect )
+createFile path content model =
+    request "fileNew"
+        (E.object [ ( "path", E.string path ), ( "content", E.string content ) ])
+        { model | fileVerb = Nothing, skelReq = Nothing, verbTarget = Just { path = path, open = True } }
+
+
+{-| いま分かっているファイルの全部(宣言済み+その他)。動詞の重複判定に使う。 -}
+knownPaths : Model -> List String
+knownPaths model =
+    model.files ++ declaredPaths model.groups
+
+
+{-| 動詞が通った後。一覧を取り直し、作った / 名前を変えたファイルを開く。 -}
+afterVerb : Model -> ( Model, Effect )
+afterVerb model =
+    let
+        ( m1, resourcesFx ) =
+            request "resources" (E.object []) { model | verbTarget = Nothing }
+
+        ( m2, filesFx ) =
+            request "files" (E.object []) m1
+    in
+    case model.verbTarget of
+        Just target ->
+            if target.open then
+                let
+                    ( m3, openFx ) =
+                        openFile target.path m2
+                in
+                ( m3, Effect.batch [ resourcesFx, filesFx, openFx ] )
+
+            else if model.current == Just target.path then
+                -- 開いていたファイルが消えた。空にして閉じる(履歴も前提を失う)
+                ( withDoc Nothing
+                    ""
+                    { m2
+                        | schemaState = SchemaNone
+                        , dirty = False
+                        , openedText = ""
+                        , history = EditHistory.cutOnExternalChange m2.history
+                    }
+                , Effect.batch [ resourcesFx, filesFx ]
+                )
+
+            else
+                ( m2, Effect.batch [ resourcesFx, filesFx ] )
+
+        Nothing ->
+            ( m2, Effect.batch [ resourcesFx, filesFx ] )
+
+
+{-| 1 手ぶんを履歴へ。
+
+境界の規則: 盤面(マップ)とドット絵が前面の間は積まない。あの 2 つは
+「一筆」「1 ドラッグ」を単位にした自前の undo を持っていて、そちらの方が
+手触りが正しい。両方に積むと ⌘Z が 2 つの履歴を交互に消費して、押した回数と
+戻る量が合わなくなる。だから前面に居る方だけが履歴を持つ(⌘Z の購読も同じ
+条件で切り替える)。
+-}
+recordEdit : Maybe String -> EditPayload -> Model -> Model
+recordEdit group payload model =
+    case ( model.current, parsedDoc model ) of
+        ( Just file, Just doc ) ->
+            if ownUndoFront model then
+                model
+
+            else
+                { model
+                    | history =
+                        EditHistory.push
+                            { file = file
+                            , label = Edit.pathKey payload.path
+                            , group = group
+                            , payload = payload
+                            , before = EditHistory.beforeFor payload doc
+                            }
+                            model.history
+                }
+
+        _ ->
+            model
+
+
+{-| 前面の編集器が自前の undo を持っているか(マップ / ドット絵)。 -}
+ownUndoFront : Model -> Bool
+ownUndoFront model =
+    effectiveMode model
+        == VisualMode
+        && (mapDocCurrent model /= Nothing || spriteDocCurrent model /= Nothing)
+
+
+{-| 1 手のまとまり。欄に打ちかけがある間・盤面をドラッグしている間に出る編集は
+洪水になるので、その 1 回のやり取り(editSeq)を 1 手に畳む。押しただけの操作
+(行の並べ替え・追加・削除)は 1 つずつ別の手。
+-}
+editGroup : Model -> EditPayload -> Maybe String
+editGroup model payload =
+    if model.activeDraft == Nothing && model.drag == Nothing then
+        Nothing
+
+    else
+        Just (Edit.pathKey payload.path ++ "#" ++ String.fromInt model.editSeq)
+
+
+{-| 新しいやり取りの始まり(欄への focus・盤面を掴んだ瞬間)。 -}
+startInteraction : Model -> Model
+startInteraction model =
+    { model | editSeq = model.editSeq + 1 }
+
+
+{-| 戻す / やり直す。逆操作は履歴に積まない道で既存の書き戻しへ流す。
+打ちかけは畳む — 戻した値の上に古い打ちかけを残さない。
+
+1 手が開いている文書の中で閉じているなら、いつもの編集直列(queueEdit)へ。
+ファイルをまたぐ手(横断置換)は、開いていないファイルへの直列(CrossEdit)で
+まとめて戻す — どちらも既存の書き戻し経路で、新しい道は作らない。
+-}
+stepHistory : (EditHistory.History -> Maybe ( List EditHistory.Step, EditHistory.History )) -> Model -> ( Model, Effect )
+stepHistory step model =
+    case step model.history of
+        Just ( steps, history ) ->
+            let
+                m1 =
+                    { model | history = history, activeDraft = Nothing }
+            in
+            if List.all (\st -> Just st.file == m1.current) steps then
+                steps
+                    |> List.foldl
+                        (\st ( m, fxs ) ->
+                            queueEditWith NoHistory st.payload m |> Tuple.mapSecond (\fx -> fx :: fxs)
+                        )
+                        ( m1, [] )
+                    |> Tuple.mapSecond Effect.batch
+
+            else
+                advanceCrossEdit { m1 | crossEdit = Just (CrossEdit.start "戻しました" (groupByFile steps)) }
+
+        Nothing ->
+            ( model, Effect.none )
+
+
+{-| ファイルごとに編集をまとめる(順序はそのまま — 同じファイルの手がばらけない)。 -}
+groupByFile : List EditHistory.Step -> List CrossEdit.FileEdits
+groupByFile steps =
+    steps
+        |> List.foldl
+            (\st acc ->
+                if List.any (\group -> group.file == st.file) acc then
+                    acc |> List.map (\group ->
+                        if group.file == st.file then
+                            { group | edits = group.edits ++ [ st.payload ] }
+
+                        else
+                            group
+                    )
+
+                else
+                    acc ++ [ { file = st.file, edits = [ st.payload ] } ]
+            )
+            []
+
+
+{-| 複数の編集を順序を保って列に積む(weights の削除=Remove+BatchSet の 2 本組等)。
+1 回の操作で出た物なので、履歴では 1 手に畳む — 押したのは 1 回なのに ⌘Z を
+2 回押させない。
+-}
 queueEdits : List EditPayload -> Model -> ( Model, Effect )
 queueEdits payloads model =
+    let
+        m0 =
+            startInteraction model
+
+        group =
+            "batch#" ++ String.fromInt m0.editSeq
+    in
     payloads
         |> List.foldl
             (\payload ( m, fxs ) ->
-                queueEdit payload m |> Tuple.mapSecond (\fx -> fx :: fxs)
+                queueEditWith (Forced group) payload m |> Tuple.mapSecond (\fx -> fx :: fxs)
             )
-            ( model, [] )
+            ( m0, [] )
         |> Tuple.mapSecond Effect.batch
 
 
@@ -4403,7 +5172,12 @@ handleOk env model =
                     result
 
                 Nothing ->
-                    handleOkByKind env model
+                    case crossEditOk env model of
+                        Just result ->
+                            result
+
+                        Nothing ->
+                            handleOkByKind env model
 
 
 handleOkByKind : Api.Envelope -> Model -> ( Model, Effect )
@@ -4939,6 +5713,10 @@ handleOkByKind env model =
                                         , openedText = fc.content
                                         , dirty = False
                                         , mtime = fc.mtime
+
+                                        -- 読み込み(開く・読み直し・外で変わった)で
+                                        -- 正本が入れ替わる → 古い逆操作は当たらない
+                                        , history = EditHistory.cutOnExternalChange model.history
                                         , notice = Nothing
                                         , conflict = Nothing
                                         , savingText = Nothing
@@ -4993,10 +5771,19 @@ handleOkByKind env model =
 
                             ( m6, warmFx ) =
                                 warmSfxIfNeeded { m5 | sfxWarmed = False }
+
+                            -- 検索から飛んで来たなら、届いた本文の上で欄まで画面を送る
+                            ( m7, scrollFx ) =
+                                case m6.scrollTarget of
+                                    Just path ->
+                                        scrollToField path { m6 | scrollTarget = Nothing }
+
+                                    Nothing ->
+                                        ( m6, Effect.none )
                         in
-                        ( m6
+                        ( m7
                         , Effect.batch
-                            [ previewFx, crossFx, portraitFx, spriteColorsFx, sfxFx, warmFx ]
+                            [ previewFx, crossFx, portraitFx, spriteColorsFx, sfxFx, warmFx, scrollFx ]
                         )
 
                     else if Just env.id == model.schemaReq then
@@ -5052,6 +5839,18 @@ handleOkByKind env model =
                                 , Effect.none
                                 )
 
+                    else if (model.skelReq |> Maybe.map .id) == Just env.id then
+                        -- 「新規」の骨格づくり。スキーマが読めない宣言では
+                        -- 空の入れ物だけ作る(壊れたスキーマで作成を止めない)
+                        case model.skelReq of
+                            Just pending ->
+                                createFile pending.path
+                                    (Skeleton.docText (Schema.decodeString fc.content |> Result.toMaybe))
+                                    model
+
+                            Nothing ->
+                                ( model, Effect.none )
+
                     else if Just env.id == model.texturesReq then
                         ( { model | texturesReq = Nothing, textures = texturesFrom fc.content }, Effect.none )
 
@@ -5072,6 +5871,35 @@ handleOkByKind env model =
 
                 Err _ ->
                     ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
+
+        "search" ->
+            case D.decodeValue Api.searchResultsDecoder env.body of
+                Ok results ->
+                    ( { model | search = SearchView.withResults results model.search }, Effect.none )
+
+                Err _ ->
+                    ( { model | search = SearchView.withResults { files = [], filesTotal = 0, hits = [], total = 0, truncated = False } model.search }
+                    , Effect.none
+                    )
+
+        -- 画面送り・カーソル置きは頼むだけ(応答に用は無い)
+        "scrollTo" ->
+            ( model, Effect.none )
+
+        "focusId" ->
+            ( model, Effect.none )
+
+        "fileNew" ->
+            afterVerb model
+
+        "fileDuplicate" ->
+            afterVerb model
+
+        "fileRename" ->
+            afterVerb model
+
+        "fileDelete" ->
+            afterVerb model
 
         "sfxWarm" ->
             let
@@ -5996,10 +6824,40 @@ viewShell model content =
         [ div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
             [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
             , viewNavTabs model.tab
+            , viewSearchButton
             , viewProjectSwitch
             ]
         , content
+
+        -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
+        , viewSearchPanel model
         ]
+
+
+{-| 検索の入口。ショートカットだけだと、知らない人には無い機能と同じ。 -}
+viewSearchButton : Html Msg
+viewSearchButton =
+    button
+        [ HA.class "search-open btn btn-ghost btn-mini shrink-0"
+        , HA.title "検索 ⌘⇧F"
+        , HE.onClick SearchToggled
+        ]
+        [ text "🔍" ]
+
+
+viewSearchPanel : Model -> Html Msg
+viewSearchPanel model =
+    SearchView.view
+        { onQuery = SearchTyped
+        , onReplacement = SearchReplacementTyped
+        , onFile = SearchFileClicked
+        , onHit = SearchHitClicked
+        , onMove = SearchMoved
+        , onActivate = SearchActivated
+        , onReplaceRun = ReplaceRunClicked
+        , onClose = SearchClosed
+        }
+        model.search
 
 
 {-| 上のバーの右端 — プロジェクト選択画面へ戻る道(静かな一言)。
@@ -6200,6 +7058,7 @@ changesDialog : List (Html Msg) -> List (Html Msg) -> Html Msg
 changesDialog body footer =
     Html.node "sl-dialog"
         [ HA.class "changes-dialog"
+        , HE.on "sl-request-close" (D.succeed ChangesModalClosed)
         , HA.attribute "label" "見た目が変わりました"
         , HA.attribute "open" ""
         , HA.attribute "style" "--width: 56rem"
@@ -6224,6 +7083,7 @@ viewScenesModal model =
         dialog body =
             Html.node "sl-dialog"
                 [ HA.class "scenes-dialog"
+                , HE.on "sl-request-close" (D.succeed ScenesClosed)
                 , HA.attribute "label" "全場面"
                 , HA.attribute "open" ""
                 , HA.attribute "style" "--width: 64rem"
@@ -6494,6 +7354,17 @@ viewEditing model =
 
                     Nothing ->
                         text ""
+                , viewFileMenu model
+                , viewSearchPanel model
+                , case model.fileVerb of
+                    Just dialog ->
+                        FileVerbs.view
+                            { onTyped = VerbTyped, onConfirmed = VerbConfirmed, onCancelled = VerbCancelled }
+                            (knownPaths model)
+                            dialog
+
+                    Nothing ->
+                        text ""
                 ]
 
 
@@ -6569,6 +7440,7 @@ viewTopbar model =
     div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
         , viewNavTabs model.tab
+        , viewSearchButton
         , viewProjectSwitch
         , case model.notice of
             Just message ->
@@ -6648,6 +7520,7 @@ viewEditToolbar model =
 
           else
             text ""
+        , viewUndoCount model
         , span [ HA.class "spacer flex-1" ] []
         , button
             [ HA.class "btn"
@@ -6686,6 +7559,28 @@ viewEditToolbar model =
                 )
             ]
         ]
+
+
+{-| 戻せる手数。0 の間は出さない — 何もしていない時に押せない物を置かない。
+盤面・ドット絵が前面の時も出さない(その画面の ⌘Z は自前の履歴が持ち場で、
+数が合わないため)。
+-}
+viewUndoCount : Model -> Html Msg
+viewUndoCount model =
+    let
+        ( undoable, _ ) =
+            EditHistory.depth model.history
+    in
+    if undoable == 0 || ownUndoFront model then
+        text ""
+
+    else
+        button
+            [ HA.class "undo-count btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+            , HA.title "元に戻す(⌘Z / Ctrl+Z)"
+            , HE.onClick UndoPressed
+            ]
+            [ text ("↩ " ++ String.fromInt undoable) ]
 
 
 {-| モード切替(flix_ge_editor と同じ 3 連セグメント)。光るのは選択でなく
@@ -6858,7 +7753,7 @@ viewFilePane model =
             model.groups
                 |> List.concatMap
                     (\g ->
-                        viewGroupHeading (Maybe.withDefault g.id g.title)
+                        viewGroupHeadingFor g
                             :: List.map (viewFileRow model) (List.map .path g.files)
                     )
 
@@ -6969,6 +7864,27 @@ viewGroupHeading label =
         [ text label ]
 
 
+{-| 宣言グループの見出し。「+ 新規」は "*" を持つ宣言(何本でも置ける物)にだけ。
+1 本しか置けない宣言(hitbox.json 等)に「新規」は意味を持たない。
+-}
+viewGroupHeadingFor : Api.ResourceGroup -> Html Msg
+viewGroupHeadingFor group =
+    div [ HA.class "file-group flex items-center gap-1 px-3 pt-3 pb-1" ]
+        [ span [ HA.class "min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint" ]
+            [ text (Maybe.withDefault group.id group.title) ]
+        , if String.contains "*" group.pattern then
+            button
+                [ HA.class "group-new btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                , HA.title ("「" ++ Maybe.withDefault group.id group.title ++ "」に新しいファイルを作る")
+                , HE.onClick (FileNewClicked group)
+                ]
+                [ text "＋ 新規" ]
+
+          else
+            text ""
+        ]
+
+
 viewFileRow : Model -> String -> Html Msg
 viewFileRow model path =
     let
@@ -6978,24 +7894,40 @@ viewFileRow model path =
         -- ゲームがいま画面に出しているファイルか(active-docs.json 由来)
         isActive =
             List.member path (activePaths model)
-    in
-    button
-        [ HA.classList
-            [ ( "file-row flex w-full shrink-0 cursor-pointer items-center gap-1.5 px-3 py-1 text-left font-mono text-xs", True )
-            , ( "selected bg-accent/15 text-ink", current == Just path )
-            , ( "text-ink-soft hover:bg-white/5 hover:text-ink", current /= Just path )
-            ]
-        , HA.title
-            (if isActive then
-                path ++ "(いま画面に出ている)"
 
-             else
-                path
-            )
-        , HE.onClick (FileClicked path)
+        renaming =
+            model.fileRename |> Maybe.andThen (\r -> ifSame r path)
+    in
+    div
+        [ HA.classList
+            [ ( "file-row flex w-full shrink-0 items-center gap-1.5 px-3 text-left font-mono text-xs", True )
+            , ( "selected bg-accent/15 text-ink", current == Just path )
+            , ( "text-ink-soft hover:bg-white/5", current /= Just path )
+            ]
+
+        -- 右クリックは行のどこでも(IDE と同じ)
+        , ContextMenu.onOpen (FileMenuOpened path)
         ]
-        [ fileIcon
-        , span [ HA.class "min-w-0 flex-1 truncate" ] [ text path ]
+        [ case renaming of
+            Just r ->
+                viewFileRenameBox r
+
+            Nothing ->
+                button
+                    [ HA.class "file-open flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1 text-left hover:text-ink"
+                    , HA.title
+                        (if isActive then
+                            path ++ "(いま画面に出ている)"
+
+                         else
+                            path
+                        )
+                    , HE.onClick (FileClicked path)
+                    , onFileRowKeys path
+                    ]
+                    [ fileIcon
+                    , span [ HA.class "min-w-0 flex-1 truncate" ] [ text path ]
+                    ]
         , if isActive then
             -- ダークテーマで暗く沈む素の絵文字でなく、緑系バッジで「表示中」と一目に
             span
@@ -7007,6 +7939,93 @@ viewFileRow model path =
           else
             text ""
         ]
+
+
+{-| その場編集の欄の名指し(カーソルを置く頼み事に使う)。同時に 1 つしか開かない。 -}
+fileRenameBoxId : String
+fileRenameBoxId =
+    "file-rename-box"
+
+
+ifSame : { path : String, text : String } -> String -> Maybe { path : String, text : String }
+ifSame renaming path =
+    if renaming.path == path then
+        Just renaming
+
+    else
+        Nothing
+
+
+{-| その場の名前変更(F2 / メニューの「名前の変更…」)。Enter で確定・Esc で取り消し。
+欄から離れた時も確定にする — IDE と同じで、押し直しを強いない。
+-}
+viewFileRenameBox : { path : String, text : String } -> Html Msg
+viewFileRenameBox renaming =
+    input
+        [ HA.class "file-rename field my-0.5 min-w-0 flex-1"
+        , HA.id fileRenameBoxId
+        , HA.type_ "text"
+        , HA.value renaming.text
+        , HA.autofocus True
+        , HE.onInput FileRenameTyped
+        , HE.onBlur FileRenameCommitted
+        , HE.custom "keydown"
+            (D.field "key" D.string
+                |> D.andThen
+                    (\key ->
+                        case key of
+                            "Enter" ->
+                                D.succeed { message = FileRenameCommitted, stopPropagation = True, preventDefault = True }
+
+                            "Escape" ->
+                                D.succeed { message = FileRenameCancelled, stopPropagation = True, preventDefault = True }
+
+                            _ ->
+                                D.fail "他のキーは素通し"
+                    )
+            )
+        ]
+        []
+
+
+{-| 行にカーソルがある時のキー。F2=名前の変更・Delete/Backspace=削除(IDE の作法)。 -}
+onFileRowKeys : String -> Html.Attribute Msg
+onFileRowKeys path =
+    HE.custom "keydown"
+        (D.field "key" D.string
+            |> D.andThen
+                (\key ->
+                    case key of
+                        "F2" ->
+                            D.succeed { message = FileRenameStarted path, stopPropagation = True, preventDefault = True }
+
+                        "Delete" ->
+                            D.succeed { message = FileDeleteClicked path, stopPropagation = True, preventDefault = True }
+
+                        "Backspace" ->
+                            D.succeed { message = FileDeleteClicked path, stopPropagation = True, preventDefault = True }
+
+                        _ ->
+                            D.fail "他のキーは素通し"
+                )
+        )
+
+
+{-| 行の右クリックメニュー(VS Code の並びに合わせる)。 -}
+viewFileMenu : Model -> Html Msg
+viewFileMenu model =
+    case model.fileMenu of
+        Just menu ->
+            ContextMenu.view { onClose = FileMenuClosed }
+                menu.anchor
+                [ ContextMenu.item "複製" (FileDuplicateClicked menu.path)
+                , ContextMenu.item "名前の変更…(F2)" (FileRenameStarted menu.path)
+                , ContextMenu.separator
+                , ContextMenu.danger "削除" (FileDeleteClicked menu.path)
+                ]
+
+        Nothing ->
+            text ""
 
 
 viewDashboardRow : Maybe String -> Api.Dashboard -> Html Msg
@@ -8467,7 +9486,7 @@ viewRow model basePath row =
                 Nothing ->
                     text ""
     in
-    div [ HA.class "form-row mb-2" ]
+    div [ HA.class "form-row mb-2", HA.id (fieldDomId path) ]
         [ labelText
         , hintText
         , FormHelp.body model.helpOpen helpKey row.help
@@ -9770,6 +10789,7 @@ viewAddDialog : AddDialogState -> Html Msg
 viewAddDialog dialog =
     Html.node "sl-dialog"
         [ HA.class "add-entry"
+        , HE.on "sl-request-close" (D.succeed AddCancelled)
         , HA.attribute "label" ("エントリを追加 — " ++ dialog.sectionKey)
         , HA.attribute "open" ""
         ]
@@ -9814,6 +10834,7 @@ viewDeleteDialog confirm =
     in
     Html.node "sl-dialog"
         [ HA.class "delete-entry"
+        , HE.on "sl-request-close" (D.succeed DeleteCancelled)
         , HA.attribute "label" "削除の確認"
         , HA.attribute "open" ""
         ]
@@ -9844,6 +10865,69 @@ viewDeleteDialog confirm =
 
 
 -- 配線
+
+
+{-| ⌘⇧F(開く / 閉じる)と、開いている間の Esc(閉じる)。 -}
+searchKeyDecoder : Bool -> D.Decoder Msg
+searchKeyDecoder isOpen =
+    D.map4 (\key meta ctrl shift -> { key = key, meta = meta, ctrl = ctrl, shift = shift })
+        (D.field "key" D.string)
+        (D.field "metaKey" D.bool)
+        (D.field "ctrlKey" D.bool)
+        (D.field "shiftKey" D.bool)
+        |> D.andThen
+            (\k ->
+                if String.toLower k.key == "f" && (k.meta || k.ctrl) && k.shift then
+                    D.succeed SearchToggled
+
+                else if k.key == "Escape" && isOpen then
+                    D.succeed SearchClosed
+
+                else
+                    D.fail "他のキーは素通し"
+            )
+
+
+{-| ⌘Z / Ctrl+Z(⇧付きと Ctrl+Y はやり直す)。文字を打っている欄の中では
+渡さない — 欄の中の ⌘Z は「打った文字を戻す」ブラウザ本来の働きに任せる。
+-}
+historyKeyDecoder : D.Decoder Msg
+historyKeyDecoder =
+    D.map5 (\key meta ctrl shift tag -> { key = key, meta = meta, ctrl = ctrl, shift = shift, tag = tag })
+        (D.field "key" D.string)
+        (D.field "metaKey" D.bool)
+        (D.field "ctrlKey" D.bool)
+        (D.field "shiftKey" D.bool)
+        (D.oneOf [ D.at [ "target", "tagName" ] D.string, D.succeed "" ])
+        |> D.andThen
+            (\k ->
+                if isTypingTag k.tag then
+                    D.fail "欄の中は素通し"
+
+                else
+                    case ( String.toLower k.key, k.meta || k.ctrl, k.shift ) of
+                        ( "z", True, False ) ->
+                            D.succeed UndoPressed
+
+                        ( "z", True, True ) ->
+                            D.succeed RedoPressed
+
+                        ( "y", True, _ ) ->
+                            D.succeed RedoPressed
+
+                        _ ->
+                            D.fail "他のキーは素通し"
+            )
+
+
+{-| 文字を打つ場所か(素の欄と、Shoelace の欄部品)。 -}
+isTypingTag : String -> Bool
+isTypingTag tag =
+    let
+        name =
+            String.toUpper tag
+    in
+    List.member name [ "INPUT", "TEXTAREA", "SELECT" ] || String.startsWith "SL-" name
 
 
 {-| 文書全体の mousemove/mouseup はドラッグ中だけ購読する —
@@ -9921,6 +11005,39 @@ subscriptions model =
         -- 「✓ コピーしました」の戻し(2 秒)。コピー直後だけ生きる
         , if Atelier.needsCopyReset model.atelier then
             Time.every 2000 (\_ -> AtelierMsg Atelier.CopyResetTick)
+
+          else
+            Sub.none
+
+        -- 右クリックメニューが開いている間だけ Esc で閉じる(外側クリックは受け皿の仕事)
+        , if model.fileMenu /= Nothing then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed FileMenuClosed
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else
+            Sub.none
+
+        -- ⌘⇧F で横断検索を開く / 閉じる。編集画面に居る間だけ(欄の中でも効く —
+        -- 探すのは文字を打つ場所からでも呼びたい操作なので、⌘Z と扱いを分ける)
+        , if model.screen == Editing then
+            Browser.Events.onKeyDown (searchKeyDecoder (SearchView.isOpen model.search))
+
+          else
+            Sub.none
+
+        -- ⌘Z / ⇧⌘Z(戻す・やり直す)。編集画面で、前面の編集器が自前の undo を
+        -- 持っていない間だけ生かす — 盤面・ドット絵の ⌘Z はそちらの持ち場
+        , if model.screen == Editing && model.current /= Nothing && not (ownUndoFront model) then
+            Browser.Events.onKeyDown historyKeyDecoder
 
           else
             Sub.none
@@ -10032,6 +11149,7 @@ main =
             , noticeExpired = NoticeExpired
             , autosaveFired = AutosaveFired
             , delayFired = SfxWaitTick
+            , searchDebounced = SearchDebounced
             }
     in
     Browser.element

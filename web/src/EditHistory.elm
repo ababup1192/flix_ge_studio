@@ -2,7 +2,9 @@ module EditHistory exposing
     ( Before(..)
     , Entry
     , History
+    , Step
     , batchPaths
+    , beforeFor
     , canRedo
     , canUndo
     , cutOnExternalChange
@@ -10,6 +12,7 @@ module EditHistory exposing
     , empty
     , inverse
     , push
+    , pushCross
     , redo
     , undo
     )
@@ -44,6 +47,17 @@ BatchSet のままで、位置指定の挿入は持たない。そこで、配�
 逆が組めない組み合わせ(旧値が無いのに Remove を積む等)は履歴に積まず、
 その場で履歴を切る — 間違った逆操作を持つくらいなら、戻せない方が安全。
 
+## 1 手が複数のファイルにまたがる場合(横断置換)
+
+手の中身は「どのファイルの・どの編集か」(Step)の**列**で持つ。file を手の外に
+1 つだけ持たせて手ごとに切り替える形にしなかったのは、「1 手 = 1 意図」を崩さない
+ため — 置換は人にとって 1 回の操作で、戻すのも 1 回であるべき。だから 1 手が
+何ファイル分の Step を抱えていても、undo が返すのはその列まるごとになる。
+
+履歴そのものは今も「開いているファイル」にひも付く(別のファイルを開いたら捨てる)。
+横断手も、始めた時に開いていたファイルの履歴に積む。開き直したら前提(控えた旧値)が
+その文書のものである保証を失うので、横断手ごと捨てる方が安全。
+
 ## 外から文書が変わったら切る
 
 履歴は「積んだ時の文書」を前提にしている。ファイルの切り替え・再読込・
@@ -76,12 +90,21 @@ type Before
     | Batch (List ( List Seg, Maybe E.Value ))
 
 
-{-| 1 手。forward は積んだ編集、backward はそれを打ち消す編集。 -}
+{-| 手の中身 1 件: どのファイルへ、どの編集か。 -}
+type alias Step =
+    { file : String
+    , payload : Payload
+    }
+
+
+{-| 1 手。forward は積んだ編集の列、backward はそれを打ち消す編集の列
+(戻す時は逆順に当てる — 同じ場所を続けて触った手でも最初の姿へ戻る)。
+-}
 type alias Entry =
     { label : String
     , group : Maybe String
-    , forward : Payload
-    , backward : Payload
+    , forward : List Step
+    , backward : List Step
     }
 
 
@@ -132,8 +155,8 @@ push item history =
                 entry =
                     { label = item.label
                     , group = item.group
-                    , forward = item.payload
-                    , backward = backward
+                    , forward = [ { file = item.file, payload = item.payload } ]
+                    , backward = [ { file = item.file, payload = backward } ]
                     }
 
                 sameFile =
@@ -160,8 +183,10 @@ push item history =
                         { history | done = entry :: history.done, undone = [] }
 
 
-{-| 1 手戻す。返るのは「今すぐ流すべき編集」と、進めた履歴。 -}
-undo : History -> Maybe ( Payload, History )
+{-| 1 手戻す。返るのは「今すぐ流すべき編集の列」と、進めた履歴。
+横断手ならファイルをまたいだ列がまるごと返る(⌘Z 1 回で全部戻る)。
+-}
+undo : History -> Maybe ( List Step, History )
 undo history =
     case history.done of
         entry :: rest ->
@@ -171,7 +196,7 @@ undo history =
             Nothing
 
 
-redo : History -> Maybe ( Payload, History )
+redo : History -> Maybe ( List Step, History )
 redo history =
     case history.undone of
         entry :: rest ->
@@ -181,12 +206,87 @@ redo history =
             Nothing
 
 
+{-| 複数ファイルにまたがる 1 手(横断置換)。戻す列は「当てた順の逆」にする —
+同じファイルの中で前の編集が後の編集の土台になっている場合でも、後ろから
+剥がせば元の姿に戻る。逆が 1 つでも組めなければ、手ごと積まずに履歴を切る。
+-}
+pushCross :
+    { file : String
+    , label : String
+    , steps : List { file : String, payload : Payload, before : Before }
+    }
+    -> History
+    -> History
+pushCross item history =
+    let
+        inverses =
+            item.steps
+                |> List.map (\step -> inverse step.payload step.before |> Maybe.map (\p -> { file = step.file, payload = p }))
+    in
+    if List.isEmpty item.steps || List.any ((==) Nothing) inverses then
+        { empty | file = Just item.file }
+
+    else
+        { file = Just item.file
+        , done =
+            { label = item.label
+            , group = Nothing
+            , forward = item.steps |> List.map (\step -> { file = step.file, payload = step.payload })
+            , backward = inverses |> List.filterMap identity |> List.reverse
+            }
+                :: (if history.file == Just item.file then
+                        history.done
+
+                    else
+                        []
+                   )
+        , undone = []
+        }
+
+
 {-| 外から正本が入れ替わった(開き直し・再読込・テキスト直接編集・衝突の上書き)。
 履歴の前提が崩れるので全部捨てる — 古い逆操作は今の文書には当たらない。
 -}
 cutOnExternalChange : History -> History
 cutOnExternalChange history =
     { file = history.file, done = [], undone = [] }
+
+
+{-| 編集する前の文書から、その手の逆を組む材料を控える。
+op ごとに要る物が違う(値そのもの / 触る配列 / batch の各所)ので、
+控え方の決定もここに置く — 呼び側は「編集前の doc」を渡すだけでよい。
+-}
+beforeFor : Payload -> D.Value -> Before
+beforeFor payload doc =
+    case payload.op of
+        SetOp ->
+            Value (Edit.valueAt payload.path doc)
+
+        AppendOp ->
+            -- 配列がまだ無ければ逆は組めない(足す前の「キーごと無い」姿へは
+            -- 末尾 1 件の削除では戻らない)。Value Nothing にして履歴を切らせる
+            arrayAt payload.path doc
+                |> Maybe.map Array
+                |> Maybe.withDefault (Value Nothing)
+
+        RemoveOp ->
+            case arrayParent payload.path of
+                Just parent ->
+                    arrayAt parent doc
+                        |> Maybe.map Array
+                        |> Maybe.withDefault (Value Nothing)
+
+                Nothing ->
+                    Value (Edit.valueAt payload.path doc)
+
+        BatchSetOp ->
+            Batch (batchPaths payload.value |> List.map (\path -> ( path, Edit.valueAt path doc )))
+
+
+arrayAt : List Seg -> D.Value -> Maybe (List E.Value)
+arrayAt path doc =
+    Edit.valueAt path doc
+        |> Maybe.andThen (\raw -> D.decodeValue (D.list D.value) raw |> Result.toMaybe)
 
 
 {-| 逆操作の導出。組めない組み合わせは Nothing(呼び側が履歴を切る)。 -}

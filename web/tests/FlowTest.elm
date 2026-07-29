@@ -60,6 +60,10 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.SfxWaitTick info.seq)
 
+        Effect.SearchDebounce info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.SearchDebounced info.seq)
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 
@@ -138,6 +142,7 @@ resourcesBody =
           , E.list identity
                 [ E.object
                     [ ( "id", E.string "level" )
+                    , ( "pattern", E.string "assets/*.json" )
                     , ( "title", E.string "レベル" )
                     , ( "plugin", E.string "shooterLevel" )
                     , ( "files"
@@ -689,6 +694,15 @@ openedMap =
             ( "click", E.object [] )
 
 
+{-| 封筒の kind と payload.path と値(値は JSON 1 行に畳んで比べる)。 -}
+kindPathValue : D.Decoder ( String, List String, String )
+kindPathValue =
+    D.map3 (\kind path value -> ( kind, path, value ))
+        (D.field "kind" D.string)
+        (D.at [ "payload", "path" ] (D.list (D.oneOf [ D.string, D.int |> D.map String.fromInt ])))
+        (D.at [ "payload", "value" ] D.value |> D.map (E.encode 0))
+
+
 {-| 封筒の kind と payload.path(添字は文字列に揃える)。 -}
 kindAndPath : D.Decoder ( String, List String )
 kindAndPath =
@@ -705,6 +719,66 @@ clickRoomRow =
     ProgramTest.simulateDomEvent
         (Query.find [ class "place-room-row" ])
         ( "click", E.object [] )
+
+
+{-| 検索パネルを開いて「turret」で探し、結果が返った所まで。 -}
+searched : App -> App
+searched app =
+    app
+        |> ProgramTest.update Main.SearchToggled
+        |> typeSearch "turret"
+        |> ProgramTest.advanceTime 150
+        |> ensureKinds [ "search" ]
+        |> respondOk 8 "search" searchBody
+
+
+{-| 一覧の行を右クリックする(カーソル位置と窓の大きさを添える)。 -}
+rightClickFileRow : App -> App
+rightClickFileRow =
+    ProgramTest.simulateDomEvent
+        (Query.find [ class "file-row" ])
+        ( "contextmenu"
+        , E.object
+            [ ( "clientX", E.float 120 )
+            , ( "clientY", E.float 200 )
+            , ( "view", E.object [ ( "innerWidth", E.float 1280 ), ( "innerHeight", E.float 800 ) ] )
+            ]
+        )
+
+
+{-| 横断検索の窓に打つ。 -}
+typeSearch : String -> App -> App
+typeSearch value =
+    ProgramTest.simulateDomEvent
+        (Query.find [ class "search-query" ])
+        ( "input", E.object [ ( "target", E.object [ ( "value", E.string value ) ] ) ] )
+
+
+{-| GET /search の応答(ファイル名 1 件 + 中身 2 件 = 一覧は 3 行)。 -}
+searchBody : E.Value
+searchBody =
+    E.object
+        [ ( "files", E.list E.string [ "assets/level.json" ] )
+        , ( "filesTotal", E.int 1 )
+        , ( "total", E.int 2 )
+        , ( "truncated", E.bool False )
+        , ( "results"
+          , E.list identity
+                [ hitBody [ E.string "spawns", E.int 0, E.string "kind" ] "turret"
+                , hitBody [ E.string "spawns", E.int 1, E.string "route" ] "fast"
+                ]
+          )
+        ]
+
+
+hitBody : List E.Value -> String -> E.Value
+hitBody path value =
+    E.object
+        [ ( "file", E.string "assets/level.json" )
+        , ( "path", E.list identity path )
+        , ( "value", E.string value )
+        , ( "excerpt", E.string value )
+        ]
 
 
 {-| 一覧の行に常設した操作ボタン(↑ ↓ 複製 ✕)の index 番目を押す。 -}
@@ -1256,6 +1330,294 @@ suite =
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "content" ] D.string))
                         (Expect.equal [ ( "putFile", levelEditedText ) ])
+        , test "横断検索: 打鍵は 150ms 置いてから 1 回だけ送り、結果は一覧に出る" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.update Main.SearchToggled
+                    |> typeSearch "turret"
+                    -- 打っている間は投げない(デバウンス)
+                    |> ensureKinds []
+                    |> ProgramTest.advanceTime 150
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "q" ] D.string))
+                        (Expect.equal [ ( "search", "turret" ) ])
+                    |> respondOk 8 "search" searchBody
+                    |> ProgramTest.expectViewHas [ text "1 件", text "assets/level.json" ]
+        , test "横断検索: ファイル名の一致が先頭に出て、件数はファイル / 中身で分かれる" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.update Main.SearchToggled
+                    |> typeSearch "level"
+                    |> ProgramTest.advanceTime 150
+                    |> ensureKinds [ "search" ]
+                    |> respondOk 8 "search" searchBody
+                    |> ProgramTest.expectViewHas
+                        [ text "ファイル 1 件 / 中身 2 件"
+                        , class "search-file"
+                        ]
+        , test "横断検索: 🔍 を押しても同じパネルが開く(ショートカットを知らなくても入れる)" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.ensureViewHasNot [ class "search-query" ]
+                    |> ProgramTest.clickButton "🔍"
+                    |> ProgramTest.expectViewHas [ class "search-query" ]
+        , test "横断検索: ホーム(アトリエの入口)からも 🔍 で開ける" <|
+            \() ->
+                landingWith resourcesBody
+                    |> ProgramTest.clickButton "🔍"
+                    |> ProgramTest.expectViewHas [ class "search-query" ]
+        , test "横断検索: ファイル名の当たりを押すと、そのファイルを開く" <|
+            \() ->
+                booted
+                    |> ProgramTest.update Main.SearchToggled
+                    |> typeSearch "level"
+                    |> ProgramTest.advanceTime 150
+                    |> ensureKinds [ "search" ]
+                    |> respondOk 4 "search" searchBody
+                    |> ProgramTest.simulateDomEvent (Query.find [ class "search-file" ]) ( "click", E.object [] )
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
+                        -- 本文とスキーマの 2 本(普段どおりの開き方)
+                        (Expect.equal
+                            [ ( "getFile", "assets/level.json" )
+                            , ( "getFile", "assets/level.schema.json" )
+                            ]
+                        )
+        , test "横断検索: ↓↓ Enter で 3 件目(中身の 2 件目)を開く" <|
+            \() ->
+                openedLevel
+                    |> searched
+                    |> keydownOn [ class "search-query" ] "ArrowDown"
+                    |> keydownOn [ class "search-query" ] "ArrowDown"
+                    |> ensureKinds [ "scrollTo", "scrollTo" ]
+                    |> keydownOn [ class "search-query" ] "Enter"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "id" ] D.string))
+                        (Expect.equal [ ( "scrollTo", "row-spawns-1-route" ) ])
+        , test "横断検索: 探し直すと選択は先頭に戻る(Enter は先頭のファイルを開く)" <|
+            \() ->
+                openedLevel
+                    |> searched
+                    |> keydownOn [ class "search-query" ] "ArrowDown"
+                    |> keydownOn [ class "search-query" ] "ArrowDown"
+                    |> ensureKinds [ "scrollTo", "scrollTo" ]
+                    |> typeSearch "level"
+                    |> ProgramTest.advanceTime 150
+                    |> ensureKinds [ "search" ]
+                    |> respondOk 10 "search" searchBody
+                    |> keydownOn [ class "search-query" ] "Enter"
+                    -- 先頭はファイル名の当たり = そのファイルを開く(本文とスキーマ)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
+                        (Expect.equal
+                            [ ( "getFile", "assets/level.json" )
+                            , ( "getFile", "assets/level.schema.json" )
+                            ]
+                        )
+        , test "横断検索: 結果を押すと該当ファイルを開き、欄まで画面を送る" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.update Main.SearchToggled
+                    |> typeSearch "turret"
+                    |> ProgramTest.advanceTime 150
+                    |> ensureKinds [ "search" ]
+                    |> respondOk 8 "search" searchBody
+                    |> ProgramTest.simulateDomEvent
+                        (Query.findAll [ class "search-hit" ] >> Query.index 0)
+                        ( "click", E.object [] )
+                    -- 開いているファイルの中なので、開き直さず欄へ送るだけ
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "id" ] D.string))
+                        (Expect.equal [ ( "scrollTo", "row-spawns-0-kind" ) ])
+        , test "置換: ファイルごとに 取得 → 最小編集 → 保存 の直列で書き戻す" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.update Main.SearchToggled
+                    |> typeSearch "turret"
+                    |> ProgramTest.advanceTime 150
+                    |> ensureKinds [ "search" ]
+                    |> respondOk 8 "search" searchBody
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "search-replacement" ])
+                        ( "input", E.object [ ( "target", E.object [ ( "value", E.string "dome" ) ] ) ] )
+                    |> ProgramTest.clickButton "すべて置換"
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
+                        (Expect.equal [ ( "getFile", "assets/level.json" ) ])
+                    |> respondOk 9 "getFile" (fileBody "assets/level.json" levelText)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "edits" ] (D.list (D.field "value" D.string))))
+                        (Expect.equal [ ( "applyDocEdits", [ "dome", "fast" ] ) ])
+        , test "ファイルの動詞: ＋ 新規 は骨格(宣言された欄が全部書かれた本文)で作る" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.clickButton "＋ 新規"
+                    |> ProgramTest.ensureViewHas [ text "「レベル」に新しいファイルを作ります。中身はスキーマの欄を全部書いた骨格です。" ]
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "verb-name" ])
+                        ( "input", E.object [ ( "target", E.object [ ( "value", E.string "stage2" ) ] ) ] )
+                    |> ProgramTest.clickButton "作る"
+                    -- 骨格を組むためにスキーマを 1 往復取りに行ってから作る
+                    |> ensureKinds [ "getFile" ]
+                    |> respondOk 8 "getFile" (fileBody "assets/level.schema.json" schemaText)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map3 (\kind path content -> ( kind, path, String.contains "\"scrollSpeed\": 60" content ))
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "path" ] D.string)
+                            (D.at [ "payload", "content" ] D.string)
+                        )
+                        (Expect.equal [ ( "fileNew", "assets/stage2.json", True ) ])
+        , test "ファイルの動詞: 行の右クリック → 複製 で、元と新しいパスをサーバへ渡す" <|
+            \() ->
+                openedLevel
+                    |> rightClickFileRow
+                    |> ProgramTest.clickButton "複製"
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "verb-name" ])
+                        ( "input", E.object [ ( "target", E.object [ ( "value", E.string "level_b" ) ] ) ] )
+                    |> ProgramTest.clickButton "複製する"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map3 (\kind path toPath -> ( kind, path, toPath ))
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "path" ] D.string)
+                            (D.at [ "payload", "toPath" ] D.string)
+                        )
+                        (Expect.equal [ ( "fileDuplicate", "assets/level.json", "assets/level_b.json" ) ])
+        , test "ファイルの動詞: 右クリック → 削除 は確認を出してから、そのファイルだけを渡す" <|
+            \() ->
+                openedLevel
+                    |> rightClickFileRow
+                    |> ProgramTest.clickButton "削除"
+                    |> ProgramTest.ensureViewHas [ text "\"assets/level.json\" を消します。元には戻せません。" ]
+                    |> ProgramTest.clickButton "消す"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
+                        (Expect.equal [ ( "fileDelete", "assets/level.json" ) ])
+        , test "ファイルの動詞: Delete キー(行にカーソル)でも削除の確認が出る" <|
+            \() ->
+                openedLevel
+                    |> keydownOn [ class "file-open" ] "Delete"
+                    |> ProgramTest.expectViewHas [ text "\"assets/level.json\" を消します。元には戻せません。" ]
+        , test "その場の名前変更: F2 で欄になり、Enter で fileRename が飛ぶ" <|
+            \() ->
+                openedLevel
+                    |> keydownOn [ class "file-open" ] "F2"
+                    |> ProgramTest.ensureViewHas [ class "file-rename" ]
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "file-rename" ])
+                        ( "input", E.object [ ( "target", E.object [ ( "value", E.string "stage9" ) ] ) ] )
+                    |> keydownOn [ class "file-rename" ] "Enter"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.field "payload" D.value)
+                            |> D.andThen
+                                (\( kind, payload ) ->
+                                    if kind == "fileRename" then
+                                        D.map2 (\path toPath -> ( path, toPath ))
+                                            (D.at [ "payload", "path" ] D.string)
+                                            (D.at [ "payload", "toPath" ] D.string)
+
+                                    else
+                                        -- 欄へカーソルを置く頼み事は別件(名前の変更そのものではない)
+                                        D.succeed ( kind, "" )
+                                )
+                        )
+                        (Expect.equal
+                            [ ( "focusId", "" )
+                            , ( "assets/level.json", "assets/stage9.json" )
+                            ]
+                        )
+        , test "その場の名前変更: Esc は取り消し(欄が消えて、何も飛ばない)" <|
+            \() ->
+                openedLevel
+                    |> keydownOn [ class "file-open" ] "F2"
+                    |> keydownOn [ class "file-rename" ] "Escape"
+                    |> ProgramTest.ensureViewHasNot [ class "file-rename" ]
+                    -- 飛んだのは欄へカーソルを置く頼み事だけ(ファイルは触らない)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.field "kind" D.string)
+                        (Expect.equal [ "focusId" ])
+        , test "右クリックメニュー: Esc で閉じる" <|
+            \() ->
+                openedLevel
+                    |> rightClickFileRow
+                    |> ProgramTest.ensureViewHas [ class "context-menu" ]
+                    |> ProgramTest.update Main.FileMenuClosed
+                    |> ProgramTest.expectViewHasNot [ class "context-menu" ]
+        , describe "ダイアログは ✕ / Esc / 外側クリックのどれでも閉じる"
+            ([ "close-button", "keyboard", "overlay" ]
+                |> List.map
+                    (\source ->
+                        test ("新しいファイルのダイアログ: " ++ source) <|
+                            \() ->
+                                openedLevel
+                                    |> ProgramTest.clickButton "＋ 新規"
+                                    |> ProgramTest.ensureViewHas [ class "file-verb" ]
+                                    |> ProgramTest.simulateDomEvent
+                                        (Query.find [ class "file-verb" ])
+                                        ( "sl-request-close"
+                                        , E.object [ ( "detail", E.object [ ( "source", E.string source ) ] ) ]
+                                        )
+                                    |> ProgramTest.expectViewHasNot [ class "file-verb" ]
+                    )
+            )
+        , test "元に戻す: 欄の編集が履歴に積まれ、↩ を押すと旧値を書く applyDocEdit が飛ぶ" <|
+            \() ->
+                openedLevel
+                    |> typeNumberBox "72"
+                    |> keydownOn [ class "number-box" ] "Enter"
+                    |> ensureKinds [ "applyDocEdit" ]
+                    |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelEditedText ) ])
+                    |> ensureKinds [ "previewItems" ]
+                    |> ProgramTest.ensureViewHas [ text "↩ 1" ]
+                    |> ProgramTest.clickButton "↩ 1"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindPathValue
+                        (Expect.equal [ ( "applyDocEdit", [ "meta", "scrollSpeed" ], "60" ) ])
+        , test "元に戻す: 戻した手はやり直せる(↩ の数が減り、同じ値をもう一度書く)" <|
+            \() ->
+                openedLevel
+                    |> typeNumberBox "72"
+                    |> keydownOn [ class "number-box" ] "Enter"
+                    |> ensureKinds [ "applyDocEdit" ]
+                    |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelEditedText ) ])
+                    |> ensureKinds [ "previewItems" ]
+                    |> ProgramTest.clickButton "↩ 1"
+                    |> ensureKinds [ "applyDocEdit" ]
+                    |> respondOk 10 "applyDocEdit" (E.object [ ( "text", E.string levelText ) ])
+                    |> ensureKinds []
+                    |> ProgramTest.ensureViewHasNot [ text "↩ 1" ]
+                    |> ProgramTest.update Main.RedoPressed
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindPathValue
+                        (Expect.equal [ ( "applyDocEdit", [ "meta", "scrollSpeed" ], "72" ) ])
+        , test "元に戻す: 追加した行は remove で消える(逆操作は末尾 1 件だけ)" <|
+            \() ->
+                openedLevel
+                    |> ProgramTest.clickButton "spawns"
+                    |> ProgramTest.clickButton "+ 追加"
+                    |> ensureKinds [ "applyDocAppend" ]
+                    |> respondOk 8 "applyDocAppend" (E.object [ ( "text", E.string levelWithThirdSpawn ) ])
+                    |> ensureKinds [ "previewItems" ]
+                    |> ProgramTest.update Main.UndoPressed
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocRemove", [ "spawns", "2" ] ) ])
+        , test "元に戻す: テキストを手で書き換えたら履歴は切れる(古い逆操作を当てない)" <|
+            \() ->
+                openedLevel
+                    |> typeNumberBox "72"
+                    |> keydownOn [ class "number-box" ] "Enter"
+                    |> ensureKinds [ "applyDocEdit" ]
+                    |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelEditedText ) ])
+                    |> ensureKinds [ "previewItems" ]
+                    -- 読み直し(外の中身を取り直す)で正本が入れ替わる
+                    |> ProgramTest.clickButton "読み直す"
+                    |> ensureKinds [ "getFile" ]
+                    |> respondOk 10 "getFile" (fileBody "assets/level.json" levelText)
+                    |> ensureKinds []
+                    |> ProgramTest.ensureViewHasNot [ text "↩ 1" ]
+                    |> ProgramTest.update Main.UndoPressed
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest" kindAndPath (Expect.equal [])
         , test "説明(help): 閉じている間は本文が DOM に無く、? を押すと出る(もう一度で消える)" <|
             \() ->
                 openedLevel

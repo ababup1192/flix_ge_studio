@@ -6,6 +6,7 @@ module EntryOps exposing
     , addProblem
     , deleteOp
     , duplicateOp
+    , fieldValue
     , freshId
     , listRowOp
     , newEntry
@@ -225,6 +226,7 @@ newEntry section =
     E.object (section.fields |> List.map (\( name, field ) -> ( name, fieldValue field )))
 
 
+{-| 欄 1 つの既定値。default があればそれ、無ければ type ごとの零値。 -}
 fieldValue : Field -> E.Value
 fieldValue field =
     case field.default of

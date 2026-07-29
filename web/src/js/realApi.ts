@@ -104,6 +104,57 @@ export function realApi(base: string): Api {
             return await raiseHttpError(res, `${base}/file`);
           }
         }
+        case "search":
+          return getJson(`${base}/search?q=${encodeURIComponent(String((payload as { q: string }).q ?? ""))}`);
+        // 検索結果から飛んだ欄まで画面を送る。描き終わるのは Elm の次の描画なので
+        // 少しだけ待って探す(見つからなければ静かに諦める — 移動は演出であって編集ではない)
+        case "scrollTo": {
+          const opts = payload as { id: string; block?: ScrollLogicalPosition; flash?: boolean };
+          const id = String(opts.id ?? "");
+          // 既定は「真ん中へ寄せて光らせる」(検索から欄へ飛んだ時)。
+          // 一覧の追従は nearest + 光らせない — 選択が動くたびに光ると読めない
+          const block = opts.block ?? "center";
+          const flash = opts.flash ?? true;
+          const tryScroll = (left: number) => {
+            const el = document.getElementById(id);
+            if (el !== null) {
+              el.scrollIntoView({ block });
+              if (flash) {
+                el.classList.add("jump-flash");
+                window.setTimeout(() => el.classList.remove("jump-flash"), 1200);
+              }
+            } else if (left > 0) {
+              window.requestAnimationFrame(() => tryScroll(left - 1));
+            }
+          };
+          window.requestAnimationFrame(() => tryScroll(30));
+          return { ok: true };
+        }
+        // その場編集の欄へカーソルを置く(描き終わるのを待って探す)
+        case "focusId": {
+          const id = String((payload as { id: string }).id ?? "");
+          const tryFocus = (left: number) => {
+            const el = document.getElementById(id);
+            if (el instanceof HTMLInputElement) {
+              el.focus();
+              el.select();
+            } else if (left > 0) {
+              window.requestAnimationFrame(() => tryFocus(left - 1));
+            }
+          };
+          window.requestAnimationFrame(() => tryFocus(30));
+          return { ok: true };
+        }
+        // ファイルそのものへの動詞。断り(409 既にある / 400 プロジェクト外)は
+        // サーバの理由つきで投げる — 画面には「なぜできなかったか」を出したい
+        case "fileNew":
+          return sendJsonReason("POST", `${base}/file/new`, payload);
+        case "fileDuplicate":
+          return sendJsonReason("POST", `${base}/file/duplicate`, payload);
+        case "fileRename":
+          return sendJsonReason("POST", `${base}/file/rename`, payload);
+        case "fileDelete":
+          return sendJsonReason("POST", `${base}/file/delete`, payload);
         case "journeyState":
           return getJson(`${base}/journey/state`);
         case "journeyChanges":

@@ -5,6 +5,7 @@ module Edit exposing
     , encodeSeg
     , fromRefsSeg
     , pathKey
+    , valueAt
     )
 
 {-| 正本(jsonc テキスト)への編集 1 件の語彙。
@@ -18,6 +19,7 @@ module Edit exposing
 
 -}
 
+import Json.Decode as D
 import Json.Encode as E
 import Refs
 
@@ -87,3 +89,23 @@ fromRefsSeg seg =
 
         Refs.Idx i ->
             IdxSeg i
+
+
+{-| パスが指す今の値。無い(まだ書かれていない)場所は Nothing —
+「null が書いてある」と「何も無い」を取り違えると、戻す先を間違える。
+-}
+valueAt : List Seg -> D.Value -> Maybe D.Value
+valueAt path doc =
+    case path of
+        [] ->
+            Just doc
+
+        (KeySeg key) :: rest ->
+            D.decodeValue (D.field key D.value) doc
+                |> Result.toMaybe
+                |> Maybe.andThen (valueAt rest)
+
+        (IdxSeg i) :: rest ->
+            D.decodeValue (D.index i D.value) doc
+                |> Result.toMaybe
+                |> Maybe.andThen (valueAt rest)

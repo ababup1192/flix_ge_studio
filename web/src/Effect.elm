@@ -30,6 +30,9 @@ type Effect
       -- 焼き上がりの確かめのように「少し置いてからもう一度」の予約。
       -- seq は古い予約が新しい物を追い越さないための合鍵
     | Delayed { seq : Int, afterMs : Float }
+      -- 横断検索の打鍵デバウンス。seq は「その予約がまだ最新か」の合鍵で、
+      -- 打っている間の予約は次々に失効する(最後の 1 回だけがサーバへ行く)
+    | SearchDebounce { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -65,6 +68,7 @@ perform :
     , noticeExpired : { seq : Int, message : String } -> msg
     , autosaveFired : Int -> msg
     , delayFired : Int -> msg
+    , searchDebounced : Int -> msg
     }
     -> Effect
     -> Cmd msg
@@ -84,6 +88,10 @@ perform caps effect =
         Delayed info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.delayFired info.seq)
+
+        SearchDebounce info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.searchDebounced info.seq)
 
         NoFx ->
             Cmd.none

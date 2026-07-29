@@ -647,3 +647,13 @@ sl-alert.notice::part(message) {
 .sfx-flag {
   color: var(--color-warn);
 }
+
+/* 検索から飛んだ欄の目印。1 度だけ薄く光らせて、どこへ来たのかを示す */
+.jump-flash {
+  animation: jump-flash 1.2s ease-out;
+}
+
+@keyframes jump-flash {
+  from { background-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+  to   { background-color: transparent; }
+}
