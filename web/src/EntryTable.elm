@@ -57,6 +57,9 @@ type alias State =
     , sort : Maybe Table.SortState
     , filter : String
     , usagesOpenFor : Maybe String
+
+    -- 行に添える注意(添字 → 理由)。焼き係が「飛ばした」と言ってきた行に付く
+    , notes : Dict.Dict Int String
     }
 
 
@@ -184,7 +187,7 @@ viewBox handlers state heightClass doc key section usageDict =
                 ]
             , tbody []
                 (shownRows
-                    |> List.map (viewTableRow handlers state.entrySel numericCols (usageDict |> Maybe.map (\dict -> ( key, dict ))) rowOps)
+                    |> List.map (viewTableRow handlers state.entrySel numericCols (usageDict |> Maybe.map (\dict -> ( key, dict ))) rowOps state.notes)
                 )
             ]
         ]
@@ -302,8 +305,8 @@ type alias RowOps =
     }
 
 
-viewTableRow : Handlers msg -> Maybe EntrySel -> List String -> Maybe ( String, UsageDicts ) -> Maybe RowOps -> Table.TableRow -> Html msg
-viewTableRow handlers entrySel numericCols catalogUsage rowOps row =
+viewTableRow : Handlers msg -> Maybe EntrySel -> List String -> Maybe ( String, UsageDicts ) -> Maybe RowOps -> Dict.Dict Int String -> Table.TableRow -> Html msg
+viewTableRow handlers entrySel numericCols catalogUsage rowOps notes row =
     let
         sel =
             case row.rowId of
@@ -333,7 +336,7 @@ viewTableRow handlers entrySel numericCols catalogUsage rowOps row =
                 , ( "text-ink-faint", not isOn )
                 ]
             ]
-            (text row.idText :: viewRowSummary rowOps row.summary)
+            (text row.idText :: viewRowNote notes row.rowId ++ viewRowSummary rowOps row.summary)
             :: (row.cells
                     |> List.map
                         (\c ->
@@ -350,6 +353,27 @@ viewTableRow handlers entrySel numericCols catalogUsage rowOps row =
             ++ viewUsageCell handlers catalogUsage row.rowId
             ++ viewRowOpsCell handlers rowOps row.rowId
         )
+
+
+{-| 焼き係が「このカットは飛ばした」と言ってきた行の印。理由はホバーで読む。 -}
+viewRowNote : Dict.Dict Int String -> Table.RowId -> List (Html msg)
+viewRowNote notes rowId =
+    case rowId of
+        Table.ByIdx index ->
+            case Dict.get index notes of
+                Just reason ->
+                    [ span
+                        [ HA.class "row-note ml-1 text-amber-300"
+                        , HA.title reason
+                        ]
+                        [ text "⚠" ]
+                    ]
+
+                Nothing ->
+                    []
+
+        _ ->
+            []
 
 
 {-| 番号だけの行に中身の見当を添える(盤面の行一覧と同じ規則の 1 行見出し)。

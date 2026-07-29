@@ -120,34 +120,17 @@ mod BakeHost {
             out.write(head.getBytes("UTF-8"));
             out.write(payload);
             out.flush();
-            let bytes = socket.getInputStream().readAllBytes();
+            // 相手(BakeService)は Content-Length を付けた後も繋ぎっぱなしにする。
+            // EOF を待つと、届いている音を待ちぼうけのまま捨ててしまう
+            let input = socket.getInputStream();
+            let answer = BakeProxy.readHeader(input)
+                |> Option.flatMap(header ->
+                    if (not String.startsWith(prefix = "HTTP/1.1 200", header)) None
+                    else Some(BakeProxy.readBodyBytes(input, BakeProxy.contentLength(header))));
             socket.close();
-            if (not String.startsWith(prefix = "HTTP/1.1 200", new JavaString(bytes, "UTF-8"))) None
-            else bodyBytes(bytes)
+            answer
         } catch {
             case _: Exception => None
-        }
-
-    /// 生の応答から本文だけ取り出す。頭と本文の境目は空行 (CR LF CR LF)。
-    /// WAV はバイト列なので、文字へ直さずに切る。
-    def bodyBytes(raw: Array[Int8, Static]): Option[Array[Int8, Static]] \ IO =
-        let len = Array.length(raw);
-        let at = List.range(0, Int32.max(0, len - 3)) |> List.findLeft(i ->
-            Array.get(i, raw) == 13i8 and Array.get(i + 1, raw) == 10i8
-                and Array.get(i + 2, raw) == 13i8 and Array.get(i + 3, raw) == 10i8);
-        match at {
-            case None    => None
-            case Some(i) => {
-                let start = i + 4;
-                let size = len - start;
-                if (size <= 0) None
-                else {
-                    let out = Array.empty(Static, size);
-                    List.range(0, size) |> List.forEach(k ->
-                        Array.put(Array.get(start + k, raw), k, out));
-                    Some(out)
-                }
-            }
         }
 
     /// 焼き係を裏で立ち上げる。すでに立ち上げ中なら何もしない

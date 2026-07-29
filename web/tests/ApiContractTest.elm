@@ -193,6 +193,18 @@ suite =
                                 }
                             )
             ]
+        , describe "/bake/proxy(焼き応答)"
+            [ test "コマ送りの総数は間引き後の枚数(演じた総コマではない)" <|
+                \_ ->
+                    let
+                        body =
+                            """{"ok":true,"reachable":true,"body":"{\\"baked\\":[{\\"gif\\":\\"debug/cutscene/prologue.gif\\",\\"frames\\":679,\\"notes\\":[]}]}"}"""
+                    in
+                    D.decodeString Api.bakeResultDecoder body
+                        |> Result.map (\result -> ( result.frames, Api.pngFrameCount result ))
+                        -- 30fps で 679 コマ演じ、PNG は stride=2 の 340 枚
+                        |> Expect.equal (Ok ( 679, 340 ))
+            ]
         , describe "/resources"
             [ test "title・plugin・schema 付きの宣言がグループ構造のまま読める" <|
                 \_ ->
@@ -202,6 +214,7 @@ suite =
                             (Ok
                                 (Just
                                     { id = "level"
+                                    , bakeUrl = Nothing
                                     , pattern = "assets/level.json"
                                     , title = Just "レベル"
                                     , plugin = Just "shooterLevel"
@@ -216,6 +229,7 @@ suite =
                         |> Expect.equal
                             (Ok
                                 [ { id = "misc"
+                                  , bakeUrl = Nothing
                                   , pattern = "assets/*.hitbox.json"
                                   , title = Nothing
                                   , plugin = Nothing

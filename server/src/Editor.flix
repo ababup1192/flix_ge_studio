@@ -151,6 +151,11 @@ mod Editor {
             // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
             // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
             // 横断検索。宣言済み Doc の文字列値だけを単純一致で探す (大きな生成物は名前だけ)
+            // 焼き係(ゲーム側の常駐サーバ)への取り次ぎ。宛先は宣言(bakeUrl)から来る
+            case ("POST", "/bake/proxy") => withProject(selection, exchange, _dir -> {
+                let (status, json) = BakeProxy.respond(readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("GET", "/search") => withProject(selection, exchange, dir -> {
                 let (status, json) = Search.respond(dir, params);
                 sendJson(status, json, exchange)
@@ -530,11 +535,15 @@ mod Editor {
                         Map.insert("schema", JString(schemaPath), base)
                     else base)
         });
-        let base = Map#{
+        let withBake = match decl#bakeUrl {
+            case Some(url) => Map#{"bakeUrl" => JString(url)}
+            case None      => Map#{}
+        };
+        let base = Map.union(withBake, Map#{
             "id"      => JString(decl#id),
             "pattern" => JString(decl#pattern),
             "files"   => JArray(List.toVector(files))
-        };
+        });
         let withTitle = match decl#title {
             case Some(t) => Map.insert("title", JString(t), base)
             case None    => base
@@ -548,7 +557,7 @@ mod Editor {
     /// エラーにならず「schema 未指定」として黙って sibling 規約へ倒れ、フォームが出ない理由が
     /// 誰にも分からなくなる — ここで名指しすることでだけ気づける。
     def declKeyWarnings(projectJson: Json): List[String] =
-        let known = Set#{"id", "pattern", "title", "schema", "plugin", "role"};
+        let known = Set#{"id", "pattern", "title", "schema", "plugin", "role", "bakeUrl"};
         let decls = JsonCodec.expectObject(projectJson)
             |> Option.flatMap(obj -> Map.get("editor", obj))
             |> Option.flatMap(JsonCodec.expectObject)
@@ -564,7 +573,7 @@ mod Editor {
                 let declId = Map.get("id", obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("?");
                 Map.keysOf(obj) |> Set.toList
                     |> List.filter(k -> not Set.memberOf(k, known))
-                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin / role)")
+                    |> List.map(k -> "宣言『${declId}』に未知のキー『${k}』があります(使えるのは id / pattern / title / schema / plugin / role / bakeUrl)")
         })
 
     /// 宣言と実ファイルの健康診断。応答は 200 のまま warnings で「見える化」だけする —
@@ -724,12 +733,12 @@ mod Editor {
     /// GET /gallery/image?dir=…&name=… — PNG のバイト列。不正な指定・無いファイルは 404。
     def handleGalleryImage(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
         let found = match (Map.get("dir", params), Map.get("name", params)) {
-            case (Some(subdir), Some(name)) => Gallery.imageBytes(dir, subdir, name)
+            case (Some(subdir), Some(name)) => Gallery.mediaBytes(dir, subdir, name)
             case _                          => None
         };
         match found {
-            case Some(bytes) => sendBytes("image/png", bytes, exchange)
-            case None        => sendJson(404, errorJson("image not found"), exchange)
+            case Some((kind, bytes)) => sendBytes(kind, bytes, exchange)
+            case None                => sendJson(404, errorJson("image not found"), exchange)
         }
 
     /// GET /atelier/preview?file=… — 候補/スロットのプレビュー PNG のバイト列。

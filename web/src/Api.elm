@@ -16,6 +16,7 @@ module Api exposing
     , PutFileResult(..)
     , ResourceFile
     , ResourceGroup
+    , BakeResult
     , Resources
     , SearchHit
     , SearchResults
@@ -32,6 +33,8 @@ module Api exposing
     , projectsDecoder
     , putFileResultDecoder
     , resourcesDecoder
+    , bakeResultDecoder
+    , pngFrameCount
     , runningGamesDecoder
     , searchResultsDecoder
     , spriteColorsDecoder
@@ -214,6 +217,9 @@ filesDecoder =
 type alias ResourceGroup =
     { id : String
 
+    -- 焼き係(ゲーム側の常駐サーバ)の URL。宣言があれば「焼く」を出す
+    , bakeUrl : Maybe String
+
     -- 宣言の照合パターン("assets/*.map.json" 等)。新しいファイルの置き場と
     -- 名前の決まりでもあるので、一覧を出す側だけでなく「+ 新規」も見る
     , pattern : String
@@ -277,8 +283,9 @@ dashboardDecoder =
 
 resourceGroupDecoder : D.Decoder ResourceGroup
 resourceGroupDecoder =
-    D.map5 ResourceGroup
+    D.map6 ResourceGroup
         (D.field "id" D.string)
+        (opt "bakeUrl" D.string)
         (withDefault "" (D.field "pattern" D.string))
         (opt "title" D.string)
         (opt "plugin" D.string)
@@ -530,3 +537,87 @@ searchHitDecoder =
 segDecoder : D.Decoder Seg
 segDecoder =
     D.oneOf [ D.map KeySeg D.string, D.map IdxSeg D.int ]
+
+
+{-| POST /bake/proxy の応答。reachable=False は「焼き係が起きていない」で、
+壊れではない(画面は起こし方を案内するだけ)。gif / frames / notes は焼き係の
+応答(1 件目)から。
+-}
+type alias BakeResult =
+    { reachable : Bool
+    , gif : Maybe String
+
+    -- 演じた総コマ(30fps)。コマ別 PNG は間引いて焼かれるので、この数ではない
+    , frames : Int
+
+    -- コマ別 PNG の枚数(応答が明示する時だけ)と、間引きの歩幅
+    , pngFrames : Maybe Int
+    , stride : Int
+    , notes : List String
+    }
+
+
+{-| コマ送りで指せる枚数。明示があればそれ、無ければ総コマ ÷ 歩幅の切り上げ。
+総コマをそのまま使うと、焼かれていない番号の PNG を指してしまう。
+-}
+pngFrameCount : BakeResult -> Int
+pngFrameCount result =
+    case result.pngFrames of
+        Just n ->
+            n
+
+        Nothing ->
+            let
+                stride =
+                    max 1 result.stride
+            in
+            (result.frames + stride - 1) // stride
+
+
+bakeResultDecoder : D.Decoder BakeResult
+bakeResultDecoder =
+    D.field "reachable" D.bool
+        |> D.andThen
+            (\reachable ->
+                if not reachable then
+                    D.succeed
+                        { reachable = False, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
+
+                else
+                    D.field "body" D.string
+                        |> D.map
+                            (\body ->
+                                case D.decodeString bakedDecoder body of
+                                    Ok baked ->
+                                        { reachable = True
+                                        , gif = baked.gif
+                                        , frames = baked.frames
+                                        , pngFrames = baked.pngFrames
+                                        , stride = baked.stride
+                                        , notes = baked.notes
+                                        }
+
+                                    Err _ ->
+                                        { reachable = True, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
+                            )
+            )
+
+
+{-| 焼き係の本文 {"baked":[{gif,frames,notes}]}。1 本だけ焼く前提で先頭を採る。 -}
+bakedDecoder : D.Decoder { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, notes : List String }
+bakedDecoder =
+    D.field "baked" (D.list bakedItemDecoder)
+        |> D.map
+            (List.head
+                >> Maybe.withDefault { gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
+            )
+
+
+bakedItemDecoder : D.Decoder { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, notes : List String }
+bakedItemDecoder =
+    D.map5 (\gif frames pngFrames stride notes -> { gif = gif, frames = frames, pngFrames = pngFrames, stride = stride, notes = notes })
+        (opt "gif" D.string)
+        (withDefault 0 (D.field "frames" D.int))
+        (opt "pngFrames" D.int)
+        (withDefault 2 (D.field "stride" D.int))
+        (withDefault [] (D.field "notes" (D.list D.string)))

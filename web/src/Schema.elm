@@ -55,6 +55,10 @@ type alias Section =
     -- (画面では "?" を押した時だけ開く)
     , help : Maybe String
 
+    -- 宣言した欄が「どれか 1 つ」の選択肢か(1 行 = 1 種類の一覧)。
+    -- 真ならフォームは「種類を選ぶ → その欄だけ出す」形になる
+    , oneOf : Bool
+
     -- 同じ group 名を書いた単一値のセクションは、1 枚のタブに束ねて表として並ぶ。
     -- 設定が数十個ある文書で「1 値 = 1 タブ」になるのを防ぐための、見せ方だけの指定。
     -- 書かなければ「基本」タブへ束ねる。セクションの種類は変えないので、
@@ -196,11 +200,15 @@ schemaDecoder =
 
 sectionDecoder : D.Decoder Section
 sectionDecoder =
-    D.map5 (\label help group widget body -> { body | label = label, help = help, group = group, widget = widget })
+    D.map6
+        (\label help group widget oneOf body ->
+            { body | label = label, help = help, group = group, widget = widget, oneOf = oneOf }
+        )
         (opt "label" D.string)
         (opt "help" D.string)
         (opt "group" D.string)
         (opt "widget" D.value)
+        (D.oneOf [ D.field "oneOf" D.bool, D.succeed False ])
         sectionBodyDecoder
 
 
@@ -241,7 +249,14 @@ sectionBodyDecoder =
 {-| label 抜きの Section を組む(label は sectionDecoder が後載せする)。 -}
 section : SectionKind -> List ( String, Field ) -> Section
 section kind fields =
-    { kind = kind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = fields }
+    { kind = kind
+    , label = Nothing
+    , help = Nothing
+    , group = Nothing
+    , widget = Nothing
+    , oneOf = False
+    , fields = fields
+    }
 
 
 fieldsDecoder : D.Decoder (List ( String, Field ))
@@ -380,6 +395,10 @@ scalarType name =
             D.succeed TTexture
 
         "json" ->
+            D.succeed TJson
+
+        -- 中身の形を宣言しないオブジェクト({x,y} 等)。生 JSON 行で受ける
+        "object" ->
             D.succeed TJson
 
         "grid" ->

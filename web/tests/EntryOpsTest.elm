@@ -74,6 +74,7 @@ routesSection =
     , help = Nothing
     , group = Nothing
     , widget = Nothing
+    , oneOf = False
     , fields =
         [ ( "type", emptyField (TEnum [ "straight", "sine" ]) )
         , ( "speed", emptyField TFloat |> withDefault (E.float 60) )
@@ -89,6 +90,7 @@ spawnsSection =
     , help = Nothing
     , group = Nothing
     , widget = Nothing
+    , oneOf = False
     , fields =
         [ ( "atX", emptyField TInt )
         , ( "name", emptyField TText )

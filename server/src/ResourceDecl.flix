@@ -19,7 +19,8 @@ mod ResourceDecl {
         schemaPath = Option[String],    // 入力フォームの形を決めるスキーマファイル
         plugin = Option[String],        // 専用の編集画面プラグイン名。無ければ汎用フォームで編集する
         builtin = Bool,                 // true = サーバ組み込み (ui / hitbox)。project.json 由来は false
-        role = Option[String]           // "material" (素材 = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
+        role = Option[String],          // "material" (素材 = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
+        bakeUrl = Option[String]        // 焼き係 (ゲーム側の常駐サーバ) の URL。宣言があれば画面に「焼く」が出る
     }
 
     /// アトリエ (つくる) の対象か。role の明示的な "material" だけを通す —
@@ -72,9 +73,9 @@ mod ResourceDecl {
     // 組み込みは専用のプレビュー画面が受け持ち、スキーマ駆動フォームを使わないため。
     pub def builtinDecls(): List[Decl] =
            { id = "ui",     pattern = "*.ui.json",  title = Some("UI"),
-             schemaPath = None, plugin = None, builtin = true, role = None }
+             schemaPath = None, plugin = None, builtin = true, role = None, bakeUrl = None }
         :: { id = "hitbox", pattern = "hitbox.json", title = Some("ヒットボックス"),
-             schemaPath = None, plugin = None, builtin = true, role = None }
+             schemaPath = None, plugin = None, builtin = true, role = None, bakeUrl = None }
         :: Nil
 
     // ── "editor" セクションの分解 ─────────────────────────
@@ -120,7 +121,8 @@ mod ResourceDecl {
             schemaPath = schemaPathOf(pattern, optionalString("schema", declObj)),
             plugin     = optionalString("plugin", declObj),
             builtin    = false,
-            role       = optionalString("role", declObj)
+            role       = optionalString("role", declObj),
+            bakeUrl    = optionalString("bakeUrl", declObj)
         }
 
     /// dashboards の要素 1 件を DashboardDecl に読む。id と plugin は必須。

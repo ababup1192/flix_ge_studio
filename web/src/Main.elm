@@ -564,6 +564,20 @@ type alias Model =
     , wave : Waveform.Model
     , soundLooping : Bool
 
+    -- マスを選ぶポップオーバー(開いている欄の書き戻し先)。
+    -- 背景は焼いた定規つきの部屋の絵
+    , tilePicker : Maybe { path : List Seg, room : String }
+
+    -- 焼き(ゲーム側の常駐サーバ)の進行と、その結果。
+    -- 進行中も編集は止めない(焼きは 20〜70 秒かかる)
+    , bakeReq : Maybe Int
+
+    -- 焼き始めてからの秒。止まっているのか進んでいるのかを画面で言うため
+    -- (焼きは 70〜90 秒級。無言のスピナーだけだと固まったように見える)
+    , bakeSeconds : Int
+    , bake : Maybe Api.BakeResult
+    , bakeFrame : Int
+
     -- ロールで選んでいる音符(文書の中の並び順)。JSON の行を指すのに使う
     , selectedNote : Maybe Int
 
@@ -795,6 +809,11 @@ init _ =
         , playingSound = Nothing
         , wave = Waveform.init
         , soundLooping = False
+        , tilePicker = Nothing
+        , bakeReq = Nothing
+        , bakeSeconds = 0
+        , bake = Nothing
+        , bakeFrame = 0
         , selectedNote = Nothing
         , sounds = []
         , search = SearchView.init
@@ -893,6 +912,13 @@ type Msg
     | SearchDebounced Int
     | SearchReplacementTyped String
     | JsonPaneToggled
+    | TilePickerOpened (List Seg)
+    | TilePickerClosed
+    | TilePicked (List Seg) Int Int
+    | BakeClicked
+    | BakeFrameChanged String
+    | BakeTick
+    | CutKindChosen (List Seg) (Maybe String) String
     | NoteClicked PianoRoll.Note
     | WaveCleared
     | SoundLoopToggled
@@ -1519,6 +1545,58 @@ update msg model =
 
         JsonPaneToggled ->
             savePrefs { model | jsonPaneOpen = not model.jsonPaneOpen }
+
+        TilePickerOpened path ->
+            ( { model | tilePicker = roomOf model |> Maybe.map (\room -> { path = path, room = room }) }
+            , Effect.none
+            )
+
+        TilePickerClosed ->
+            ( { model | tilePicker = Nothing }, Effect.none )
+
+        TilePicked path x y ->
+            -- マスの値は {x, y} を丸ごと 1 本の set で書く(欄の形をそのまま保つ)
+            queueEdit
+                { op = SetOp
+                , path = path
+                , value = E.object [ ( "x", E.int x ), ( "y", E.int y ) ]
+                , isInt = False
+                }
+                { model | tilePicker = Nothing }
+
+        BakeClicked ->
+            startBake model
+
+        BakeTick ->
+            ( { model | bakeSeconds = model.bakeSeconds + 1 }, Effect.none )
+
+        BakeFrameChanged text_ ->
+            ( { model | bakeFrame = String.toInt text_ |> Maybe.withDefault model.bakeFrame }, Effect.none )
+
+        CutKindChosen basePath old new ->
+            -- 種類の入れ替えは「前の鍵を消す + 新しい鍵を既定値で書く」の 2 本組。
+            -- 既存の編集直列に乗るので、戻すのも 1 回で済む
+            case sectionFieldNamed model new of
+                Just field ->
+                    queueEdits
+                        ((case old of
+                            Just name ->
+                                [ { op = RemoveOp, path = basePath ++ [ KeySeg name ], value = E.null, isInt = False } ]
+
+                            Nothing ->
+                                []
+                         )
+                            ++ [ { op = SetOp
+                                 , path = basePath ++ [ KeySeg new ]
+                                 , value = EntryOps.fieldValue field
+                                 , isInt = False
+                                 }
+                               ]
+                        )
+                        model
+
+                Nothing ->
+                    ( model, Effect.none )
 
         NoteClicked note ->
             -- 押した音符の JSON 行を指し示す(選んだ印はロール側にも残す)
@@ -5991,6 +6069,23 @@ handleOkByKind env model =
                 Err _ ->
                     ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
 
+        "bakeCutscene" ->
+            if Just env.id == model.bakeReq then
+                case D.decodeValue Api.bakeResultDecoder env.body of
+                    Ok result ->
+                        if result.reachable then
+                            ( { model | bakeReq = Nothing, bake = Just result, bakeFrame = 0 }, Effect.none )
+
+                        else
+                            showToast "焼き係に繋がりません(make cutscene-server で起動してください)"
+                                { model | bakeReq = Nothing, bake = Just result }
+
+                    Err _ ->
+                        showToast "焼きの応答が読めませんでした" { model | bakeReq = Nothing }
+
+            else
+                ( model, Effect.none )
+
         "search" ->
             case D.decodeValue Api.searchResultsDecoder env.body of
                 Ok results ->
@@ -7493,6 +7588,7 @@ viewEditing model =
                     Nothing ->
                         text ""
                 , viewFileMenu model
+                , viewTilePicker model
                 , viewSearchPanel model
                 , case model.fileVerb of
                     Just dialog ->
@@ -7654,6 +7750,67 @@ viewJsonTab =
         [ text "JSON" ]
 
 
+{-| 焼く。未保存があれば先に保存してから頼む(サーバは毎回ファイルを読み直すので、
+保存前に頼むと古い脚本が焼ける)。焼いている間も編集は止めない。
+-}
+startBake : Model -> ( Model, Effect )
+startBake model =
+    case ( bakeUrlOf model, model.current ) of
+        ( Just url, Just path ) ->
+            let
+                ( m1, saveFx ) =
+                    if model.dirty then
+                        sendPut model.mtime model
+
+                    else
+                        ( model, Effect.none )
+
+                ( m2, bakeFx ) =
+                    request "bakeCutscene"
+                        (E.object [ ( "url", E.string url ), ( "file", E.string path ) ])
+                        m1
+            in
+            ( { m2 | bakeReq = Just m2.reqCounter, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
+
+        _ ->
+            ( model, Effect.none )
+
+
+{-| 開いているファイルの宣言が持つ焼き係の URL(無ければ「焼く」は出さない)。 -}
+bakeUrlOf : Model -> Maybe String
+bakeUrlOf model =
+    currentGroup model |> Maybe.andThen .bakeUrl
+
+
+{-| 焼き応答の notes から「カット N」の N(1 始まり)と理由を取り出す。
+数が読めない行は 0 番として扱わず捨てる — 行に付けられない注意は、
+まとめの件数にだけ出る。
+-}
+noteMarks : Api.BakeResult -> Dict Int String
+noteMarks result =
+    result.notes
+        |> List.filterMap
+            (\note ->
+                note
+                    |> String.toList
+                    |> List.filter Char.isDigit
+                    |> String.fromList
+                    |> String.toInt
+                    |> Maybe.map (\n -> ( n - 1, note ))
+            )
+        |> Dict.fromList
+
+
+{-| 今のセクションの欄 1 つ(種類の入れ替えで既定値を作るのに使う)。 -}
+sectionFieldNamed : Model -> String -> Maybe Schema.Field
+sectionFieldNamed model name =
+    currentSection model
+        |> Maybe.andThen
+            (\( _, section ) ->
+                section.fields |> List.filter (\( n, _ ) -> n == name) |> List.head |> Maybe.map Tuple.second
+            )
+
+
 {-| いま選んでいるエントリの中の音符の列(形が合う物があれば)。 -}
 rollOf : Model -> Maybe { field : String, notes : List PianoRoll.Note }
 rollOf model =
@@ -7722,6 +7879,17 @@ tallPreview model =
 -}
 viewKnobPreview : Model -> Maybe (List (Html Msg))
 viewKnobPreview model =
+    case bakeUrlOf model of
+        -- 焼き係を宣言している Doc(場面の脚本)は、焼き上がりが見え方
+        Just _ ->
+            Just (viewBakePanel model)
+
+        Nothing ->
+            viewKnobPreviewBody model
+
+
+viewKnobPreviewBody : Model -> Maybe (List (Html Msg))
+viewKnobPreviewBody model =
     case sfxConfigOf model of
         -- 効果音のつまみ: 波形と ▶ を持つ既存の部品がそのまま preview になる
         Just config ->
@@ -7740,6 +7908,193 @@ viewKnobPreview model =
 
                         cards ->
                             Just cards
+
+
+{-| 焼き上がりの場面。焼く札・注意の件数・GIF・コマ送り。
+焼きは 20〜70 秒かかるので、押した後も編集は止めない(札だけ回る)。
+-}
+viewBakePanel : Model -> List (Html Msg)
+viewBakePanel model =
+    let
+        baking =
+            model.bakeReq /= Nothing
+    in
+    [ div [ HA.class "bake-bar mb-2 flex flex-wrap items-center gap-1.5" ]
+        [ button
+            [ HA.class "bake-run btn btn-mini"
+            , HA.disabled baking
+            , HA.title "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
+            , HE.onClick BakeClicked
+            ]
+            [ text
+                (if model.dirty then
+                    "保存して焼く"
+
+                 else
+                    "焼く"
+                )
+            ]
+        , if baking then
+            span [ HA.class "flex items-center gap-1.5 text-[11px] text-ink-soft" ]
+                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                , text ("焼いています… " ++ String.fromInt model.bakeSeconds ++ "s")
+                ]
+
+          else
+            text ""
+        , case model.bake of
+            Just result ->
+                if not result.reachable then
+                    span [ HA.class "bake-offline text-[11px] text-amber-300" ]
+                        [ text "焼き係が起きていません(make cutscene-server)" ]
+
+                else if List.isEmpty result.notes then
+                    text ""
+
+                else
+                    span
+                        [ HA.class "bake-notes rounded-sm bg-amber-500/20 px-1.5 py-px text-[10px] text-amber-300 ring-1 ring-amber-400/40"
+                        , HA.title (String.join "\n" result.notes)
+                        ]
+                        [ text ("⚠ 飛ばしたカット " ++ String.fromInt (List.length result.notes) ++ " 件") ]
+
+            Nothing ->
+                text ""
+        ]
+    ]
+        ++ viewBakedFilm model
+
+
+{-| 焼き上がり(GIF)と、コマ送り。コマ数は焼き応答の frames。 -}
+viewBakedFilm : Model -> List (Html Msg)
+viewBakedFilm model =
+    case model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif ))) of
+        Just ( result, gif ) ->
+            [ img
+                [ HA.class "bake-gif mb-2 block w-full rounded border border-edge bg-well"
+                , HA.src (mediaUrl model gif)
+                , HA.alt "焼き上がり"
+                ]
+                []
+            , if Api.pngFrameCount result <= 1 then
+                text ""
+
+              else
+                viewFilmstrip model result
+
+            , div [ HA.class "text-[10px] text-ink-faint" ]
+                [ text "焼き上がりは保存した脚本のもの(編集しただけでは変わりません)" ]
+            ]
+
+        Nothing ->
+            [ div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
+                [ text "「焼く」を押すと、この脚本を焼いて動く絵で見せます。" ]
+            ]
+
+
+{-| コマ送り。◀ ▶ とスライダで 1 コマずつ(絵は frames/<id>/<n>.png)。 -}
+viewFilmstrip : Model -> Api.BakeResult -> Html Msg
+viewFilmstrip model result =
+    let
+        last =
+            max 0 (Api.pngFrameCount result - 1)
+
+        at =
+            clamp 0 last model.bakeFrame
+
+        step delta =
+            button
+                [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
+                , HE.onClick (BakeFrameChanged (String.fromInt (clamp 0 last (at + delta))))
+                ]
+                [ text
+                    (if delta < 0 then
+                        "◀"
+
+                     else
+                        "▶"
+                    )
+                ]
+    in
+    div [ HA.class "filmstrip mb-2" ]
+        [ case sceneId model of
+            Just id ->
+                img
+                    [ HA.class "film-frame block w-full rounded border border-edge bg-well"
+                    , HA.src (mediaUrl model ("debug/cutscene/frames/" ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                    , HA.alt ("コマ " ++ String.fromInt at)
+                    ]
+                    []
+
+            Nothing ->
+                text ""
+        , div [ HA.class "mt-1 flex items-center gap-1.5" ]
+            [ step -1
+            , input
+                [ HA.class "film-slider min-w-0 flex-1"
+                , HA.type_ "range"
+                , HA.min "0"
+                , HA.max (String.fromInt last)
+                , HA.value (String.fromInt at)
+                , HE.onInput BakeFrameChanged
+                ]
+                []
+            , step 1
+            , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
+                [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
+            ]
+        ]
+
+
+{-| 焼き上がりの置き場(debug/…)を、既存の絵の配信に載せた URL へ。 -}
+mediaUrl : Model -> String -> String
+mediaUrl model path =
+    let
+        ( dir, name ) =
+            case List.reverse (String.split "/" path) of
+                file :: rest ->
+                    ( String.join "/" (List.reverse rest), file )
+
+                [] ->
+                    ( "", path )
+    in
+    SceneView.galleryImageUrl model.serverBase model.root dir name
+
+
+{-| 脚本が指している部屋(定規つきの絵を選ぶ材料)。文書が持つ値。 -}
+roomOf : Model -> Maybe String
+roomOf model =
+    parsedDoc model
+        |> Maybe.andThen (\doc -> D.decodeValue (D.field "room" D.string) doc |> Result.toMaybe)
+
+
+{-| その部屋の列数(= 間取りの 1 行の文字数)。マスの大きさは
+「絵の幅 ÷ 列数」で出すので、部屋ごとの倍率を覚えなくてよい。
+横断辞書に間取りが無ければ Nothing(その時は数値入力だけで進める)。
+-}
+roomColumns : Model -> String -> Maybe Int
+roomColumns model room =
+    crossSources model
+        |> List.filter (\src -> String.contains (room ++ ".") src.path)
+        |> List.head
+        |> Maybe.andThen
+            (\src ->
+                let
+                    doc =
+                        src.doc
+                in
+                D.decodeValue (D.field "rows" (D.list D.string)) doc
+                    |> Result.toMaybe
+                    |> Maybe.andThen List.head
+                    |> Maybe.map String.length
+            )
+
+
+{-| 開いている脚本の id(コマの置き場を指すのに使う)。宣言でなく文書が持つ値。 -}
+sceneId : Model -> Maybe String
+sceneId model =
+    parsedDoc model
+        |> Maybe.andThen (\doc -> D.decodeValue (D.field "id" D.string) doc |> Result.toMaybe)
 
 
 {-| 選んでいる場所の名前(音の宣言と突き合わせる材料)。
@@ -7870,7 +8225,7 @@ jsonBoxId =
 -}
 valueSectionsAsRecord : List ( String, Schema.Field ) -> Schema.Section
 valueSectionsAsRecord fields =
-    { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = fields }
+    { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, oneOf = False, fields = fields }
 
 
 {-| ペイン境界のつまみ(縦帯)。ドラッグで隣のペインの幅を変える。
@@ -9910,6 +10265,7 @@ tableState model =
     , sort = model.tableSort
     , filter = model.tableFilter
     , usagesOpenFor = model.usagesOpenFor
+    , notes = model.bake |> Maybe.map noteMarks |> Maybe.withDefault Dict.empty
     }
 
 
@@ -9929,11 +10285,54 @@ sectionByKey model key =
 
 viewRows : Model -> D.Value -> Schema.Section -> D.Value -> List Seg -> Html Msg
 viewRows model doc section entry basePath =
-    div [ HA.class "form-rows" ]
-        (SchemaForm.rows { doc = doc, textures = model.textures, others = crossSources model } section entry
-            |> List.filter (rowIsEnabled model basePath)
-            |> List.map (viewRow model basePath)
-        )
+    let
+        ctx =
+            { doc = doc, textures = model.textures, others = crossSources model }
+    in
+    if section.oneOf then
+        -- 「どれか 1 つ」の行: 種類を選んでから、その欄(と既に書かれている添え物)
+        let
+            picked =
+                SchemaForm.oneOf ctx section entry
+        in
+        div [ HA.class "form-rows" ]
+            (viewKindPicker basePath picked
+                :: (picked.rows
+                        |> List.filter (rowIsEnabled model basePath)
+                        |> List.map (viewRow model basePath)
+                   )
+            )
+
+    else
+        div [ HA.class "form-rows" ]
+            (SchemaForm.rows ctx section entry
+                |> List.filter (rowIsEnabled model basePath)
+                |> List.map (viewRow model basePath)
+            )
+
+
+{-| 種類のセレクト。選び直すと前の鍵は消えて新しい鍵が既定値で入る
+(1 行 = 1 種類の約束を、画面の側でも守れるようにする)。
+-}
+viewKindPicker : List Seg -> SchemaForm.OneOf -> Html Msg
+viewKindPicker basePath picked =
+    div [ HA.class "form-row kind-picker mb-2" ]
+        [ div [ HA.class "form-label mb-0.5 text-[11px] leading-tight text-ink-soft" ] [ text "種類" ]
+        , Html.select
+            [ HA.class "kind-select field w-full"
+            , HE.onInput (CutKindChosen basePath picked.chosen)
+            ]
+            (picked.kinds
+                |> List.map
+                    (\kind ->
+                        Html.option
+                            [ HA.value kind.name
+                            , HA.selected (picked.chosen == Just kind.name)
+                            ]
+                            [ text kind.label ]
+                    )
+            )
+        ]
 
 
 {-| enabledWhen の最終判定。条件を満たさないフィールドはフォームに出さない —
@@ -10310,20 +10709,114 @@ viewControl model path control =
             -- テキストエリアで編集する。grid と違い折り返しは on(長い 1 行 JSON は
             -- 折り返した方が読める)。行数連動の高さ・大きすぎる物は内部スクロール。
             -- Enter は改行に使うので確定キーにしない(blur 確定・Esc 破棄)
-            textarea
-                [ HA.classList
-                    [ ( "raw-json field h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap", True )
-                    , ( "invalid border-danger", invalid )
+            div []
+                (textarea
+                    [ HA.classList
+                        [ ( "raw-json field h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap", True )
+                        , ( "invalid border-danger", invalid )
+                        ]
+                    , HA.rows (clamp 3 16 lineCount)
+                    , HA.spellcheck False
+                    , HA.value shown
+                    , HE.onFocus (DraftStarted seed)
+                    , HE.onInput (DraftTyped seed)
+                    , HE.onBlur (DraftCommitted { release = True })
+                    , escCancels
                     ]
-                , HA.rows (clamp 3 16 lineCount)
-                , HA.spellcheck False
-                , HA.value shown
-                , HE.onFocus (DraftStarted seed)
-                , HE.onInput (DraftTyped seed)
-                , HE.onBlur (DraftCommitted { release = True })
-                , escCancels
+                    []
+                    :: viewTilePickButton model path shown
+                )
+
+
+{-| マスを指す値({x, y})の欄にだけ、絵から選ぶ入口を添える。
+判定は値の形 — 欄の名前(walkTo / look …)は見ない。数値の直接入力は常に効く。
+-}
+viewTilePickButton : Model -> List Seg -> String -> List (Html Msg)
+viewTilePickButton model path shown =
+    let
+        isTile =
+            D.decodeString (D.map2 (\_ _ -> ()) (D.field "x" D.int) (D.field "y" D.int)) shown
+                |> Result.toMaybe
+                |> (/=) Nothing
+    in
+    if isTile && roomOf model /= Nothing then
+        [ button
+            [ HA.class "tile-pick btn btn-ghost btn-mini mt-0.5"
+            , HA.title "焼いた部屋の絵から、マスをクリックして選ぶ"
+            , HE.onClick (TilePickerOpened path)
+            ]
+            [ text "マップから選ぶ" ]
+        ]
+
+    else
+        []
+
+
+{-| マスを選ぶポップオーバー。背景は定規つきの部屋の絵で、押した場所を
+「絵の幅 ÷ 列数」でマスに換算する。絵が焼かれていなければ焼き方を案内する。
+-}
+viewTilePicker : Model -> Html Msg
+viewTilePicker model =
+    case model.tilePicker of
+        Nothing ->
+            text ""
+
+        Just picker ->
+            let
+                columns =
+                    roomColumns model picker.room
+            in
+            div
+                [ HA.class "tile-picker-layer fixed inset-0 z-[60] flex items-center justify-center bg-black/60"
+                , HE.onClick TilePickerClosed
                 ]
-                []
+                [ div
+                    [ HA.class "tile-picker max-h-[85vh] max-w-[90vw] overflow-auto rounded-lg border border-edge bg-panel p-3"
+                    , HE.stopPropagationOn "click" (D.succeed ( TilePickerClosed, True ))
+                    ]
+                    [ div [ HA.class "mb-1.5 flex items-center gap-2 text-[11px] text-ink-soft" ]
+                        [ span [ HA.class "font-mono" ] [ text picker.room ]
+                        , span [ HA.class "text-ink-faint" ] [ text "クリックしたマスを書き込みます" ]
+                        , span [ HA.class "flex-1" ] []
+                        , button [ HA.class "btn btn-ghost btn-mini", HE.onClick TilePickerClosed ] [ text "✕" ]
+                        ]
+                    , case columns of
+                        Just cols ->
+                            img
+                                [ HA.class "tile-grid block max-w-full cursor-crosshair"
+                                , HA.src (mediaUrl model ("debug/cutscene/grid/" ++ picker.room ++ ".png"))
+                                , HA.alt picker.room
+                                , onTileClick picker.path cols
+                                ]
+                                []
+
+                        Nothing ->
+                            div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
+                                [ text "この部屋の間取りが読めないので、絵からは選べません(数値で入れてください)" ]
+                    , div [ HA.class "mt-1.5 text-[10px] text-ink-faint" ]
+                        [ text "絵が出ない時は make cutscene-grid で焼いてください" ]
+                    ]
+                ]
+
+
+{-| 絵の中の押した場所 → マス。1 マスの大きさは「今の表示幅 ÷ 列数」で出すので、
+絵の倍率(部屋ごとに違う)も、画面での縮小も、同じ 1 本の式で吸収できる。
+-}
+onTileClick : List Seg -> Int -> Html.Attribute Msg
+onTileClick path columns =
+    HE.on "click"
+        (D.map3
+            (\x y width ->
+                let
+                    tile =
+                        width / toFloat (max 1 columns)
+                in
+                TilePicked path (floor (x / max 1 tile)) (floor (y / max 1 tile))
+            )
+            (D.field "offsetX" D.float)
+            (D.field "offsetY" D.float)
+            (D.at [ "target", "clientWidth" ] D.float)
+        )
 
 
 {-| スライダーは操作=意図が明確なのでその場で確定(draft を挟まない)。
@@ -11537,6 +12030,13 @@ subscriptions model =
         -- 「✓ コピーしました」の戻し(2 秒)。コピー直後だけ生きる
         , if Atelier.needsCopyReset model.atelier then
             Time.every 2000 (\_ -> AtelierMsg Atelier.CopyResetTick)
+
+          else
+            Sub.none
+
+        -- 焼いている間だけ経過秒を進める(70〜90 秒かかるので、進んでいる印が要る)
+        , if model.bakeReq /= Nothing then
+            Time.every 1000 (\_ -> BakeTick)
 
           else
             Sub.none

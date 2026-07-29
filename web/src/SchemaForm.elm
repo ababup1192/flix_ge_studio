@@ -1,4 +1,4 @@
-module SchemaForm exposing (Context, Control(..), ListEdit(..), Row, applyListEdit, rows)
+module SchemaForm exposing (Context, Control(..), Kind, ListEdit(..), OneOf, Row, applyListEdit, oneOf, rows)
 
 {-| スキーマのセクション+選択エントリの値 → フォーム行モデル。
 
@@ -87,6 +87,53 @@ type alias Context =
     { doc : D.Value
     , textures : List String
     , others : List Sources.SourceDoc
+    }
+
+
+{-| 「どれか 1 つ」の一覧(oneOf)の見せ方。kinds は選べる種類、chosen は今の行が
+書いている種類(宣言した順で最初に見つかった物)、rows は実際に出す欄。
+
+rows には選んだ種類の欄に加えて、**その行に既に書かれている他の欄**も出す。
+1 行が主役の鍵 + 添え物(見回す速さ等)で書かれている文書があり、種類の欄しか
+出さないと添え物が画面から消えて、消したつもりのない値を編集で失うため。
+-}
+type alias OneOf =
+    { kinds : List Kind
+    , chosen : Maybe String
+    , rows : List Row
+    }
+
+
+type alias Kind =
+    { name : String, label : String }
+
+
+oneOf : Context -> Section -> D.Value -> OneOf
+oneOf ctx section entry =
+    let
+        ordered =
+            section.fields
+                |> List.sortBy (\( _, field ) -> Maybe.withDefault orderLast field.order)
+
+        present name =
+            case D.decodeValue (D.field name D.value) entry of
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
+
+        chosen =
+            ordered |> List.filter (\( name, _ ) -> present name) |> List.head |> Maybe.map Tuple.first
+    in
+    { kinds =
+        ordered
+            |> List.map (\( name, field ) -> { name = name, label = Maybe.withDefault name field.label })
+    , chosen = chosen
+    , rows =
+        ordered
+            |> List.filter (\( name, _ ) -> Just name == chosen || present name)
+            |> List.map (\( name, field ) -> row ctx section entry name field)
     }
 
 

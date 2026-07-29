@@ -669,6 +669,164 @@ musicResourcesBody =
         ]
 
 
+{-| 1 行 = 1 種類の一覧(oneOf)を持つ Doc。カットの並びを 1 本だけ持つ。 -}
+cutsResourcesBody : E.Value
+cutsResourcesBody =
+    E.object
+        [ ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "scenes" )
+                    , ( "bakeUrl", E.string "http://127.0.0.1:8792/cutscene" )
+                    , ( "pattern", E.string "assets/*.scene.json" )
+                    , ( "title", E.string "場面" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/prologue.scene.json" )
+                                , ( "schema", E.string "assets/scene.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
+cutsSchemaText : String
+cutsSchemaText =
+    """{
+  "version": 1,
+  "sections": {
+    "cuts": { "kind": "list", "oneOf": true, "label": "カット",
+              "fields": {
+                "wait":   { "type": "float", "label": "待つ", "order": 1 },
+                "say":    { "type": {"list": "text"}, "label": "言葉", "order": 2 },
+                "pan":    { "type": "float", "label": "見回す速さ", "order": 9 } } }
+  }
+}"""
+
+
+cutsText : String
+cutsText =
+    """{
+  "id": "prologue",
+  "room": "hall1",
+  "cuts": [
+    { "wait": 1.0 },
+    { "say": ["……だれか いるの?"], "pan": 1.4 }
+  ]
+}"""
+
+
+{-| oneOf の Doc を開き、2 行目(言葉 + 添え物)を選んだ状態。 -}
+openedCuts : App
+openedCuts =
+    bootedWith cutsResourcesBody
+        |> ProgramTest.clickButton "assets/prologue.scene.json"
+        |> ensureKinds [ "getFile", "getFile" ]
+        |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+        |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+        |> ProgramTest.simulateDomEvent
+            (Query.find [ tag "tr", containing [ text "だれか" ] ])
+            ( "click", E.object [] )
+
+
+{-| マスの欄を持つ場面(walkTo)。部屋の間取りは横断辞書から引く。 -}
+tilePickSchemaText : String
+tilePickSchemaText =
+    """{
+  "version": 1,
+  "sections": {
+    "room": { "kind": "field", "type": {"ref": "rooms"}, "label": "部屋" },
+    "cuts": { "kind": "list", "oneOf": true, "label": "カット",
+              "fields": { "walkTo": { "type": "object", "label": "歩く先", "order": 1 } } }
+  }
+}"""
+
+
+tilePickText : String
+tilePickText =
+    """{
+  "id": "prologue",
+  "room": "hall1",
+  "cuts": [ { "walkTo": { "x": 6, "y": 7 } } ]
+}"""
+
+
+{-| 20 列の間取りを持つ部屋(横断辞書の 1 冊)。 -}
+roomsText : String
+roomsText =
+    """{ "rows": [ "####################", "#..................#" ] }"""
+
+
+openedTilePick : App
+openedTilePick =
+    bootedWith tilePickResourcesBody
+        |> ProgramTest.clickButton "assets/prologue.scene.json"
+        |> ensureKinds [ "getFile", "getFile" ]
+        |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" tilePickText)
+        |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" tilePickSchemaText)
+        -- ref の参照先(部屋)を横断辞書に読み込む
+        |> ensureKinds [ "getFile", "getFile" ]
+        |> respondOk 6 "getFile" (fileBody "assets/hall1.map.json" roomsText)
+        |> respondOk 7 "getFile" (fileBody "assets/map.schema.json" tilePickSchemaText)
+        |> ProgramTest.clickButton "カット"
+        |> ProgramTest.simulateDomEvent
+            (Query.find [ tag "tr", containing [ text "#0" ] ])
+            ( "click", E.object [] )
+
+
+tilePickResourcesBody : E.Value
+tilePickResourcesBody =
+    E.object
+        [ ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "scenes" )
+                    , ( "pattern", E.string "assets/*.scene.json" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/prologue.scene.json" )
+                                , ( "schema", E.string "assets/scene.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                , E.object
+                    [ ( "id", E.string "rooms" )
+                    , ( "pattern", E.string "assets/*.map.json" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/hall1.map.json" )
+                                , ( "schema", E.string "assets/map.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
+{-| POST /bake/proxy の応答(焼き係の本文を包んだ形)。カット 2 を飛ばした。 -}
+bakeOkBody : E.Value
+bakeOkBody =
+    E.object
+        [ ( "ok", E.bool True )
+        , ( "reachable", E.bool True )
+        , ( "body"
+          , E.string
+                ("""{"baked":[{"gif":"debug/cutscene/prologue.gif","frames":679,"""
+                    ++ """"notes":["カット 2 を飛ばした: 着けないマス"]}]}"""
+                )
+          )
+        ]
+
+
 {-| /sfx/shape の応答(2 秒の曲・包絡 4 本)。 -}
 moonlightShapeBody : E.Value
 moonlightShapeBody =
@@ -1438,6 +1596,76 @@ suite =
                             (D.at [ "payload", "offset" ] D.float)
                         )
                         (Expect.equal [ ( "playSound", "moonlight.wav", 0 ) ])
+        , test "焼く: 保存してから焼き係へ取り次ぎ、応答で GIF と注意の件数が出る" <|
+            \() ->
+                openedCuts
+                    |> ProgramTest.clickButton "焼く"
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "url" ] D.string))
+                        (Expect.equal [ ( "bakeCutscene", "http://127.0.0.1:8792/cutscene" ) ])
+                    |> ProgramTest.ensureViewHas [ text "焼いています…" ]
+                    |> respondOk 6 "bakeCutscene" bakeOkBody
+                    |> ProgramTest.expectViewHas
+                        [ class "bake-gif"
+                        , text "⚠ 飛ばしたカット 1 件"
+                        ]
+        , test "焼く: 注意はその行(1 始まり)に ⚠ が付く" <|
+            \() ->
+                openedCuts
+                    |> ProgramTest.clickButton "焼く"
+                    |> ensureKinds [ "bakeCutscene" ]
+                    |> respondOk 6 "bakeCutscene" bakeOkBody
+                    |> ProgramTest.expectView
+                        (Query.findAll [ class "row-note" ] >> Query.count (Expect.equal 1))
+        , test "焼く: 焼き係が起きていなければ、起こし方を案内して固まらない" <|
+            \() ->
+                openedCuts
+                    |> ProgramTest.clickButton "焼く"
+                    |> ensureKinds [ "bakeCutscene" ]
+                    |> respondOk 6 "bakeCutscene" (E.object [ ( "ok", E.bool False ), ( "reachable", E.bool False ) ])
+                    |> ProgramTest.expectViewHas [ text "焼き係が起きていません(make cutscene-server)" ]
+        , test "マスの欄({x,y})には絵から選ぶ入口が出て、押した場所がマスになる" <|
+            \() ->
+                openedTilePick
+                    |> ProgramTest.clickButton "マップから選ぶ"
+                    |> ProgramTest.ensureViewHas [ class "tile-grid" ]
+                    -- 960px 幅の絵 ÷ 20 列 = 48px/マス → (150, 100) は (3, 2)
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "tile-grid" ])
+                        ( "click"
+                        , E.object
+                            [ ( "offsetX", E.float 150 )
+                            , ( "offsetY", E.float 100 )
+                            , ( "target", E.object [ ( "clientWidth", E.float 960 ) ] )
+                            ]
+                        )
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "value" ] D.value |> D.map (E.encode 0)))
+                        (Expect.equal [ ( "applyDocEdit", """{"x":3,"y":2}""" ) ])
+        , test "1 行 1 種類(oneOf): 種類のセレクトと、その行の欄だけが出る" <|
+            \() ->
+                openedCuts
+                    |> ProgramTest.ensureViewHas [ class "kind-select" ]
+                    -- 選んでいるのは「言葉」。添え物(見回す速さ)も消さずに出す
+                    |> ProgramTest.expectView
+                        (Query.findAll [ class "form-label" ]
+                            >> Query.each (Expect.all [ Query.hasNot [ text "待つ" ] ])
+                        )
+        , test "1 行 1 種類(oneOf): 種類を変えると 前の鍵を消して 新しい鍵を既定値で書く" <|
+            \() ->
+                openedCuts
+                    |> ProgramTest.simulateDomEvent
+                        (Query.find [ class "kind-select" ])
+                        ( "input", E.object [ ( "target", E.object [ ( "value", E.string "wait" ) ] ) ] )
+                    -- 2 本組は直列(前の応答を待ってから次)。まず古い鍵を消す
+                    |> ProgramTest.ensureOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocRemove", [ "cuts", "1", "say" ] ) ])
+                    |> respondOk 6 "applyDocRemove" (E.object [ ( "text", E.string cutsText ) ])
+                    -- 続けて新しい鍵を既定値で書く(戻すのは 1 回で済む 1 手)
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        kindAndPath
+                        (Expect.equal [ ( "applyDocEdit", [ "cuts", "1", "wait" ] ) ])
         , test "譜のある音: ピアノロールが波形の上に出る(音符の数だけ棒が並ぶ)" <|
             \() ->
                 openedMusic

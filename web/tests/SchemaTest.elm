@@ -395,6 +395,15 @@ suite =
                         "fields": {"w": {"type": "int", "preview": {"kind": "swatch"}}}}}}"""
                     |> Result.map (\sc -> sc.sections |> List.map (\( key, sec ) -> ( key, List.length sec.fields )))
                     |> Expect.equal (Ok [ ( "grid", 1 ) ])
+        , test "oneOf: 宣言した欄が「どれか 1 つ」の選択肢であることを読む(既定は False)" <|
+            \_ ->
+                Schema.decodeString
+                    """{"sections": {
+                         "cuts":  {"kind": "list", "oneOf": true,
+                                   "fields": {"wait": {"type": "float"}, "say": {"type": {"list": "text"}}}},
+                         "props": {"kind": "list", "fields": {"x": {"type": "int"}}}}}"""
+                    |> Result.map (\sc -> sc.sections |> List.map (\( key, sec ) -> ( key, sec.oneOf )))
+                    |> Expect.equal (Ok [ ( "cuts", True ), ( "props", False ) ])
         , describe "パース失敗の振り分け(赤エラーか、フォーム対象外の案内か)"
             [ test "$schema/properties 持ち(draft-07 等)はフォーム対象外の種類 = 穏やか表示" <|
                 \_ ->

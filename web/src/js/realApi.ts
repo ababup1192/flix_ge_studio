@@ -104,6 +104,9 @@ export function realApi(base: string): Api {
             return await raiseHttpError(res, `${base}/file`);
           }
         }
+        // 焼き係への取り次ぎ(Studio のサーバが 1 枚噛む)。20〜70 秒かかる
+        case "bakeCutscene":
+          return sendJson("POST", `${base}/bake/proxy`, payload);
         case "search":
           return getJson(`${base}/search?q=${encodeURIComponent(String((payload as { q: string }).q ?? ""))}`);
         // 検索結果から飛んだ欄まで画面を送る。描き終わるのは Elm の次の描画なので

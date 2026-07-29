@@ -16,6 +16,7 @@ import Test exposing (Test, describe, test)
 levelGroup : Api.ResourceGroup
 levelGroup =
     { id = "level"
+    , bakeUrl = Nothing
     , pattern = "assets/*.level.json"
     , title = Just "レベル"
     , plugin = Just "shooterLevel"
@@ -27,6 +28,7 @@ levelGroup =
 plainGroup : Api.ResourceGroup
 plainGroup =
     { id = "misc"
+    , bakeUrl = Nothing
     , pattern = "assets/*.misc.json"
     , title = Nothing
     , plugin = Nothing
@@ -38,6 +40,7 @@ plainGroup =
 futureGroup : Api.ResourceGroup
 futureGroup =
     { id = "board"
+    , bakeUrl = Nothing
     , pattern = "assets/*.board.json"
     , title = Nothing
     , plugin = Just "puzzleBoard"

@@ -83,13 +83,32 @@ docFixture =
         |> Result.withDefault E.null
 
 
+{-| order だけ違う素の int 欄(oneOf の並び順を見るため)。 -}
+intField : Int -> Schema.Field
+intField order =
+    { type_ = Schema.TInt
+    , label = Nothing
+    , help = Nothing
+    , unit = Nothing
+    , hint = Nothing
+    , order = Just order
+    , widget = Nothing
+    , required = False
+    , default = Nothing
+    , min = Nothing
+    , max = Nothing
+    , step = Nothing
+    , enabledWhen = Nothing
+    }
+
+
 sectionOf : String -> Schema.Section
 sectionOf key =
     schemaFixture.sections
         |> List.filter (\( k, _ ) -> k == key)
         |> List.head
         |> Maybe.map Tuple.second
-        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = [] }
+        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, oneOf = False, fields = [] }
 
 
 rowsIn : String -> D.Value -> List SchemaForm.Row
@@ -148,6 +167,60 @@ suite =
                         , ( "boss", Nothing )
                         , ( "note", Nothing )
                         ]
+        , describe "oneOf(1 行 = 1 種類)の見せ方"
+            [ test "書かれている種類を選び、その欄を出す。添え物(既に書かれた欄)も残す" <|
+                \_ ->
+                    let
+                        section =
+                            { kind = Schema.ListKind
+                            , label = Nothing
+                            , help = Nothing
+                            , group = Nothing
+                            , widget = Nothing
+                            , oneOf = True
+                            , fields =
+                                [ ( "wait", intField 1 )
+                                , ( "look", intField 2 )
+                                , ( "pan", intField 9 )
+                                ]
+                            }
+
+                        cut =
+                            D.decodeString D.value """{ "look": 3, "pan": 1.4 }"""
+                                |> Result.withDefault E.null
+
+                        picked =
+                            SchemaForm.oneOf
+                                { doc = docFixture, textures = [], others = [] }
+                                section
+                                cut
+                    in
+                    ( picked.chosen
+                    , picked.rows |> List.map .name
+                    , picked.kinds |> List.map .name
+                    )
+                        |> Expect.equal
+                            ( Just "look", [ "look", "pan" ], [ "wait", "look", "pan" ] )
+            , test "何も書かれていない行は種類なし(選ばせてから欄を出す)" <|
+                \_ ->
+                    let
+                        section =
+                            { kind = Schema.ListKind
+                            , label = Nothing
+                            , help = Nothing
+                            , group = Nothing
+                            , widget = Nothing
+                            , oneOf = True
+                            , fields = [ ( "wait", intField 1 ), ( "look", intField 2 ) ]
+                            }
+                    in
+                    SchemaForm.oneOf
+                        { doc = docFixture, textures = [], others = [] }
+                        section
+                        (D.decodeString D.value "{}" |> Result.withDefault E.null)
+                        |> (\picked -> ( picked.chosen, picked.rows ))
+                        |> Expect.equal ( Nothing, [] )
+            ]
         , test "ref — 選択肢は参照先 catalog のエントリ名(文書順)・現在値が選択される" <|
             \_ ->
                 spawnRows

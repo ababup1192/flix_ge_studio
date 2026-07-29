@@ -57,11 +57,27 @@ mod Gallery {
     /// GET /gallery/image — dir 指定 (白名前簿) と安全な名前で PNG のバイト列を引く。
     /// 指定が不正・ファイルが無いは None (呼び手が 404 にする)。
     pub def imageBytes(dir: String, subdir: String, name: String): Option[Array[Int8, Static]] \ IO =
-        if (not Set.memberOf(subdir, imageDirs()) or not isSafeName(name)
-                or not String.endsWith(suffix = ".png", name))
+        mediaBytes(dir, subdir, name) |> Option.map(found -> snd(found))
+
+    /// 出せる置き場か。定番の 4 つに加えて、焼き上がりの場面が住む
+    /// debug/cutscene の下 (grid の定規つき画像・コマ別 PNG) を許す。
+    /// ".." を含む指定は通さない (プロジェクトの外を指せてしまうため)。
+    def allowedDir(subdir: String): Bool =
+        not String.contains(substr = "..", subdir)
+            and (Set.memberOf(subdir, imageDirs())
+                    or subdir == "debug/cutscene"
+                    or String.startsWith(prefix = "debug/cutscene/", subdir))
+
+    /// 絵 1 枚と、その種類 (content-type)。PNG と GIF (焼いた場面) を出す。
+    pub def mediaBytes(dir: String, subdir: String, name: String): Option[(String, Array[Int8, Static])] \ IO =
+        if (not allowedDir(subdir) or not isSafeName(name))
             None
+        else if (String.endsWith(suffix = ".png", name))
+            readBytes("${dir}/${subdir}/${name}") |> Option.map(bytes -> ("image/png", bytes))
+        else if (String.endsWith(suffix = ".gif", name))
+            readBytes("${dir}/${subdir}/${name}") |> Option.map(bytes -> ("image/gif", bytes))
         else
-            readBytes("${dir}/${subdir}/${name}")
+            None
 
     /// GET /gallery/sound — debug/sounds/ の WAV のバイト列。
     pub def soundBytes(dir: String, name: String): Option[Array[Int8, Static]] \ IO =

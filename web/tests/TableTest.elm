@@ -65,7 +65,7 @@ sectionOf key =
         |> List.filter (\( k, _ ) -> k == key)
         |> List.head
         |> Maybe.map Tuple.second
-        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, fields = [] }
+        |> Maybe.withDefault { kind = Schema.RecordKind, label = Nothing, help = Nothing, group = Nothing, widget = Nothing, oneOf = False, fields = [] }
 
 
 spawnRows : List Table.TableRow
