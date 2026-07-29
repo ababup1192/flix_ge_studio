@@ -498,6 +498,22 @@ sl-alert.notice::part(message) {
   height: 100%;
 }
 
+/* 再生位置の線。JS が left を動かす(Elm は毎フレーム関与しない) */
+.sfx-playhead,
+.waveform-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--color-ok);
+  pointer-events: none;
+}
+
+/* 波形の帯(音の切り出し・試聴)。棒は器いっぱいに引き伸ばす */
+.waveform-bar {
+  fill: color-mix(in oklab, var(--color-accent) 55%, transparent);
+}
+
 /* 掴む縁。線・丸・札はまとめて置き、当たり判定は器(.sfx-wave)が持つ */
 .sfx-grip {
   position: absolute;

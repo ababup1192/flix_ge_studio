@@ -41,6 +41,7 @@ import Json.Encode as E
 import Lint
 import NewGame
 import MapEditor
+import PianoRoll
 import PixelEditor
 import SfxEditor
 import Plugins
@@ -51,6 +52,7 @@ import CrossEdit
 import DocKind
 import SceneView
 import SearchView
+import Waveform
 import Schema
 import SchemaForm
 import Selection exposing (EntrySel(..))
@@ -558,6 +560,13 @@ type alias Model =
     -- いま鳴らしている音(Nothing = 鳴っていない)。止める札を出すためだけ
     , playingSound : Maybe String
 
+    -- 波形の帯(再生位置・範囲選択)。秒で持つので、器の幅が変わってもずれない
+    , wave : Waveform.Model
+    , soundLooping : Bool
+
+    -- ロールで選んでいる音符(文書の中の並び順)。JSON の行を指すのに使う
+    , selectedNote : Maybe Int
+
     -- project.json が宣言している音の名前(/resources が一緒に返す)。
     -- ▶ を出してよいのはこの列にある名前だけ
     , sounds : List String
@@ -784,6 +793,9 @@ init _ =
         , activeDraft = Nothing
         , jsonPaneOpen = True
         , playingSound = Nothing
+        , wave = Waveform.init
+        , soundLooping = False
+        , selectedNote = Nothing
         , sounds = []
         , search = SearchView.init
         , crossEdit = Nothing
@@ -881,6 +893,12 @@ type Msg
     | SearchDebounced Int
     | SearchReplacementTyped String
     | JsonPaneToggled
+    | NoteClicked PianoRoll.Note
+    | WaveCleared
+    | SoundLoopToggled
+    | WavePressed Float
+    | WaveDragged Float
+    | WaveReleased
     | SoundPlayClicked String
     | SoundStopClicked
     | SearchMoved Int
@@ -1502,11 +1520,52 @@ update msg model =
         JsonPaneToggled ->
             savePrefs { model | jsonPaneOpen = not model.jsonPaneOpen }
 
+        NoteClicked note ->
+            -- 押した音符の JSON 行を指し示す(選んだ印はロール側にも残す)
+            case notePath model note.index of
+                Just path ->
+                    highlightJson path ( { model | selectedNote = Just note.index }, Effect.none )
+
+                Nothing ->
+                    ( { model | selectedNote = Just note.index }, Effect.none )
+
+        WaveCleared ->
+            ( { model | wave = Waveform.clear model.wave }, Effect.none )
+
+        SoundLoopToggled ->
+            ( { model | soundLooping = not model.soundLooping }, Effect.none )
+
+        WavePressed seconds ->
+            let
+                m1 =
+                    { model | wave = Waveform.pressAt seconds model.wave }
+            in
+            -- 鳴っている最中のクリックはその場へ飛んで鳴り続ける
+            case m1.playingSound of
+                Just name ->
+                    playSound name m1
+
+                Nothing ->
+                    ( m1, Effect.none )
+
+        WaveDragged seconds ->
+            ( { model | wave = Waveform.dragTo seconds model.wave }, Effect.none )
+
+        WaveReleased ->
+            let
+                m1 =
+                    { model | wave = Waveform.release model.wave }
+            in
+            -- 範囲を引き終えたら、その範囲で鳴らし直す(選び直すたびに聴ける)
+            case ( m1.playingSound, Waveform.selection m1.wave ) of
+                ( Just name, Just _ ) ->
+                    playSound name m1
+
+                _ ->
+                    ( m1, Effect.none )
+
         SoundPlayClicked name ->
-            -- 素の WAV をそのまま鳴らす(master のつまみは掛からない)
-            request "playSound"
-                (E.object [ ( "name", E.string (name ++ ".wav") ), ( "loop", E.bool False ) ])
-                { model | playingSound = Just name }
+            playSound name model
 
         SoundStopClicked ->
             request "stopSound" (E.object []) { model | playingSound = Nothing }
@@ -1666,8 +1725,16 @@ update msg model =
             ( { model | deleteConfirm = Nothing }, Effect.none )
 
         EntryClicked sel ->
-            -- 改名の打ちかけは選び直しで破棄(別エントリの id に化けさせない)
-            ( { model | entrySel = Just sel, rename = Nothing, usagesOpenFor = Nothing }, Effect.none )
+            -- 改名の打ちかけは選び直しで破棄(別エントリの id に化けさせない)。
+            -- 別の音を選んだら、波形の選択と再生位置も持ち越さない
+            requestSfxShapeIfNeeded
+                { model
+                    | entrySel = Just sel
+                    , rename = Nothing
+                    , usagesOpenFor = Nothing
+                    , wave = Waveform.init
+                    , selectedNote = Nothing
+                }
 
         SortClicked column ->
             ( { model | tableSort = Just (toggleSort column model.tableSort) }, Effect.none )
@@ -3554,6 +3621,9 @@ requestPreview_ info config model =
                     [ ( "name", E.string info.name )
                     , ( "loop", E.bool info.loop )
                     , ( "values", E.dict identity E.float config.values )
+
+                    -- 焼きたての音でも再生位置の線が走るように、線の名指しを添える
+                    , ( "playheadId", E.string (Waveform.playheadId config.sound) )
                     ]
                 )
                 model
@@ -3578,18 +3648,32 @@ warmThenShape model =
     ( m2, Effect.batch [ warmFx, shapeFx ] )
 
 
+{-| 実測を取りに行くべき音(まだ頼んでいない物だけ)。 -}
+shapeWanted : Model -> Maybe String
+shapeWanted model =
+    (case sfxConfigOf model of
+        Just config ->
+            Just config.sound
+
+        Nothing ->
+            DocKind.playableSound model.sounds (selectedSoundName model)
+    )
+        |> Maybe.andThen (\sound -> SfxEditor.wanted sound model.sfx)
+
+
 {-| 焼き上がった音の実測を取りに行く。 -}
 requestSfxShape : String -> Model -> ( Model, Effect )
 requestSfxShape sound model =
     request "sfxShape" (E.object [ ( "name", E.string (sound ++ ".wav") ) ]) model
 
 
-{-| まだ取りに行っていない音なら、絵を取りに行く。
-文書を開いた拍とタブを選んだ拍に通す — 描画からは頼めないため。
+{-| まだ取りに行っていない音なら、絵を取りに行く(文書を開いた拍・タブや行を
+選んだ拍)。効果音のつまみ(セクション)も、曲の一覧で選んだ物も、同じ
+/sfx/shape の経路に乗せる — 波形の出どころを 2 本に分けない。
 -}
 requestSfxShapeIfNeeded : Model -> ( Model, Effect )
 requestSfxShapeIfNeeded model =
-    case sfxConfigOf model |> Maybe.andThen (\config -> SfxEditor.wanted config.sound model.sfx) of
+    case shapeWanted model of
         Just sound ->
             requestSfxShape sound
                 { model | sfx = SfxEditor.shapeLoaded sound Nothing Dict.empty model.sfx }
@@ -7570,6 +7654,63 @@ viewJsonTab =
         [ text "JSON" ]
 
 
+{-| いま選んでいるエントリの中の音符の列(形が合う物があれば)。 -}
+rollOf : Model -> Maybe { field : String, notes : List PianoRoll.Note }
+rollOf model =
+    case ( parsedDoc model, currentSection model, model.entrySel ) of
+        ( Just doc, Just ( key, _ ), Just (ByKey name) ) ->
+            Doc.catalog key doc
+                |> Dict.get name
+                |> Maybe.andThen PianoRoll.notesIn
+
+        _ ->
+            Nothing
+
+
+{-| 音符 1 つの書き戻し先(= JSON の行)。ロールで押した物を右の JSON で指すのに使う。 -}
+notePath : Model -> Int -> Maybe (List Seg)
+notePath model index =
+    case ( currentSection model, model.entrySel, rollOf model ) of
+        ( Just ( key, _ ), Just (ByKey name), Just roll ) ->
+            Just [ KeySeg key, KeySeg name, KeySeg roll.field, IdxSeg index ]
+
+        _ ->
+            Nothing
+
+
+{-| 拍の速さ。文書が宣言していなければ 120 拍(拍線の目安が無いと読めないため)。 -}
+tempoOf : Model -> Float
+tempoOf model =
+    parsedDoc model
+        |> Maybe.andThen (\doc -> D.decodeValue (D.field "bpm" D.float) doc |> Result.toMaybe)
+        |> Maybe.withDefault 120
+
+
+{-| 素の WAV をそのまま鳴らす(master のつまみは掛からない)。
+開始位置と範囲は波形の帯が持っている物をそのまま渡す — 範囲が無ければ
+「今の位置から最後まで」。
+-}
+playSound : String -> Model -> ( Model, Effect )
+playSound name model =
+    request "playSound"
+        (E.object
+            ([ ( "name", E.string (name ++ ".wav") )
+             , ( "loop", E.bool model.soundLooping )
+             , ( "offset", E.float (Waveform.playFrom model.wave) )
+             , ( "playheadId", E.string (Waveform.playheadId name) )
+             ]
+                ++ (case Waveform.playSpan model.wave of
+                        Just span ->
+                            [ ( "duration", E.float span ) ]
+
+                        Nothing ->
+                            []
+                   )
+            )
+        )
+        { model | playingSound = Just name }
+
+
 {-| プレビュー枠に縦の場所が要るか(音の編集器を出す時)。 -}
 tallPreview : Model -> Bool
 tallPreview model =
@@ -7614,10 +7755,63 @@ selectedSoundName model =
             currentSection model |> Maybe.map Tuple.first
 
 
-{-| 焼いてある WAV を鳴らす札。焼き直しが要る間は、その旨を添える。 -}
+{-| 焼いてある WAV を鳴らす札と、その波形(再生位置・範囲選択・シーク)。
+焼き直しが要る間は、その旨を添える。
+-}
 viewSoundPlayer : Model -> String -> Html Msg
 viewSoundPlayer model name =
-    div [ HA.class "sound-player flex flex-wrap items-center gap-1.5" ]
+    div [ HA.class "sound-player flex flex-col gap-1.5" ]
+        [ viewSoundControls model name
+        , case rollOf model of
+            -- 楽譜(正)が読めるなら、焼き上がりの波形の上に並べる
+            Just roll ->
+                PianoRoll.view
+                    { onSeek = WavePressed, onNote = NoteClicked }
+                    { key = Waveform.playheadId name
+                    , bpm = tempoOf model
+                    , notes = roll.notes
+                    , selected = model.selectedNote
+                    }
+
+            Nothing ->
+                text ""
+        , case SfxEditor.shapeOf name model.sfx of
+            Just shape ->
+                Waveform.view
+                    { onPress = WavePressed, onDrag = WaveDragged, onRelease = WaveReleased }
+                    { key = name, peaks = shape.peaks, duration = shape.ms / 1000 }
+                    model.wave
+
+            Nothing ->
+                div [ HA.class "text-[11px] text-ink-faint" ] [ text "波形はまだ読み込んでいません" ]
+        , case Waveform.selection model.wave of
+            Just span ->
+                div [ HA.class "wave-span flex items-center gap-2 text-[10px] text-ink-faint" ]
+                    [ text
+                        ("選んだ範囲 "
+                            ++ secondsText span.from
+                            ++ " 〜 "
+                            ++ secondsText span.to
+                            ++ "(▶ はこの範囲だけ鳴らします)"
+                        )
+                    , button
+                        [ HA.class "wave-clear btn btn-ghost btn-mini", HE.onClick WaveCleared ]
+                        [ text "選択を解く" ]
+                    ]
+
+            Nothing ->
+                text ""
+        ]
+
+
+secondsText : Float -> String
+secondsText seconds =
+    String.fromInt (round (seconds * 1000)) ++ "ms"
+
+
+viewSoundControls : Model -> String -> Html Msg
+viewSoundControls model name =
+    div [ HA.class "flex flex-wrap items-center gap-1.5" ]
         [ if model.playingSound == Just name then
             button
                 [ HA.class "sound-stop btn btn-mini", HE.onClick SoundStopClicked ]
@@ -7630,6 +7824,15 @@ viewSoundPlayer model name =
                 , HE.onClick (SoundPlayClicked name)
                 ]
                 [ text ("▶ " ++ name) ]
+        , button
+            [ HA.classList
+                [ ( "sound-loop btn btn-ghost btn-mini", True )
+                , ( "text-accent", model.soundLooping )
+                ]
+            , HA.title "選んだ範囲(無ければ全体)を繰り返す"
+            , HE.onClick SoundLoopToggled
+            ]
+            [ text "🔁 繰り返す" ]
         , if model.dirty then
             span
                 [ HA.class "rebake-badge shrink-0 rounded-sm bg-amber-500/20 px-1.5 py-px text-[10px] text-amber-300 ring-1 ring-amber-400/40"

@@ -8,6 +8,7 @@ module SfxEditor exposing
     , init
     , isDragging
     , shapeDecoder
+    , shapeOf
     , forget
     , shapeLoaded
     , startingChanged
@@ -44,6 +45,7 @@ import Json.Decode as D
 import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
+import Waveform
 
 
 {-| 焼き上がった音の実測。peaks は波形の包絡(0〜1)、bands は帯×時刻(0〜1)で
@@ -663,6 +665,14 @@ viewWave config model shape =
             (zone 0 e.head "" :: zone e.head e.tail " sfx-zone-tail" :: bars)
         , grip e.head "アタック"
         , grip e.tail "リリース"
+
+        -- 再生位置の線。置くだけで、動かすのは JS(鳴っていない間は隠れている)
+        , div
+            [ HA.class "sfx-playhead"
+            , HA.attribute "data-playhead" (Waveform.playheadId config.sound)
+            , HA.style "display" "none"
+            ]
+            []
         ]
 
 
@@ -853,3 +863,11 @@ safeDiv a b =
 
     else
         clamp 0 1 (a / b)
+
+
+{-| 焼き上がった音の実測(まだ取れていなければ Nothing)。
+波形を出す側(音の帯)が、同じ実測を使い回すための口。
+-}
+shapeOf : String -> Model -> Maybe Shape
+shapeOf sound model =
+    Dict.get sound model.shapes

@@ -9,6 +9,7 @@ import "@shoelace-style/shoelace/dist/components/alert/alert.js";
 import "@shoelace-style/shoelace/dist/components/color-picker/color-picker.js";
 import { realApi } from "./realApi";
 import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, rangeAt, type DocEditOp, type PathSeg } from "./docEdit";
+import { play as playAudio, stop as stopAudio } from "./soundPlayer";
 // @ts-ignore — vite-plugin-elm が Elm モジュールへ変換する
 import { Elm } from "../Main.elm";
 
@@ -32,10 +33,8 @@ const app = Elm.Main.init({
 // ペイン幅は見た目の好みなのでサーバでなくこの端末(localStorage)に覚える
 const PANE_KEY = "flix_ge_resource_editor.paneWidths";
 
-// いま鳴っている効果音(試聴・ループ)。次を鳴らす前に必ず止める
-let sfxAudio: HTMLAudioElement | null = null;
-// 焼きたての音を指す一時 URL。次を鳴らす前に必ず捨てる(溜めるとメモリを食う)
-let sfxUrl: string | null = null;
+// 音の再生(Web Audio)と再生位置の線は soundPlayer が持つ。
+// 同時に 1 つだけ鳴らす規則もそちら側。
 
 // 文書編集はサーバへ行かずここで解決する(封筒の流儀はサーバ往復と揃える)
 function handleLocal(kind: string, payload: any): unknown | undefined {
@@ -61,7 +60,14 @@ function handleLocal(kind: string, payload: any): unknown | undefined {
     // つまみの値をそのまま渡して 1 音だけ焼いてもらい、返ってきた WAV を鳴らす。
     // 焼くのはゲーム自身のコードなので、ここで聴く音は実機の音と同じ。
     // handleLocal は同期関数なので、待ちは Promise のまま返す(封筒の作法と同じ)。
-    const { name, values, loop } = payload as { name: string; values: unknown; loop: boolean };
+    const { name, values, loop, offset, duration, playheadId } = payload as {
+      name: string;
+      values: unknown;
+      loop: boolean;
+      offset?: number;
+      duration?: number;
+      playheadId?: string;
+    };
     return fetch(`${SERVER_BASE}/sfx/preview?name=${encodeURIComponent(name)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -70,39 +76,29 @@ function handleLocal(kind: string, payload: any): unknown | undefined {
       // 202 = 焼き係を立ち上げ中(初回だけ 1〜2 分)。鳴らさずにそのまま伝える
       if (res.status === 202) return { starting: true };
       if (!res.ok) return { starting: false, ok: false };
-      return res.blob().then((blob) => {
-        if (sfxAudio) {
-          sfxAudio.pause();
-          sfxAudio = null;
-        }
-        if (sfxUrl) URL.revokeObjectURL(sfxUrl);
-        sfxUrl = URL.createObjectURL(blob);
-        const audio = new Audio(sfxUrl);
-        audio.loop = Boolean(loop);
-        sfxAudio = audio;
-        void audio.play().catch(() => {});
-        return { starting: false, ok: true };
-      });
+      return res.blob().then((blob) =>
+        playAudio({ blob, loop, offset, duration, playheadId }).then((r) => ({ starting: false, ok: r.ok })),
+      );
     });
   }
   if (kind === "playSound" || kind === "stopSound") {
-    // 音は Elm から鳴らせないのでここで持つ。同時に 1 つだけ鳴らす —
-    // つまみを動かすたびに重なると、どれを聴いているのか分からなくなる
-    if (sfxAudio) {
-      sfxAudio.pause();
-      sfxAudio = null;
+    // 音は Elm から鳴らせないのでここで持つ。同時に 1 つだけ鳴らす。
+    // 途中から・範囲だけ鳴らすため、<audio> でなく Web Audio で持つ
+    if (kind === "stopSound") {
+      stopAudio();
+      return {};
     }
-    if (kind === "stopSound") return {};
-    const { name, loop } = payload as { name: string; loop: boolean };
+    const { name, loop, offset, duration, playheadId } = payload as {
+      name: string;
+      loop: boolean;
+      offset?: number;
+      duration?: number;
+      playheadId?: string;
+    };
     // 焼き直された物を確実に鳴らすため、毎回別の URL にする(ブラウザの控えを避ける)
     const url = `${SERVER_BASE}/gallery/sound?name=${encodeURIComponent(name)}&t=${Date.now()}`;
-    const audio = new Audio(url);
-    audio.loop = Boolean(loop);
-    sfxAudio = audio;
-    void audio.play().catch(() => {
-      // 焼かれていない・音を出せない環境は黙って何もしない(絵と数値の編集は続く)
-    });
-    return {};
+    // 鳴らせない環境・焼かれていない音は静かに何もしない(編集は続く)
+    return playAudio({ url, loop, offset, duration, playheadId }).then(() => ({}));
   }
   if (kind === "highlightJson") {
     // フォームで触っている欄を、右の JSON でも選択状態にして見せる。

@@ -669,6 +669,21 @@ musicResourcesBody =
         ]
 
 
+{-| /sfx/shape の応答(2 秒の曲・包絡 4 本)。 -}
+moonlightShapeBody : E.Value
+moonlightShapeBody =
+    E.object
+        [ ( "name", E.string "moonlight.wav" )
+        , ( "sampleRate", E.int 22050 )
+        , ( "ms", E.float 2000 )
+        , ( "peak", E.float 0.8 )
+        , ( "bandLo", E.float 60 )
+        , ( "bandHi", E.float 8000 )
+        , ( "peaks", E.list E.float [ 0.2, 0.8, 0.5, 0.1 ] )
+        , ( "bands", E.list identity [ E.list E.float [ 0.1, 0.2, 0.3, 0.4 ] ] )
+        ]
+
+
 {-| 曲の一覧(map kind)を 1 つ持つスキーマ。grid 欄は無い = つまみ系。 -}
 musicSchemaText : String
 musicSchemaText =
@@ -688,7 +703,11 @@ musicText : String
 musicText =
     """{
   "bpm": 60,
-  "tunes": { "moonlight": { "looping": true, "decay": 1.0 } }
+  "tunes": { "moonlight": { "looping": true, "decay": 1.0,
+    "notes": [
+      { "at": 0.0, "len": 4.0, "midi": 37, "gain": 0.6 },
+      { "at": 2.0, "len": 2.0, "midi": 61, "gain": 0.4 }
+    ] } }
 }"""
 
 
@@ -704,6 +723,9 @@ openedMusic =
         |> ProgramTest.simulateDomEvent
             (Query.find [ tag "tr", containing [ text "moonlight" ] ])
             ( "click", E.object [] )
+        -- 行を選ぶと、その音の実測(波形)を同じ /sfx/shape で取りに行く
+        |> ensureKinds [ "sfxShape" ]
+        |> respondOk 6 "sfxShape" moonlightShapeBody
 
 
 {-| kaidan の map と同じ骨格: マスを見ない行(on:enter)が 1 行だけ入った triggers。 -}
@@ -781,6 +803,19 @@ clickRoomRow =
     ProgramTest.simulateDomEvent
         (Query.find [ class "place-room-row" ])
         ( "click", E.object [] )
+
+
+{-| 波形の帯を押す / なぞる(器の幅 400px の何割の位置か)。 -}
+waveEvent : String -> Float -> App -> App
+waveEvent name ratio =
+    ProgramTest.simulateDomEvent
+        (Query.find [ class "waveform" ])
+        ( name
+        , E.object
+            [ ( "offsetX", E.float (ratio * 400) )
+            , ( "currentTarget", E.object [ ( "clientWidth", E.float 400 ) ] )
+            ]
+        )
 
 
 {-| クラス名で 1 つだけの要素を押す(文字合わせでは当たらないボタン向け)。 -}
@@ -1391,14 +1426,61 @@ suite =
             \() ->
                 openedMap
                     |> ProgramTest.expectViewHas [ text "ビジュアル", text "コード" ]
-        , test "音の Doc: 宣言された音を選ぶと ▶ が出て、押すと素の WAV が鳴る" <|
+        , test "音の Doc: 宣言された音を選ぶと波形と ▶ が出て、押すと頭から鳴る" <|
             \() ->
                 openedMusic
-                    |> ProgramTest.ensureViewHas [ class "sound-play" ]
+                    |> ProgramTest.ensureViewHas [ class "sound-play", class "waveform" ]
                     |> ProgramTest.clickButton "▶ moonlight"
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
-                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "name" ] D.string))
-                        (Expect.equal [ ( "playSound", "moonlight.wav" ) ])
+                        (D.map3 (\kind name offset -> ( kind, name, offset ))
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "name" ] D.string)
+                            (D.at [ "payload", "offset" ] D.float)
+                        )
+                        (Expect.equal [ ( "playSound", "moonlight.wav", 0 ) ])
+        , test "譜のある音: ピアノロールが波形の上に出る(音符の数だけ棒が並ぶ)" <|
+            \() ->
+                openedMusic
+                    |> ProgramTest.ensureViewHas [ class "piano-roll", class "waveform" ]
+                    |> ProgramTest.expectView
+                        (Query.findAll [ class "roll-note" ] >> Query.count (Expect.equal 2))
+        , test "譜のある音: 音符を押すと、その行(notes[i])を右の JSON で指し示す" <|
+            \() ->
+                openedMusic
+                    |> ProgramTest.simulateDomEvent
+                        (Query.findAll [ class "roll-note" ] >> Query.index 1)
+                        ( "click", E.object [] )
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "path" ] (D.list (D.oneOf [ D.string, D.int |> D.map String.fromInt ])))
+                        )
+                        (Expect.equal [ ( "highlightJson", [ "tunes", "moonlight", "notes", "1" ] ) ])
+        , test "音の Doc: 波形のクリックはシーク(次の ▶ はそこから鳴る)" <|
+            \() ->
+                openedMusic
+                    |> waveEvent "mousedown" 0.25
+                    |> waveEvent "mouseup" 0.25
+                    |> ProgramTest.clickButton "▶ moonlight"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "offset" ] D.float))
+                        -- 2 秒の曲の 1/4 = 0.5 秒目から
+                        (Expect.equal [ ( "playSound", 0.5 ) ])
+        , test "音の Doc: 波形のドラッグで範囲を選ぶと、▶ はその範囲だけ鳴らす" <|
+            \() ->
+                openedMusic
+                    |> waveEvent "mousedown" 0.25
+                    |> waveEvent "mousemove" 0.75
+                    |> waveEvent "mouseup" 0.75
+                    |> ensureKinds []
+                    |> ProgramTest.clickButton "▶ moonlight"
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map3 (\kind offset duration -> ( kind, offset, duration ))
+                            (D.field "kind" D.string)
+                            (D.at [ "payload", "offset" ] D.float)
+                            (D.at [ "payload", "duration" ] D.float)
+                        )
+                        (Expect.equal [ ( "playSound", 0.5, 1 ) ])
         , test "つまみ系 Doc: 欄に触ると、右の JSON でその場所を指し示す" <|
             \() ->
                 openedLevel
