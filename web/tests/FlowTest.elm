@@ -203,6 +203,17 @@ changesBodyToken path mtime token =
         ]
 
 
+{-| changesBodyToken の複数ファイル版(twoCutsResourcesBody のような 2 本立ての
+resources で、一覧の見張りを誤って起こさないよう全ファイルの key を揃える)。
+-}
+changesBodyTokenMany : List ( String, Int ) -> String -> E.Value
+changesBodyTokenMany files token =
+    E.object
+        [ ( "token", E.string token )
+        , ( "files", E.object (( "hitbox.json", E.int 1 ) :: (files |> List.map (\( path, mtime ) -> ( path, E.int mtime )))) )
+        ]
+
+
 {-| resourcesBody に "assets/level2.json" が増えた版(一覧の増減の見張りの検査用)。 -}
 resourcesBodyWithLevel2 : E.Value
 resourcesBodyWithLevel2 =
@@ -1984,6 +1995,91 @@ suite =
 }"""
                               )
                             ]
+                        )
+                    |> ProgramTest.expectView
+                        (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled False ])
+        , test "焼く: a を焼いてから b を焼くと、a も b も disabled のまま(片方の控えがもう片方を上書きしない)" <|
+            \() ->
+                -- 報告されたバグの再現: bakedTokens が 1 枠の Maybe だった時は、
+                -- b の焼きの控えが a の控えを上書きし、b は disabled のまま a が
+                -- 押せてしまっていた。ファイルごとの Dict なら両方とも disabled のまま
+                bootedWith twoCutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 8 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    -- token(tA)を知っておく(a・b とも同じ mtime のまま = 何も変えていない)
+                    |> respondOk 0
+                        "changes"
+                        (changesBodyTokenMany
+                            [ ( "assets/prologue.scene.json", 111 ), ( "assets/second.scene.json", 111 ) ]
+                            "tA"
+                        )
+                    -- a(prologue)を焼く
+                    |> clickOn "bake-run"
+                    |> respondOk 9 "bakeWake" wakeOkBody
+                    |> respondOk 10 "bakeCutscene" bakeOkBody
+                    -- b(second)へ切り替えて焼く
+                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> respondOk 11 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 12 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 13 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 14 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 15 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    |> clickOn "bake-run"
+                    |> respondOk 16 "bakeWake" wakeOkBody
+                    |> respondOk 17 "bakeCutscene" bakeOkBody
+                    -- b を見ている間: 何も変わっていない(同じ token)ので b は disabled
+                    |> ProgramTest.ensureView
+                        (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
+                    -- a へ戻る
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> respondOk 18 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 19 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 20 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 21 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 22 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    -- a も、同じく何も変わっていないので disabled のまま(バグがあれば有効に戻ってしまう)
+                    |> ProgramTest.expectView
+                        (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
+        , test "焼く: Studio を再起動した後(bakedTokens は消えている)でも、復元した GIF が全 JSON より新しければ disabled" <|
+            \() ->
+                -- bakedTokens はメモリなので Studio 再起動で消える。ここでは焼いたことは
+                -- 一度も無い(セッション内の bakedTokens 経路は使わない) — pastBake の復元
+                -- (mediaExists の X-Mtime)と changes の mtime 一覧だけでディスクの事実から
+                -- 「前回の焼きから何も変わっていない」を言い直せることを見る
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> ensureKinds [ "mediaExists" ]
+                    -- 復元した GIF の mtime は 500(サーバの X-Mtime ヘッダ相当)
+                    |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ), ( "mtime", E.int 500 ) ])
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    -- 全 JSON(場面 111・hitbox.json 1)が GIF(500)より古い → 何も変わっていない
+                    |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tX")
+                    |> ProgramTest.expectView
+                        (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
+        , test "焼く: 復元した GIF より新しい JSON がある changes が来れば、押せるようになる" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> ensureKinds [ "mediaExists" ]
+                    |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ), ( "mtime", E.int 500 ) ])
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    -- 別の JSON(例: 部屋の間取り相当。ここでは hitbox.json で代用)が
+                    -- GIF(500)より新しい(600)→ GIF より後に何かが変わった → 押せる
+                    |> respondOk 0
+                        "changes"
+                        (changesBodyTokenMany
+                            [ ( "assets/prologue.scene.json", 111 ), ( "hitbox.json", 600 ) ]
+                            "tY"
                         )
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled False ])

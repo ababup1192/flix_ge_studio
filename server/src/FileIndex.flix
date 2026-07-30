@@ -7,7 +7,10 @@ mod FileIndex {
     import java.io.{File => JFile}
 
     /// 走査から除外するディレクトリ名。生成物・依存・履歴はエディタの編集対象にしない。
-    pub def excludedDirs(): Set[String] = Set#{"build", "lib", ".git", "gallery", ".devbox", "node_modules"}
+    /// 走査から外す置き場。編集対象でない生成物・写し(debug は焼き係と実機が
+    /// 書き続ける — 混ぜると /changes の token が絶えず変わり「差分なし」が二度と
+    /// 成立しない)。隠しディレクトリは walkJson 側で名前の頭の "." で一律に外す。
+    pub def excludedDirs(): Set[String] = Set#{"build", "lib", "gallery", "node_modules", "debug", "golden"}
 
     /// ディレクトリの中身 1 件 (名前と、ディレクトリかどうか)。
     pub type alias DirEntry = {name = String, isDir = Bool}
@@ -32,7 +35,9 @@ mod FileIndex {
         listChildren(relDir) |> List.flatMap(entry -> {
             let path = if (relDir == "") entry#name else "${relDir}/${entry#name}";
             if (entry#isDir) {
-                if (Set.memberOf(entry#name, excludedDirs())) Nil else walkJson(listChildren, path)
+                if (Set.memberOf(entry#name, excludedDirs())
+                        or String.startsWith(prefix = ".", entry#name)) Nil
+                else walkJson(listChildren, path)
             }
             else if (String.endsWith(suffix = ".json", entry#name)) path :: Nil
             else Nil

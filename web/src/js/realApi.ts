@@ -125,12 +125,20 @@ export function realApi(base: string): Api {
         // 1 枚焼き(選んだカットの瞬間)。宣言の口 + /frame への取り次ぎ
         case "cutsceneFrame":
           return sendJson("POST", `${base}/bake/proxy`, payload, BAKE_MS);
-        // 焼き産物が既にあるか(既存の配信の口へ HEAD を撃つだけ)
+        // 焼き産物が既にあるか(既存の配信の口へ HEAD を撃つだけ)。X-Mtime ヘッダ
+        // (その産物ファイルの mtime ms)が有れば一緒に返す — Studio を閉じて
+        // 開き直しても(bakedTokens はメモリなので消える)、復元した GIF の mtime と
+        // 今の JSON の mtime を比べれば「前回の焼きから何も変わっていない」を
+        // ディスクの事実から言い直せる
         case "mediaExists": {
           const url = String((payload as { url: string }).url ?? "");
           return fetch(url, { method: "HEAD" })
-            .then((res) => ({ exists: res.ok }))
-            .catch(() => ({ exists: false }));
+            .then((res) => {
+              const raw = res.headers.get("X-Mtime");
+              const mtime = raw !== null && raw !== "" ? Number(raw) : null;
+              return { exists: res.ok, mtime: mtime !== null && !Number.isNaN(mtime) ? mtime : null };
+            })
+            .catch(() => ({ exists: false, mtime: null }));
         }
         // 前回の焼き(pastBake)はコマ数が分からないので、置き場の *.png を数えて貰う
         // (URL は Elm 側で組む — mediaExists と同じ流儀)

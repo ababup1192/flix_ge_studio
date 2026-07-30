@@ -791,14 +791,20 @@ mod Editor {
     // ── ギャラリー (読むだけの絵と音) ─────────────────────
 
     /// GET /gallery/image?dir=…&name=… — PNG のバイト列。不正な指定・無いファイルは 404。
+    /// X-Mtime ヘッダに焼き産物の mtime (ms) を載せる — 画面が「前回の焼きより後に
+    /// JSON が変わったか」を再起動をまたいで判じる材料 (HEAD の存在確認でも読める)。
     def handleGalleryImage(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
         let found = match (Map.get("dir", params), Map.get("name", params)) {
             case (Some(subdir), Some(name)) => Gallery.mediaBytes(dir, subdir, name)
+                |> Option.map(hit -> (hit, mtimeOf(dir, "${subdir}/${name}")))
             case _                          => None
         };
         match found {
-            case Some((kind, bytes)) => sendBytes(kind, bytes, exchange)
-            case None                => sendJson(404, errorJson("image not found"), exchange)
+            case Some(((kind, bytes), mtime)) => {
+                exchange.getResponseHeaders().set("X-Mtime", "${mtime}");
+                sendBytes(kind, bytes, exchange)
+            }
+            case None => sendJson(404, errorJson("image not found"), exchange)
         }
 
     /// GET /atelier/preview?file=… — 候補/スロットのプレビュー PNG のバイト列。
@@ -969,6 +975,8 @@ mod Editor {
             case Some(origin) =>
                 let headers = exchange.getResponseHeaders();
                 headers.set("Access-Control-Allow-Origin", origin);
+                // X-Mtime(焼き産物の mtime)を別オリジン(vite dev)の fetch からも読めるように
+                headers.set("Access-Control-Expose-Headers", "X-Mtime");
                 headers.set("Vary", "Origin")
         }
 

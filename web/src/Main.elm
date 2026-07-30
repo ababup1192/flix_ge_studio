@@ -558,8 +558,14 @@ type alias Model =
     , currentMissing : Bool
 
     -- changes 応答が持つ集計値(どれか 1 つの mtime 変化・増減で必ず別の値になる)。
-    -- 「前回の焼きから何も変わっていないか」を見るのに使う(bakedToken 参照)
+    -- 「前回の焼きから何も変わっていないか」を見るのに使う(bakedTokens 参照)
     , latestToken : Maybe String
+
+    -- changes の mtime 一覧の最大値(いま知っている全 JSON の中で一番新しい更新)。
+    -- 復元した焼き上がり(restoredGifMtime)の mtime と比べて「その GIF より後に
+    -- 何か変わったか」を、Studio 再起動後(bakedTokens が消えた後)でも
+    -- ディスクの事実だけから言い直すのに使う
+    , latestMaxMtime : Maybe Int
 
     -- スキーマ駆動フォーム(右ペイン)
     , schemaState : SchemaState
@@ -605,11 +611,16 @@ type alias Model =
     , bakeReq : Maybe Int
     , bakeFile : Maybe String
 
-    -- 焼きが成功で完了した時点の (ファイル, その時知っていた最新 token) の控え。
+    -- 焼きが成功で完了した時点の token を、焼いたファイルごとに控える
+    -- (ファイル → token。1 枠の Maybe だと B を焼いた控えが A の控えを
+    -- 上書きしてしまう — a を焼いて b を焼くと a が押せてしまうバグの元)。
     -- 「焼く」ボタンの無効化(前回の焼きから何も変わっていない)の判定材料。
     -- ファイル切替では消さない(ファイル名で突き合わせるので安全)。
-    -- 焼き始めでは消す(古い控えのまま次の焼きを迎えない)
-    , bakedToken : Maybe { file : String, token : Maybe String }
+    -- 焼き始めでは、そのファイルの控えだけ消す(古い控えのまま次の焼きを迎えない)。
+    -- token が変わらない限り、焼いた全ファイルが押せないまま(どれかの JSON が
+    -- 変われば token が動き、全ファイル解禁 — 焼き上がりは他の Doc にも
+    -- 依存するので、それで正しい)
+    , bakedTokens : Dict String String
 
     -- 行を選んだ時の 1 枚焼き。cache は (ファイル, カット, 保存世代) → 絵の置き場で、
     -- 同じ姿を二度焼かない。saveGen は保存のたびに進む(焼き直すべき印)
@@ -635,6 +646,13 @@ type alias Model =
 
     -- 出しているのが「前回の焼き」(今の脚本で焼いた物ではない)か
     , bakeStale : Bool
+
+    -- 復元した焼き上がり(pastBake)の GIF の mtime(サーバが X-Mtime ヘッダで返す)。
+    -- bakedTokens は Elm のメモリなので Studio を閉じると消える — こちらは
+    -- ディスクの事実(GIF の mtime と JSON の最新更新)から「前回の焼きから
+    -- 何も変わっていないか」を復元する経路。開いているファイル基準
+    -- (forgetBake でクリア — 切り替えたら次の probe がまた入れる)
+    , restoredGifMtime : Maybe { file : String, mtime : Int }
 
     -- 「前回の焼き」を探している最中の置き場
     , bakeProbe : Maybe String
@@ -891,6 +909,7 @@ init _ =
         , staleMtime = Nothing
         , currentMissing = False
         , latestToken = Nothing
+        , latestMaxMtime = Nothing
         , schemaState = SchemaNone
         , schemaReq = Nothing
         , sectionKey = Nothing
@@ -907,7 +926,7 @@ init _ =
         , tilePicker = Nothing
         , bakeReq = Nothing
         , bakeFile = Nothing
-        , bakedToken = Nothing
+        , bakedTokens = Dict.empty
         , frameShot = Nothing
         , frameCache = Dict.empty
         , frameSeq = 0
@@ -925,6 +944,7 @@ init _ =
         , bakePlaying = True
         , bakeZoomShot = Nothing
         , bakeStale = False
+        , restoredGifMtime = Nothing
         , bakeProbe = Nothing
         , mediaCountReq = Nothing
         , performReq = Nothing
@@ -5731,16 +5751,19 @@ handleOkByKind env model =
             -- (2) 開いているファイルの鮮度: 変わっていて打ちかけが無ければ黙って
             -- 読み直す。打ちかけがあるときだけ帯で知らせる(保存は 409 が最後の砦)。
             -- 一覧から消えていれば、打ちかけが無ければ閉じる・あれば知らせるだけ。
-            -- token(集計値)はここで常に最新へ更新する — 「焼く」ボタンの
-            -- 無効化(bakedToken との突き合わせ)が使う
+            -- token(集計値)・最大 mtime はここで常に最新へ更新する — 「焼く」
+            -- ボタンの無効化(bakedTokens・restoredGifMtime との突き合わせ)が使う
             case D.decodeValue diskMtimesDecoder env.body of
                 Ok mtimes ->
                     let
                         latestToken =
                             D.decodeValue (D.field "token" D.string) env.body |> Result.toMaybe
 
+                        latestMaxMtime =
+                            Dict.values mtimes |> List.maximum
+
                         ( m1, listFx ) =
-                            syncFileListIfNeeded mtimes { model | latestToken = latestToken }
+                            syncFileListIfNeeded mtimes { model | latestToken = latestToken, latestMaxMtime = latestMaxMtime }
 
                         ( m2, freshFx ) =
                             case model.current of
@@ -6141,7 +6164,8 @@ handleOkByKind env model =
                                     , staleMtime = Nothing
                                     , currentMissing = False
                                     , latestToken = Nothing
-                                    , bakedToken = Nothing
+                                    , latestMaxMtime = Nothing
+                                    , bakedTokens = Dict.empty
                                     , wizard = Nothing
                                     , resourceWarnings = []
                                     , activeDocs = Dict.empty
@@ -6407,8 +6431,18 @@ handleOkByKind env model =
 
                         ( m1, countFx ) =
                             requestFramesCount model restored
+
+                        -- サーバが X-Mtime ヘッダで返す、その GIF の mtime(無ければ null)。
+                        -- 開いているファイル基準で控える(forgetBake でクリア)
+                        gifMtime =
+                            D.decodeValue (D.field "mtime" (D.nullable D.int)) env.body |> Result.withDefault Nothing
                     in
-                    ( { m1 | bakeProbe = Nothing, bake = Just restored, bakeStale = True }
+                    ( { m1
+                        | bakeProbe = Nothing
+                        , bake = Just restored
+                        , bakeStale = True
+                        , restoredGifMtime = Maybe.map2 (\file m -> { file = file, mtime = m }) model.current gifMtime
+                      }
                     , countFx
                     )
 
@@ -6554,17 +6588,18 @@ handleOkByKind env model =
                                     , bakeFrame = 0
                                     , bakeStale = False
 
-                                    -- 「前回の焼きから何も変わっていない」判定の控え。完了時に
-                                    -- dirty なら控えない — 焼いている間に編集して保存すると
-                                    -- token が動くので、その時点の token を控えると
-                                    -- (実は変わったのに)誤って無効化してしまう。この場合は
-                                    -- 諦める(次の保存でまた押せるようになる)
-                                    , bakedToken =
-                                        if model.dirty then
-                                            Nothing
+                                    -- 「前回の焼きから何も変わっていない」判定の控え(ファイルごと)。
+                                    -- dirty か token 未取得なら控えない(押せる側に倒す) —
+                                    -- 焼いている間に編集して保存すると token が動くので、その
+                                    -- 時点の token を控えると(実は変わったのに)誤って
+                                    -- 無効化してしまう。この場合は諦める(次の保存でまた押せる)
+                                    , bakedTokens =
+                                        case ( model.dirty, model.bakeFile, model.latestToken ) of
+                                            ( False, Just file, Just t ) ->
+                                                Dict.insert file t model.bakedTokens
 
-                                        else
-                                            model.bakeFile |> Maybe.map (\file -> { file = file, token = model.latestToken })
+                                            _ ->
+                                                model.bakedTokens
                                   }
                                 , Effect.none
                                 )
@@ -8456,6 +8491,7 @@ forgetBake model =
         , bakeZoom = False
         , bakeZoomShot = Nothing
         , bakeProbe = Nothing
+        , restoredGifMtime = Nothing
         , mediaCountReq = Nothing
         , frameShot = Nothing
         , frameNotes = []
@@ -8661,7 +8697,14 @@ sendBake path model =
                         )
                         m1
             in
-            ( { m2 | bakeReq = Just m2.reqCounter, bakeFile = Just path, bakeSeconds = 0, bakedToken = Nothing }, Effect.batch [ saveFx, bakeFx ] )
+            ( { m2
+                | bakeReq = Just m2.reqCounter
+                , bakeFile = Just path
+                , bakeSeconds = 0
+                , bakedTokens = Dict.remove path m2.bakedTokens
+              }
+            , Effect.batch [ saveFx, bakeFx ]
+            )
 
         Nothing ->
             ( model, Effect.none )
@@ -8837,23 +8880,37 @@ viewBakePanel model =
         bakingElsewhere =
             baking && model.bakeFile /= model.current
 
-        -- 前回の焼きから何も変わっていないか。迷ったら押せる側に倒す —
-        -- token 未取得・stamp 無し・別ファイル・dirty・過去の焼きの復元
-        -- (pastBake は bakedToken を持たない)は、どれも「有効」のまま。
+        -- 前回の焼きから何も変わっていないか。2 経路の OR — どちらかが「変わって
+        -- いない」と言えば無効化する。迷ったら押せる側に倒す(token/mtime 未取得・
+        -- 控え無し・別ファイル・dirty は、どちらの経路でも「有効」のまま)。
         -- ゲーム側の Flix コード変更は検知できないが、それを理由に諦めない
         -- (rare な取りこぼしより日々の誤爆防止を取る)
         unchanged =
-            case model.bakedToken of
-                Just stamp ->
-                    model.current
-                        == Just stamp.file
-                        && not model.dirty
-                        && stamp.token
-                        /= Nothing
-                        && stamp.token
-                        == model.latestToken
+            unchangedBySession || unchangedByRestore
 
-                Nothing ->
+        -- 経路 1: 同じセッション内で焼いた控え(bakedTokens)。token が変わらない
+        -- 限り、焼いた全ファイルが押せないまま(a を焼いて b を焼いても、
+        -- 何も変えていなければ両方 disabled)。Studio を再起動すると消える
+        -- (メモリなので)— その時は経路 2 が拾う
+        unchangedBySession =
+            case ( model.current |> Maybe.andThen (\path -> Dict.get path model.bakedTokens), model.latestToken ) of
+                ( Just bakedAt, Just latest ) ->
+                    not model.dirty && bakedAt == latest
+
+                _ ->
+                    False
+
+        -- 経路 2: ディスクの事実からの復元(pastBake で拾った GIF の mtime と、
+        -- 今知っている全 JSON の中で一番新しい更新を比べる)。Studio を閉じて
+        -- 開き直しても(bakedTokens は消えても)、GIF の方が全 JSON より後に
+        -- 焼かれていれば「何も変わっていない」と言える。同値は「押せる側」
+        -- (strict に GIF の方が新しい時だけ無効化)
+        unchangedByRestore =
+            case ( model.restoredGifMtime, model.latestMaxMtime ) of
+                ( Just gif, Just maxMtime ) ->
+                    model.current == Just gif.file && not model.dirty && gif.mtime > maxMtime
+
+                _ ->
                     False
     in
     [ div [ HA.class "bake-bar mb-2 flex flex-wrap items-center gap-1.5" ]
