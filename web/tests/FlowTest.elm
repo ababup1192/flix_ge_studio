@@ -176,6 +176,46 @@ changesBody path mtime =
         ]
 
 
+{-| GET /changes の応答(パス → mtime、複数)。一覧の増減の見張り(syncFileListIfNeeded)
+の検査用 — キー集合そのものを検査材料にする。
+-}
+changesBodyMany : List ( String, Int ) -> E.Value
+changesBodyMany files =
+    E.object
+        [ ( "token", E.string "t" )
+        , ( "files", E.object (files |> List.map (\( path, mtime ) -> ( path, E.int mtime ) )) )
+        ]
+
+
+{-| resourcesBody に "assets/level2.json" が増えた版(一覧の増減の見張りの検査用)。 -}
+resourcesBodyWithLevel2 : E.Value
+resourcesBodyWithLevel2 =
+    E.object
+        [ ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "level" )
+                    , ( "pattern", E.string "assets/*.json" )
+                    , ( "title", E.string "レベル" )
+                    , ( "plugin", E.string "shooterLevel" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/level.json" )
+                                , ( "schema", E.string "assets/level.schema.json" )
+                                ]
+                            , E.object
+                                [ ( "path", E.string "assets/level2.json" )
+                                , ( "schema", E.string "assets/level.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
 fileBody : String -> String -> E.Value
 fileBody path content =
     -- mtime はサーバが常に添える(保存の ifMtime の種)
@@ -725,6 +765,39 @@ cutsText =
   "cuts": [
     { "wait": 1.0 },
     { "say": ["……だれか いるの?"], "pan": 1.4 }
+  ]
+}"""
+
+
+{-| oneOf の表(#/カット/内容 の 3 列)の検査用。鍵ごとの列見出しに戻っていないか、
+カット列・内容列の要約が出るかを見る(cutsSchemaText よりフィールドを増やした版)。
+-}
+oneOfSchemaText : String
+oneOfSchemaText =
+    """{
+  "version": 1,
+  "sections": {
+    "cuts": { "kind": "list", "oneOf": true, "label": "カット",
+              "fields": {
+                "wait":   { "type": "float", "label": "待つ(秒。とても長い説明がここに入り、見出しでは省略されてほしい)", "order": 1 },
+                "walkTo": { "type": "object", "label": "歩く先のマス", "order": 2 },
+                "say":    { "type": {"list": "text"}, "label": "言葉", "order": 3 },
+                "noWait": { "type": "bool", "label": "待たない(添え鍵)", "order": 4 }
+              }
+    }
+  }
+}"""
+
+
+oneOfDocText : String
+oneOfDocText =
+    """{
+  "id": "prologue",
+  "room": "hall1",
+  "cuts": [
+    { "wait": 1.0 },
+    { "walkTo": { "x": 35, "y": 4 }, "noWait": true },
+    { "say": ["……だれか いるの?"] }
   ]
 }"""
 
@@ -2031,6 +2104,33 @@ suite =
                     |> ensureKinds [ "performScene" ]
                     |> respondOk 10 "performScene" performErrorBody
                     |> ProgramTest.expectViewHas [ text "error: 脚本が読めません" ]
+        , test "oneOf の表: 鍵ごとの列見出しではなく #/カット/内容 の 3 列で出る" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" oneOfDocText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" oneOfSchemaText)
+                    |> ProgramTest.expectView
+                        (Expect.all
+                            [ Query.hasNot
+                                [ text "待つ(秒。とても長い説明がここに入り、見出しでは省略されてほしい)" ]
+                            , Query.has [ tag "th", containing [ text "カット" ] ]
+                            , Query.has [ tag "th", containing [ text "内容" ] ]
+                            ]
+                        )
+        , test "oneOf の表: カット列に鍵の名前、内容列に値の要約(座標・添え鍵の札)が出る" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" oneOfDocText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" oneOfSchemaText)
+                    |> ProgramTest.expectViewHas
+                        [ text "wait"
+                        , text "say"
+                        , text "(35, 4) [待たない]"
+                        ]
         , test "前回の焼き: 開いた拍に産物があれば出し、「前回の焼き」の札を添える" <|
             \() ->
                 bootedWith cutsResourcesBody
@@ -2541,8 +2641,10 @@ suite =
                     |> ensureKinds [ "applyDocEdit" ]
                     |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelEditedText ) ])
                     |> ensureKinds [ "previewItems" ]
-                    -- 読み直し(外の中身を取り直す)で正本が入れ替わる
-                    |> ProgramTest.clickButton "読み直す"
+                    -- 読み直し(外の中身を取り直す)で正本が入れ替わる。ツールバーの
+                    -- ボタンは無くなったので(自動見張り+409で守られるため)、
+                    -- Msg を直に(reloadCurrent は 409 ダイアログ等がまだ使う)
+                    |> ProgramTest.update Main.ReloadClicked
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 10 "getFile" (fileBody "assets/level.json" levelText)
                     |> ensureKinds []
@@ -2805,7 +2907,40 @@ suite =
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.at [ "kind" ] D.string)
                         (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [])
-                    |> ProgramTest.expectViewHas [ text "このファイルは外で変わりました" ]
+                    |> ProgramTest.expectViewHas [ text "このファイルは外で変わりました(保存時に確認します)" ]
+        , test "一覧の見張り: 新しいファイルが増えた changes 応答で一覧に現れる" <|
+            \() ->
+                booted
+                    -- ファイルは開いていない(一覧を見ているだけ)。既知は
+                    -- hitbox.json・assets/level.json の 2 本 — そこへ level2 が増える
+                    |> respondOk 0
+                        "changes"
+                        (changesBodyMany
+                            [ ( "hitbox.json", 1 )
+                            , ( "assets/level.json", 1 )
+                            , ( "assets/level2.json", 1 )
+                            ]
+                        )
+                    |> ensureKinds [ "files", "resources" ]
+                    |> respondOk 4 "files" filesBody
+                    |> respondOk 5 "resources" resourcesBodyWithLevel2
+                    |> ProgramTest.expectViewHas [ text "assets/level2.json" ]
+        , test "一覧の見張り: 開いていないファイルの削除で一覧から消える" <|
+            \() ->
+                booted
+                    -- assets/level.json を開かないまま、一覧だけ見ている
+                    |> ProgramTest.ensureViewHas [ text "assets/level.json" ]
+                    -- changes の応答から assets/level.json が消える(ディスクから削除された)
+                    |> respondOk 0 "changes" (changesBodyMany [ ( "hitbox.json", 1 ) ])
+                    |> ensureKinds [ "files", "resources" ]
+                    |> respondOk 4 "files" filesBody
+                    |> respondOk 5 "resources" (E.object [ ( "resources", E.list identity [] ) ])
+                    |> ProgramTest.expectViewHasNot [ text "assets/level.json" ]
+        , test "一覧の見張り: 開いているファイルが消え、打ちかけが無ければ編集を閉じて知らせる" <|
+            \() ->
+                openedLevel
+                    |> respondOk 0 "changes" (changesBodyMany [ ( "hitbox.json", 1 ) ])
+                    |> ProgramTest.expectViewHas [ text "assets/level.json はディスクから消えました(編集を閉じました)" ]
         , test "セクションタブ: 一覧を持つ種類は label があれば表示名・無ければキー名で出る" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody

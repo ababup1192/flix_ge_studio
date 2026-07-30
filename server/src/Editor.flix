@@ -695,11 +695,12 @@ mod Editor {
     // WhyNot: SSE で push しない — このサーバは executor 無しの 1 スレッド直列で、
     // 常駐接続が 1 本あるとスレッドを占有して全リクエストが詰まるため。
     def handleChanges(dir: String, exchange: HttpExchange): Unit \ IO =
+        // 全 JSON を報告する — 開いているファイルの外部変更の検知と、
+        // 一覧の増減の追跡(新規・削除ファイル)の両方がこの一覧に乗る。
+        // かつては ui/fx/preview 系だけだったが、それだと素材(map/cutscene 等)の
+        // 外部変更が誰にも見えず、一覧の突き合わせも常に食い違う。
         let all = FileIndex.listAllJson(dir);
-        let palettes = all
-            |> List.filter(path -> String.endsWith(suffix = ".ui.json", path))
-            |> List.filterMap(path -> uiFileMeta(dir, path)#paletteFile);
-        let entries = FileIndex.mtimesOf(dir, FileIndex.changeTargets(palettes, all));
+        let entries = FileIndex.mtimesOf(dir, all);
         sendJson(200, JObject(Map#{
             "token" => JString(FileIndex.changeToken(entries)),
             "files" => JObject(entries |> List.map(entry -> (fst(entry), JNumber(mtimeToBd(snd(entry))))) |> List.toMap)

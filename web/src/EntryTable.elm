@@ -28,6 +28,7 @@ import Html exposing (Html, button, div, input, span, table, tbody, td, text, th
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
+import OneOfTable
 import Refs
 import Schema
 import Selection exposing (EntrySel(..))
@@ -123,6 +124,17 @@ viewCrudBar handlers state doc key section =
 
 viewBox : Handlers msg -> State -> String -> D.Value -> String -> Schema.Section -> Maybe UsageDicts -> Html msg
 viewBox handlers state heightClass doc key section usageDict =
+    if section.oneOf && section.kind == Schema.ListKind then
+        -- 鍵ごとに 1 列 + 長文見出しでは横スクロールだらけになる、oneOf 専用の
+        -- #/カット/内容の 3 列(OneOfTable 参照)。並び替えは # 固定でよい
+        viewOneOfBox handlers state heightClass doc key section
+
+    else
+        viewRegularBox handlers state heightClass doc key section usageDict
+
+
+viewRegularBox : Handlers msg -> State -> String -> D.Value -> String -> Schema.Section -> Maybe UsageDicts -> Html msg
+viewRegularBox handlers state heightClass doc key section usageDict =
     let
         cols =
             Table.columns section
@@ -191,6 +203,86 @@ viewBox handlers state heightClass doc key section usageDict =
                 )
             ]
         ]
+
+
+{-| oneOf セクション専用の #/カット/内容 の 3 列(OneOfTable が行モデルを組む)。
+並べ替えは無い(# 固定)。絞り込みはカット名 + 内容の要約も対象にする
+(OneOfTable.filterRows)。行クリック・行操作(↑↓複製✕)は通常の表と同じ道。
+-}
+viewOneOfBox : Handlers msg -> State -> String -> D.Value -> String -> Schema.Section -> Html msg
+viewOneOfBox handlers state heightClass doc key section =
+    let
+        shownRows =
+            OneOfTable.rows key section doc
+                |> OneOfTable.filterRows state.filter
+
+        rowOps =
+            Just { key = key, count = List.length (Doc.list key doc), ordered = True }
+
+        rowOpsHeader =
+            case rowOps of
+                Just _ ->
+                    [ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "操作" ] ]
+
+                Nothing ->
+                    []
+    in
+    div [ HA.class ("table-wrap mb-2.5 overflow-auto rounded border border-edge " ++ heightClass) ]
+        [ table [ HA.class "entry-table entry-table-oneof w-full border-collapse font-mono text-[11px] tabular-nums whitespace-nowrap" ]
+            [ thead []
+                [ tr []
+                    ([ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "#" ]
+                     , th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "カット" ]
+                     , th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "内容" ]
+                     ]
+                        ++ rowOpsHeader
+                    )
+                ]
+            , tbody []
+                (shownRows |> List.map (viewOneOfTableRow handlers state.entrySel rowOps state.notes))
+            ]
+        ]
+
+
+{-| oneOf の表 1 行。カット列は勝っている鍵の名前(スキーマの長い label は
+title で hover に回す)。内容列は OneOfTable が組んだ要約をそのまま出す
+(セルは広げず truncate + title で全文を持たせる)。
+-}
+viewOneOfTableRow : Handlers msg -> Maybe EntrySel -> Maybe RowOps -> Dict.Dict Int String -> OneOfTable.Row -> Html msg
+viewOneOfTableRow handlers entrySel rowOps notes row =
+    let
+        sel =
+            case row.rowId of
+                Table.ById name ->
+                    ByKey name
+
+                Table.ByIdx i ->
+                    ByIndex i
+
+        isOn =
+            entrySel == Just sel
+    in
+    tr
+        [ HA.classList
+            [ ( "cursor-pointer", True )
+            , ( "on bg-accent/20 shadow-[inset_2px_0_0_var(--color-accent)]", isOn )
+            , ( "hover:bg-white/5", not isOn )
+            ]
+        , HE.onClick (handlers.onSelect sel)
+        ]
+        (td
+            [ HA.classList
+                [ ( "id-cell border-t border-edge px-2 py-0.5", True )
+                , ( "text-accent", isOn )
+                , ( "text-ink-faint", not isOn )
+                ]
+            ]
+            (text row.idText :: viewRowNote notes row.rowId)
+            :: td [ HA.class "cut-kind-cell border-t border-edge px-2 py-0.5", HA.title row.kindTitle ] [ text row.kind ]
+            :: td [ HA.class "cut-summary-cell border-t border-edge px-2 py-0.5" ]
+                [ span [ HA.class "block max-w-96 truncate", HA.title row.summary ] [ text row.summary ] ]
+            :: viewRowOpsCell handlers rowOps row.rowId
+        )
 
 
 {-| 使用箇所の一覧(バッジをクリックで開く小さなリスト)。項目クリックで
@@ -292,7 +384,11 @@ viewHeaderCell handlers sort column label numeric =
             ]
         , HE.onClick (handlers.onSort column)
         ]
-        [ text (label ++ marker) ]
+        [ -- 見出しがスキーマの長文だと横スクロールの元になるので、幅を切って
+          -- 省略記号にする。並べ替えの ▲▼ は切れると読めなくなるので外に出す
+          span [ HA.class "inline-block max-w-32 align-bottom truncate", HA.title label ] [ text label ]
+        , text marker
+        ]
 
 
 {-| 一覧の行操作(↑ ↓ 複製 ✕)を出すための材料。catalog の行には出さない

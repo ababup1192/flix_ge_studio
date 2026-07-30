@@ -28,26 +28,7 @@ mod TestFileIndex {
             expected = "assets/Hud.ui.json" :: "assets/hitbox.json" :: "assets/nested/Deep.ui.json" :: "top.ui.json" :: Nil,
             FileIndex.walkJson(fakeChildren, "") |> List.sort)
 
-    // ══ /changes の対象集合と token ═══════════════════════
-
-    /// 対象に残るのは ui / hitbox / fx / *.preview.json / project.json / 実在パレット。
-    /// 走査に無いパレット参照 (missing.json) と無関係な .json (level.json 等) は落ちる。
-    @Test
-    def testChangeTargetsPicksEditorFacingFiles(): Unit \ Assert =
-        let all = "assets/hud.ui.json" :: "assets/hud.preview.json" :: "assets/hitbox.json"
-               :: "assets/explosion.fx.json"
-               :: "assets/palette.json" :: "assets/level.json" :: "project.json" :: "devbox.json" :: Nil;
-        Assert.assertEq(
-            expected = "assets/explosion.fx.json" :: "assets/hitbox.json" :: "assets/hud.preview.json"
-                    :: "assets/hud.ui.json" :: "assets/palette.json" :: "project.json" :: Nil,
-            FileIndex.changeTargets("assets/palette.json" :: "assets/missing.json" :: Nil, all))
-
-    /// パレットが *.ui.json でもあるような重複指定は 1 件に畳まれる。
-    @Test
-    def testChangeTargetsDedupes(): Unit \ Assert =
-        Assert.assertEq(
-            expected = "a.ui.json" :: Nil,
-            FileIndex.changeTargets("a.ui.json" :: Nil, "a.ui.json" :: Nil))
+    // ══ /changes の token ═════════════════════════════════
 
     /// token は「同じ一覧なら同じ・mtime が 1 つ変わる/件数が変わると別」の集計値。
     @Test

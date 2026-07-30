@@ -549,8 +549,13 @@ type alias Model =
 
     -- 開いているファイルがディスクで変わった印(Just = 今ディスクに居る版の mtime)。
     -- 保存時の 409 は最後の砦で、こちらは「編集を始める前に気付く」ための見張り。
-    -- 打ちかけが無ければ黙って読み直し、あるときだけ帯を出して選ばせる
+    -- 打ちかけが無ければ黙って読み直し、あるときだけ帯を出して知らせる(読み直す手は無い —
+    -- 保存は ifMtime の 409 で守られるので、勝手に打ちかけを捨てる操作は置かない)
     , staleMtime : Maybe Int
+
+    -- 開いているファイルが見張り(changes)からいなくなった(ディスクから消えた
+    -- とみられる)印。打ちかけがあれば閉じずに知らせるだけ、無ければ安全に閉じる
+    , currentMissing : Bool
 
     -- スキーマ駆動フォーム(右ペイン)
     , schemaState : SchemaState
@@ -874,6 +879,7 @@ init _ =
         , savingText = Nothing
         , conflict = Nothing
         , staleMtime = Nothing
+        , currentMissing = False
         , schemaState = SchemaNone
         , schemaReq = Nothing
         , sectionKey = Nothing
@@ -1583,8 +1589,9 @@ update msg model =
             reloadCurrent model
 
         StaleDismissed ->
-            -- 「このまま続ける」。帯は畳むが、保存は ifMtime で 409 に弾かれる
-            ( { model | staleMtime = Nothing }, Effect.none )
+            -- 「このまま続ける」。外で変わった帯・消えた帯のどちらも畳む
+            -- (保存は ifMtime で 409/404 に弾かれるので、畳んでも安全は変わらない)
+            ( { model | staleMtime = Nothing, currentMissing = False }, Effect.none )
 
         FileWatchTick ->
             -- 開いている間だけの見張り。全ファイルの mtime を 1 回で貰う
@@ -2704,6 +2711,8 @@ openFile path model =
         m2 =
             { cleared
                 | loadReq = Just m1.reqCounter
+                , staleMtime = Nothing
+                , currentMissing = False
                 , dashboard = Nothing
                 , pendingJump = Nothing
                 , sectionKey = Nothing
@@ -5708,25 +5717,44 @@ handleOkByKind env model =
                     ( { model | journey = Journey.failed "契約とずれた応答" }, Effect.none )
 
         "changes" ->
-            -- 開いているファイルの mtime だけ見る。変わっていて打ちかけが無ければ
-            -- 黙って読み直す(何もしなくても最新になる)。打ちかけがあるときだけ帯を出す
-            case ( model.current, D.decodeValue diskMtimesDecoder env.body ) of
-                ( Just path, Ok mtimes ) ->
-                    case ( Dict.get path mtimes, model.mtime ) of
-                        ( Just disk, Just known ) ->
-                            if disk == known then
-                                ( { model | staleMtime = Nothing }, Effect.none )
+            -- 見張りは 2 本立て。(1) 一覧の増減: mtime 一覧のキー集合を今の
+            -- ファイル一覧と比べ、違えば files/resources を取り直す(サイドバーだけに
+            -- 効かせる — 選択・スクロール・編集中の文書には触らない)。
+            -- (2) 開いているファイルの鮮度: 変わっていて打ちかけが無ければ黙って
+            -- 読み直す。打ちかけがあるときだけ帯で知らせる(保存は 409 が最後の砦)。
+            -- 一覧から消えていれば、打ちかけが無ければ閉じる・あれば知らせるだけ
+            case D.decodeValue diskMtimesDecoder env.body of
+                Ok mtimes ->
+                    let
+                        ( m1, listFx ) =
+                            syncFileListIfNeeded mtimes model
 
-                            else if model.dirty || model.savingText /= Nothing then
-                                ( { model | staleMtime = Just disk }, Effect.none )
+                        ( m2, freshFx ) =
+                            case model.current of
+                                Just path ->
+                                    case ( Dict.get path mtimes, model.mtime ) of
+                                        ( Just disk, Just known ) ->
+                                            if disk == known then
+                                                ( { m1 | staleMtime = Nothing, currentMissing = False }, Effect.none )
 
-                            else
-                                reloadCurrent model
+                                            else if model.dirty || model.savingText /= Nothing then
+                                                ( { m1 | staleMtime = Just disk, currentMissing = False }, Effect.none )
 
-                        _ ->
-                            ( model, Effect.none )
+                                            else
+                                                reloadCurrent m1
 
-                _ ->
+                                        ( Nothing, _ ) ->
+                                            closeOrFlagMissing path m1
+
+                                        _ ->
+                                            ( m1, Effect.none )
+
+                                Nothing ->
+                                    ( m1, Effect.none )
+                    in
+                    ( m2, Effect.batch [ listFx, freshFx ] )
+
+                Err _ ->
                     ( model, Effect.none )
 
         "journeyChanges" ->
@@ -6097,6 +6125,8 @@ handleOkByKind env model =
                                     , putReq = Nothing
                                     , savingText = Nothing
                                     , conflict = Nothing
+                                    , staleMtime = Nothing
+                                    , currentMissing = False
                                     , wizard = Nothing
                                     , resourceWarnings = []
                                     , activeDocs = Dict.empty
@@ -7347,6 +7377,7 @@ reloadCurrent model =
                         { model
                             | conflict = Nothing
                             , staleMtime = Nothing
+                            , currentMissing = False
                             , savingText = Nothing
                             , activeDraft = Nothing
                         }
@@ -7354,7 +7385,7 @@ reloadCurrent model =
             ( { m1 | loadReq = Just m1.reqCounter }, cmd )
 
         Nothing ->
-            ( { model | conflict = Nothing, staleMtime = Nothing, savingText = Nothing }, Effect.none )
+            ( { model | conflict = Nothing, staleMtime = Nothing, currentMissing = False, savingText = Nothing }, Effect.none )
 
 
 {-| GET /changes の files(パス → mtime ミリ秒)。token は使わない — 見たいのは
@@ -7363,6 +7394,55 @@ reloadCurrent model =
 diskMtimesDecoder : D.Decoder (Dict.Dict String Int)
 diskMtimesDecoder =
     D.field "files" (D.dict (D.map round D.float))
+
+
+{-| changes の mtime 一覧のキー集合(ディスクの今)と、今画面が知っている
+ファイル一覧(knownPaths: model.files ++ declaredPaths model.groups)を比べる。
+違えば files・resources を取り直して一覧を最新にする。ここでは model.files /
+model.groups を直接は書き換えない(その応答が届くまでは今の一覧のまま) —
+選択・スクロール・編集中の文書には一切触らないサイドバーだけの更新。
+-}
+syncFileListIfNeeded : Dict.Dict String Int -> Model -> ( Model, Effect )
+syncFileListIfNeeded mtimes model =
+    if Set.fromList (Dict.keys mtimes) == Set.fromList (knownPaths model) then
+        ( model, Effect.none )
+
+    else
+        let
+            ( m1, filesFx ) =
+                request "files" (E.object []) model
+
+            ( m2, resourcesFx ) =
+                request "resources" (E.object []) m1
+        in
+        ( m2, Effect.batch [ filesFx, resourcesFx ] )
+
+
+{-| 開いているファイルが見張り(changes)の一覧から消えた = ディスクから
+無くなったとみられる時の着地。fileVerbs の削除(afterVerb)は本人が消した
+操作なので問答無用で閉じるが、こちらは本人の指示ではない外部の変化なので、
+打ちかけがあれば勝手に捨てず帯で知らせるだけに留める(保存を試みれば
+結局 404/409 で守られる)。打ちかけが無ければ afterVerb と同じ着地(閉じる)。
+-}
+closeOrFlagMissing : String -> Model -> ( Model, Effect )
+closeOrFlagMissing path model =
+    if model.dirty || model.savingText /= Nothing then
+        ( { model | currentMissing = True, staleMtime = Nothing }, Effect.none )
+
+    else
+        showToast (path ++ " はディスクから消えました(編集を閉じました)")
+            (withDoc Nothing
+                ""
+                { model
+                    | schemaState = SchemaNone
+                    , dirty = False
+                    , openedText = ""
+                    , mtime = Nothing
+                    , staleMtime = Nothing
+                    , currentMissing = False
+                    , history = EditHistory.cutOnExternalChange model.history
+                }
+            )
 
 
 {-| 読み取り専用(ホームの提案・知らせ等)の封筒。応答は kind で受けるので、
@@ -9578,17 +9658,12 @@ viewEditToolbar model =
             Nothing ->
                 text ""
         , case model.staleMtime of
-            -- 外で変わったのに手元に打ちかけがある。保存は 409 で弾かれるので
-            -- 黙って潰れることは無いが、気付くのは早い方がよい
+            -- 外で変わったのに手元に打ちかけがある、という情報表示だけ(読み直す手は
+            -- 置かない — 打ちかけを勝手に捨てない。保存は 409 で最後まで守られる)
             Just _ ->
                 span
                     [ HA.class "stale flex shrink-0 items-center gap-1.5 rounded-sm bg-amber-500/20 px-1.5 py-px text-[11px] text-amber-300 ring-1 ring-amber-400/40" ]
-                    [ text "このファイルは外で変わりました"
-                    , button
-                        [ HA.class "cursor-pointer underline underline-offset-2"
-                        , HE.onClick ReloadClicked
-                        ]
-                        [ text "読み直す" ]
+                    [ text "このファイルは外で変わりました(保存時に確認します)"
                     , button
                         [ HA.class "cursor-pointer text-amber-300/70 hover:text-amber-300"
                         , HA.title "帯を畳む(保存しようとすると、それでも止まります)"
@@ -9599,6 +9674,22 @@ viewEditToolbar model =
 
             Nothing ->
                 text ""
+        , if model.currentMissing then
+            -- 見張り(changes)の一覧から消えた = ディスクから無くなったとみられる。
+            -- 打ちかけがあれば closeOrFlagMissing が閉じずここへ倒す(情報表示のみ)
+            span
+                [ HA.class "missing flex shrink-0 items-center gap-1.5 rounded-sm bg-amber-500/20 px-1.5 py-px text-[11px] text-amber-300 ring-1 ring-amber-400/40" ]
+                [ text "このファイルはディスクから見当たりません(保存時に確認します)"
+                , button
+                    [ HA.class "cursor-pointer text-amber-300/70 hover:text-amber-300"
+                    , HA.title "帯を畳む(保存しようとすると、それでも止まります)"
+                    , HE.onClick StaleDismissed
+                    ]
+                    [ text "×" ]
+                ]
+
+          else
+            text ""
         , if model.dirty then
             span [ HA.class "dirty flex shrink-0 items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "inline-block h-1.5 w-1.5 rounded-full bg-accent" ] []
@@ -9609,13 +9700,6 @@ viewEditToolbar model =
             text ""
         , viewUndoCount model
         , span [ HA.class "spacer flex-1" ] []
-        , button
-            [ HA.class "btn"
-            , HA.title "ディスクの今の中身を取り直す(手元の打ちかけは捨てる)"
-            , HA.disabled (model.current == Nothing)
-            , HE.onClick ReloadClicked
-            ]
-            [ text "読み直す" ]
         , button
             [ HA.classList
                 [ ( "live-toggle btn", True )
@@ -13283,8 +13367,11 @@ subscriptions model =
           else
             Sub.none
 
-        -- 開いているファイルの見張り。外で変わったら、編集を始める前に気付ける
-        , if model.current /= Nothing then
+        -- 見張り。開いているファイルが外で変わったら編集を始める前に気付けるのに
+        -- 加えて、一覧(ファイル/グループ)の増減も拾う(syncFileListIfNeeded)ので、
+        -- ファイルを開いていない(一覧だけ見ている)間もプロジェクトを選んでいれば回す。
+        -- 負荷は 2 秒に 1 回の mtime 一覧だけなので許容
+        , if model.screen == Editing then
             Time.every 2000 (\_ -> FileWatchTick)
 
           else

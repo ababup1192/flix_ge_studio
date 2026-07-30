@@ -52,23 +52,6 @@ mod FileIndex {
 
     // ── ディスク変更の見張り (/changes) ───────────────────
 
-    /// /changes で mtime を報告する対象を選ぶ。all は prune 走査で見つかった .json 全部、
-    /// palettes は ui 側の "paletteFile" 参照から逆引きした外部パレット。
-    /// 対象 = 編集対象 (ui / hitbox / fx / palette) + プレビュー設定 (*.preview.json) + project.json。
-    // WhyNot: all をそのまま報告しない — ゲームプロジェクトにはエディタと無関係な
-    // .json (レベルデータ等) が大量にあり得て、応答が毎回無駄に太るため。
-    pub def changeTargets(palettes: List[String], all: List[String]): List[String] =
-        let picked = all |> List.filter(path ->
-            String.endsWith(suffix = ".ui.json", path)
-            or baseName(path) == "hitbox.json"
-            or String.endsWith(suffix = ".fx.json", path)
-            or String.endsWith(suffix = ".preview.json", path)
-            or path == "project.json");
-        // palette は all との突き合わせで実在確認を兼ねる (走査に無い参照先は報告しない)
-        (picked ::: List.filter(path -> List.memberOf(path, all), palettes))
-            |> List.distinct
-            |> List.sort
-
     /// (パス, mtime) の一覧全体から決まる集計値。ファイルの増減でも、どれか 1 つの
     /// mtime 変化でも必ず別の値になる。エディタ画面はこれの変化だけ見れば
     /// 「何かが変わった」と分かる (どれが変わったかは個別の mtime で判定する)。
