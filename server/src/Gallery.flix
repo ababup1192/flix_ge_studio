@@ -79,6 +79,21 @@ mod Gallery {
         else
             None
 
+    /// GET /gallery/count — 白名前簿の置き場にある PNG の数。
+    /// 「前回の焼き」を復元した時にコマ数(pngFrames)を取り戻すのに使う
+    /// (GIF の存在確認だけではコマ送りの目盛りが引けない)。
+    pub def pngCount(dir: String, subdir: String): Int32 \ IO =
+        if (not allowedDir(subdir))
+            0
+        else {
+            let entries = new JFile("${dir}/${subdir}").listFiles();
+            if (Object.isNull(entries)) 0
+            else Array.toList(entries)
+                |> List.filter(file -> file.isFile()
+                        and String.endsWith(suffix = ".png", file.getName()))
+                |> List.length
+        }
+
     /// GET /gallery/sound — debug/sounds/ の WAV のバイト列。
     pub def soundBytes(dir: String, name: String): Option[Array[Int8, Static]] \ IO =
         if (not isSafeName(name) or not String.endsWith(suffix = ".wav", name))

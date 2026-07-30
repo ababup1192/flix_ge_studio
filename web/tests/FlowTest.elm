@@ -1905,6 +1905,36 @@ suite =
                         [ class "bake-gif"
                         , text "⚠ 飛ばしたカット 1 件"
                         ]
+        , test "焼く: 起こし待ち中に切り替えても、焼かれるのは押した時のファイル" <|
+            \() ->
+                -- 「焼く」を押す(起こし待ちが始まる)→ 応答が届く前に別ファイルへ
+                -- 切り替える → 起こし完了(BakeAfterWake)で焼かれるのは model.current
+                -- (切り替え先)ではなく、押した時に model に控えた path であるべき
+                bootedWith twoCutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 4(本文)・5(スキーマ)
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    -- 焼き係を起こし始める(id 9。id 6〜8 は横断辞書・前回焼き探しの分)
+                    |> clickOn "bake-run"
+                    -- 起こしの応答(id 9)がまだ届かないうちに、別ファイルへ切り替える
+                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    -- id 10(本文)・11(スキーマ)。本文の応答で model.current が切り替わる
+                    |> respondOk 10 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 11 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    -- ここでようやく起こし完了が届く。今開いているのは second だが、
+                    -- 焼くべきは押した時の prologue のはず
+                    |> respondOk 9 "bakeWake" wakeOkBody
+                    |> ProgramTest.expectOutgoingPortValues "apiRequest"
+                        (D.map2 Tuple.pair
+                            (D.field "kind" D.string)
+                            (D.maybe (D.at [ "payload", "file" ] D.string))
+                        )
+                        (\vals ->
+                            vals
+                                |> List.filter (\( kind, _ ) -> kind == "bakeCutscene")
+                                |> Expect.equal [ ( "bakeCutscene", Just "assets/prologue.scene.json" ) ]
+                        )
 
         -- 不具合 2(「スキーマを探しています…」で止まる)の再現の試み。
         -- id での突き合わせが本当に頑丈か、応答の並びを崩して確かめる
@@ -2011,6 +2041,23 @@ suite =
                     |> ensureKinds [ "mediaExists" ]
                     |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ) ])
                     |> ProgramTest.expectViewHas [ class "bake-gif", text "前回の焼き" ]
+        , test "前回の焼き: 復元直後は無かったシークバーが、コマ数を数え直すと出る" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> ensureKinds [ "mediaExists" ]
+                    |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ) ])
+                    -- 復元直後(pastBake はコマ数を知らない)は GIF だけで、操作列(シークバー)は無い
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    |> ProgramTest.ensureViewHasNot [ class "filmstrip" ]
+                    -- コマ別 PNG の置き場を数え直す要求が飛ぶ
+                    |> ensureKinds [ "mediaCount" ]
+                    |> respondOk 7 "mediaCount" (E.object [ ( "ok", E.bool True ), ( "count", E.int 5 ) ])
+                    -- 届いたコマ数(5 枚 = 0〜4)でインラインにシークバーが出て、i/n も正しい
+                    |> ProgramTest.expectViewHas [ class "filmstrip", text "0 / 4" ]
         , test "ファイルを切り替えると、前のファイルの焼き上がりは消える" <|
             \() ->
                 -- 瞬間(frameShot)を選ばず焼く: 右ペインの絵の枠は通し(Film)を出す

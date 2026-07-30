@@ -1,6 +1,7 @@
 module SceneView exposing
     ( Handlers
     , State
+    , galleryCountUrl
     , galleryImageUrl
     , imageUrl
     , sceneLabel
@@ -72,6 +73,19 @@ galleryImageUrl base root dir name =
         ++ Url.percentEncode dir
         ++ "&name="
         ++ Url.percentEncode name
+
+
+{-| dir 直下の *.png の枚数を数える口(復元した焼き上がりのコマ数を知るのに使う
+— 焼きの応答そのものには乗らない情報を、後から棚を見て埋め合わせる)。
+p= の要り用は galleryImageUrl と同じ。
+-}
+galleryCountUrl : String -> String -> String -> String
+galleryCountUrl base root dir =
+    base
+        ++ "/gallery/count?p="
+        ++ Api.projectKey root
+        ++ "&dir="
+        ++ Url.percentEncode dir
 
 
 view : Handlers msg -> State -> Html msg

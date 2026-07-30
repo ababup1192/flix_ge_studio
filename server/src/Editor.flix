@@ -73,13 +73,15 @@ mod Editor {
         let changes = Changes.make();
         // 常駐する焼き係（ゲーム自身のコードで音を作る係）の世話係。
         let bakeHost = BakeHost.make();
+        // 焼き係を「起こしている最中」の覚え書き(取り次ぎの並行スレッドが重ねて起こさないため)。
+        let launchGuard = BakeProxy.makeGuard();
         let webRoot = webRootFromEnv();
         let server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         discard server.createContext("/", new HttpHandler {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, bakeHost, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, bakeHost, launchGuard, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -119,7 +121,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -169,11 +171,11 @@ mod Editor {
             // 焼き係(ゲーム側の常駐サーバ)への取り次ぎ。宛先は宣言(bakeUrl)から来る
             // 焼き係を起こす(繋がっていれば何もしない)。走らせる手は project.json の宣言だけ
             case ("POST", "/bake/wake") => withProject(selection, exchange, dir -> {
-                let (status, json) = BakeProxy.wake(dir, readBody(exchange));
+                let (status, json) = BakeProxy.wake(launchGuard, dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("POST", "/bake/proxy") => withProject(selection, exchange, dir -> {
-                let (status, json) = BakeProxy.respond(dir, readBody(exchange));
+                let (status, json) = BakeProxy.respond(launchGuard, dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("GET", "/search") => withProject(selection, exchange, dir -> {
@@ -227,6 +229,13 @@ mod Editor {
                 handleGalleryImage(dir, params, exchange))
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
+            // 前回の焼きのコマ数の復元(dir はコマ別 PNG の置き場)
+            case ("GET", "/gallery/count") => withProject(selection, exchange, dir ->
+                sendJson(200, JObject(Map#{
+                    "ok"    => JBool(true),
+                    "count" => JNumber(JBigDecimal.valueOf(Int32.toInt64(
+                        Gallery.pngCount(dir, Map.getWithDefault("dir", "", params)))))
+                }), exchange))
             case ("GET", "/sfx/shape") => withProject(selection, exchange, dir ->
                 handleSfxShape(dir, params, exchange))
             // つまみの値をそのまま渡して 1 音だけ焼いてもらう（保存も待たない）。

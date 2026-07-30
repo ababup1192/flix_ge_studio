@@ -16,13 +16,27 @@ mod BakeProxy {
     import java.io.{File => JFile}
     import java.lang.Exception
     import java.lang.ProcessBuilder
+    import java.lang.System
     import java.lang.Thread
     import java.util.ArrayList
+    import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.lang.{String => JavaString}
     import java.net.{Socket, InetSocketAddress}
 
     use Util.Json.Json
     use Util.Json.Json.{JObject, JString, JBool, JNumber}
+
+    /// 「起こしている最中」の覚え書き (url → 起こし始めた時刻 ms)。
+    /// 取り次ぎはリクエストごとの並行スレッドで来るので、この覚え書きが無いと
+    /// 焼き係のコンパイル中 (分の単位で不健康) にクリックのたび起こし直しが走り、
+    /// java プロセスが積み上がる。Editor.serve が 1 回だけ作って引き回す。
+    pub type alias Guard = JMap[String, String]
+
+    pub def makeGuard(): Guard \ IO = new JMap()
+
+    /// 起こし直しを許すまでの猶予 (起こしても health が返らないままこれだけ経ったら、
+    /// 前の手は死んだとみなしてもう一度だけ撃てる)。
+    def relaunchAfterMs(): Int64 = 600000i64
 
     /// 焼きの待ち時間の上限(長尺で ~70 秒。余裕を見て 3 分)。
     def timeoutMs(): Int32 = 180000
@@ -42,7 +56,7 @@ mod BakeProxy {
     /// 長い待ち(初回はコンパイルで数分)は画面側が 2 秒おきに訊き直す —
     /// 1 本の往復で数分を抱え込むと、進んでいるのか固まったのかが誰にも見えない。
     /// **コマンドは画面から受け取らない**(走らせてよい手は宣言だけ)。
-    pub def wake(dir: String, body: String): (Int32, Json) \ IO =
+    pub def wake(guard: Guard, dir: String, body: String): (Int32, Json) \ IO =
         match parseRequest(body) {
             case None => (400, errorJson("body must be a JSON object {url, launch?}"))
             case Some(req) => match target(req#url) {
@@ -60,7 +74,7 @@ mod BakeProxy {
                         "log"       => JString("起こし方(bakeCmd)が宣言されていません")
                     }))
                     case Some(cmd) => {
-                        let started = launch(dir, cmd);
+                        let started = if (shouldLaunch(guard, req#url)) launch(dir, cmd) else true;
                         (200, wokeJson(false, true,
                             if (started) "『${cmd}』で起こしています" else "『${cmd}』を起こせませんでした"))
                     }
@@ -76,15 +90,36 @@ mod BakeProxy {
             "log"       => JString(log)
         })
 
-    /// 起こして待つ(宣言が無ければ何もしない)。
-    def ensureUp(dir: String, url: String, port: Int32): Unit \ IO =
+    /// 起こして待つ(宣言が無ければ何もしない)。起こすのは覚え書きの上で 1 回だけ —
+    /// コンパイル中に並行して来た取り次ぎは、撃ち直さずに health を待つだけ。
+    def ensureUp(guard: Guard, dir: String, url: String, port: Int32): Unit \ IO =
         match bakeCmdOf(dir, url) {
             case None      => ()
             case Some(cmd) => {
-                discard launch(dir, cmd);
-                discard waitForHealth(port, 0)
+                if (shouldLaunch(guard, url)) discard launch(dir, cmd) else ();
+                discard waitForHealth(port, 0);
+                // health が返った = 起こし終わり。覚え書きを消して、次に死んだ時
+                // また 1 回だけ起こせるようにする
+                if (healthy(port)) discard guard.remove(launchKey(url)) else ()
             }
         }
+
+    def launchKey(url: String): String = "launching|${url}"
+
+    /// いま起こしてよいか。putIfAbsent が入れ物ごと排他になるので、同時に来た
+    /// スレッドのうち 1 本だけが true を得る。前の手が relaunchAfterMs 経っても
+    /// health を返せていなければ、死んだとみなして 1 本だけ取り直せる。
+    def shouldLaunch(guard: Guard, url: String): Bool \ IO =
+        let now = System.currentTimeMillis();
+        let prev: String = guard.putIfAbsent(launchKey(url), "${now}");
+        if (Object.isNull(prev))
+            true
+        else
+            match Int64.fromString(prev) {
+                case Some(since) if now - since > relaunchAfterMs() =>
+                    guard.replace(launchKey(url), prev, "${now}")
+                case _ => false
+            }
 
     /// 「起こす手」は、その口(bakeUrl / performUrl)を宣言している資源の物を使う。
     /// 画面から渡させない — 走らせてよい手はプロジェクト自身の宣言だけ。
@@ -159,7 +194,7 @@ mod BakeProxy {
             case _: Exception => false
         }
 
-    pub def respond(dir: String, body: String): (Int32, Json) \ IO =
+    pub def respond(guard: Guard, dir: String, body: String): (Int32, Json) \ IO =
         match parseRequest(body) {
             case None => (400, errorJson("body must be a JSON object {url, file?, path?, query?}"))
             case Some(req) => match target(req#url) {
@@ -177,7 +212,7 @@ mod BakeProxy {
                     let suffix = if (args == "") "" else "?${args}";
                     // 前段: 繋がらなければ宣言の手で起こしてから頼む(冪等でも、
                     // 繋がっている時は走らせない — 無駄なプロセスを増やさないため)
-                    if (not (healthy(port))) ensureUp(dir, req#url, port) else ();
+                    if (not (healthy(port))) ensureUp(guard, dir, req#url, port) else ();
                     match post(port, "${path}${req#path}${suffix}") {
                         case Some(text) => (200, JObject(Map#{
                             "ok"        => JBool(true),

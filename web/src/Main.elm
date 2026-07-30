@@ -32,6 +32,7 @@ import FileVerbs
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
+import Html.Keyed
 import FormHelp
 import Html.Lazy as HL
 import Svg
@@ -138,11 +139,13 @@ type alias EditPayload =
 
 
 {-| 焼き係 / 実機が起きた後にやること。draft はどちらで焼くか、from は
-どのカットから演じるか(選んでいなければ頭から)。
+どのカットから演じるか(選んでいなければ頭から)。path は押した時点で開いていた
+ファイル — 起こし待ちの間に別ファイルへ切り替えても、焼く/演じるのはこの path
+(今開いているファイルではない)。
 -}
 type PendingAction
-    = BakeAfterWake Bool
-    | PerformAfterWake (Maybe Int)
+    = BakeAfterWake { draft : Bool, path : String }
+    | PerformAfterWake { from : Maybe Int, path : String }
 
 
 {-| 右ペインの絵の枠に「カットの瞬間」と「焼き上がりの通し」のどちらを出すか。
@@ -621,6 +624,10 @@ type alias Model =
     -- 「前回の焼き」を探している最中の置き場(本番 → 下書きの順に 1 つずつ訊く)
     , bakeProbe : Maybe String
 
+    -- pastBake(前回の焼き)はコマ数(pngFrames)が分からないので、その場でコマ別
+    -- PNG の置き場を数え直す要求。追い越し対策に id を覚える
+    , mediaCountReq : Maybe Int
+
     -- 実機へ頼んだ往復と、そのとき渡したカット
     , performReq : Maybe Int
     , performFrom : Maybe Int
@@ -892,7 +899,7 @@ init _ =
         , golden = GoldenView.init
         , wakeReq = Nothing
         , wakeSeconds = 0
-        , pendingAction = BakeAfterWake False
+        , pendingAction = BakeAfterWake { draft = False, path = "" }
         , wakeSeq = 0
         , waking = False
         , wakeUrl = Nothing
@@ -901,6 +908,7 @@ init _ =
         , bakeZoomShot = Nothing
         , bakeStale = False
         , bakeProbe = Nothing
+        , mediaCountReq = Nothing
         , performReq = Nothing
         , performFrom = Nothing
         , bakeSeconds = 0
@@ -1731,8 +1739,15 @@ update msg model =
                 askWake False model
 
         PerformClicked ->
-            -- 選んでいる行があればそこから(行を選んで押す = そこから見る)
-            startWake (PerformAfterWake (selectedCut model)) (performUrlOf model) model
+            -- 選んでいる行があればそこから(行を選んで押す = そこから見る)。
+            -- path は「今」開いているファイル — 起こし待ちの間に切り替えられても、
+            -- 演じるのはこのファイル(sendPerform 参照)
+            case model.current of
+                Just path ->
+                    startWake (PerformAfterWake { from = selectedCut model, path = path }) (performUrlOf model) model
+
+                Nothing ->
+                    ( model, Effect.none )
 
         BakeCancelled ->
             -- 長い待ちには必ず中断の口を置く。飛んでいる応答は id が合わなくなるので捨てられる。
@@ -6341,8 +6356,15 @@ handleOkByKind env model =
             in
             case ( model.bakeProbe, found ) of
                 ( Just path, True ) ->
-                    ( { model | bakeProbe = Nothing, bake = Just (pastBake path), bakeStale = True }
-                    , Effect.none
+                    let
+                        restored =
+                            pastBake path
+
+                        ( m1, countFx ) =
+                            requestFramesCount model restored
+                    in
+                    ( { m1 | bakeProbe = Nothing, bake = Just restored, bakeStale = True }
+                    , countFx
                     )
 
                 ( Just path, False ) ->
@@ -6356,6 +6378,31 @@ handleOkByKind env model =
 
                 _ ->
                     ( model, Effect.none )
+
+        "mediaCount" ->
+            -- 追い越し対策: 応じている要求と違えば捨てる(ファイルを切り替えた等)。
+            -- bake が Nothing になっていたら、映す先が無いのでやはり捨てる。
+            -- count = 0 は「棚が無い/空」— GIF 表示のまま(今の挙動)で良いので何もしない
+            if Just env.id == model.mediaCountReq then
+                let
+                    count =
+                        D.decodeValue (D.field "count" D.int) env.body |> Result.withDefault 0
+                in
+                case model.bake of
+                    Just result ->
+                        if count > 0 then
+                            ( { model | mediaCountReq = Nothing, bake = Just { result | pngFrames = Just count } }
+                            , Effect.none
+                            )
+
+                        else
+                            ( { model | mediaCountReq = Nothing }, Effect.none )
+
+                    Nothing ->
+                        ( { model | mediaCountReq = Nothing }, Effect.none )
+
+            else
+                ( model, Effect.none )
 
         "bakeWake" ->
             if Just env.id == model.wakeReq then
@@ -6371,11 +6418,11 @@ handleOkByKind env model =
                 in
                 if reachable then
                     case m1.pendingAction of
-                        BakeAfterWake draft ->
-                            sendBake draft { m1 | waking = False }
+                        BakeAfterWake { draft, path } ->
+                            sendBake draft path { m1 | waking = False }
 
-                        PerformAfterWake from ->
-                            sendPerform from { m1 | waking = False }
+                        PerformAfterWake { from, path } ->
+                            sendPerform from path { m1 | waking = False }
 
                 else if needsCmd then
                     showToast "焼き係の起こし方が宣言されていません(project.json の宣言に bakeCmd を書いてください)"
@@ -7109,6 +7156,14 @@ handleErrByKind env message model =
             -- 旧サーバの 404 もここに来るので、赤エラーは出さない(fail-open)
             if Just env.id == model.spriteColorsReq then
                 ( { model | spriteColorsReq = Nothing }, Effect.none )
+
+            else
+                ( model, Effect.none )
+
+        "mediaCount" ->
+            -- 数え直しが失敗しても GIF 表示のまま(今の挙動)に留まるだけ(fail-open)
+            if Just env.id == model.mediaCountReq then
+                ( { model | mediaCountReq = Nothing }, Effect.none )
 
             else
                 ( model, Effect.none )
@@ -8306,6 +8361,7 @@ forgetBake model =
         , bakeZoom = False
         , bakeZoomShot = Nothing
         , bakeProbe = Nothing
+        , mediaCountReq = Nothing
         , frameShot = Nothing
         , frameNotes = []
         , frameReq = Nothing
@@ -8334,6 +8390,30 @@ probeBaked path model =
         { model | bakeProbe = Just path }
 
 
+{-| pastBake(前回の焼き)は応答にコマ数が乗らない(GIF が「絵だけある」で
+復元されるだけ)ので、コマ別 PNG の置き場を数え直して埋め合わせる。
+GIF の置き場から frames/ の置き場を導く(framesDir と同じ道具)ので、
+本番・下書きどちらの pastBake でも正しい棚を数えられる。
+-}
+requestFramesCount : Model -> Api.BakeResult -> ( Model, Effect )
+requestFramesCount model result =
+    case sceneId model of
+        Just id ->
+            let
+                dir =
+                    framesDir model result ++ id
+
+                ( m1, fx ) =
+                    request "mediaCount"
+                        (E.object [ ( "url", E.string (SceneView.galleryCountUrl model.serverBase model.root dir) ) ])
+                        model
+            in
+            ( { m1 | mediaCountReq = Just m1.reqCounter }, fx )
+
+        Nothing ->
+            ( model, Effect.none )
+
+
 {-| 焼き上がりの置き場(本番)。下書きは同じ名前で draft/ の下に住む。 -}
 bakedGifPath : String -> String
 bakedGifPath id =
@@ -8347,10 +8427,17 @@ draftGifPath id =
 
 {-| 焼く前に焼き係を起こす(繋がっていれば server 側で即返る)。
 起こしている間は「起こしています… n 秒」を出し、返ってから焼きへ進む。
+押した時点のファイル(path)を控える — 起こし待ちの間に別ファイルへ
+切り替えられても、焼くのはこの path(sendBake 参照)。
 -}
 startBakeWith : Bool -> Model -> ( Model, Effect )
 startBakeWith draft model =
-    startWake (BakeAfterWake draft) (bakeUrlOf model) model
+    case model.current of
+        Just path ->
+            startWake (BakeAfterWake { draft = draft, path = path }) (bakeUrlOf model) model
+
+        Nothing ->
+            ( model, Effect.none )
 
 
 {-| 起こしてから、やることへ進む共通の入り口(焼き係も実機も同じ道)。 -}
@@ -8397,15 +8484,18 @@ wakeGiveUpSeconds =
 
 
 {-| 実機へ「この脚本をここから演じて」と頼む。脚本は毎回ディスクから読み直されるので、
-未保存があれば先に保存する。
+未保存があれば先に保存する。path は startWake で控えた「押した時点のファイル」—
+起こし待ちの間に別ファイルへ切り替えられていても、演じるのはこの path
+(今開いているファイルではない)。保存は「今開いていて、かつ同じファイル」の
+時だけ(別ファイルの未保存編集をここで勝手に保存しない)。
 -}
-sendPerform : Maybe Int -> Model -> ( Model, Effect )
-sendPerform from model =
-    case ( performUrlOf model, model.current ) of
-        ( Just url, Just path ) ->
+sendPerform : Maybe Int -> String -> Model -> ( Model, Effect )
+sendPerform from path model =
+    case performUrlAt model path of
+        Just url ->
             let
                 ( m1, saveFx ) =
-                    if model.dirty then
+                    if model.dirty && model.current == Just path then
                         sendPut model.mtime model
 
                     else
@@ -8432,7 +8522,7 @@ sendPerform from model =
             in
             ( { m2 | performReq = Just m2.reqCounter, performFrom = from }, Effect.batch [ saveFx, playFx ] )
 
-        _ ->
+        Nothing ->
             ( model, Effect.none )
 
 
@@ -8442,14 +8532,26 @@ performUrlOf model =
     currentGroup model |> Maybe.andThen .performUrl
 
 
-{-| 起こし終えた後の本番。未保存があれば先に保存してから頼む。 -}
-sendBake : Bool -> Model -> ( Model, Effect )
-sendBake draft model =
-    case ( bakeUrlOf model, model.current ) of
-        ( Just url, Just path ) ->
+{-| 指したファイルの宣言が持つ実機の口(起こし待ちの後、今開いているファイルとは
+限らないファイルを演じさせる時に使う)。
+-}
+performUrlAt : Model -> String -> Maybe String
+performUrlAt model path =
+    groupForPath model path |> Maybe.andThen .performUrl
+
+
+{-| 起こし終えた後の本番。未保存があれば先に保存してから頼む。path は startBakeWith
+で控えた「押した時点のファイル」— 起こし待ちの間に別ファイルへ切り替えられていても、
+焼くのはこの path。保存は「今開いていて、かつ同じファイル」の時だけ
+(別ファイルの未保存編集をここで勝手に保存しない)。
+-}
+sendBake : Bool -> String -> Model -> ( Model, Effect )
+sendBake draft path model =
+    case bakeUrlAt model path of
+        Just url ->
             let
                 ( m1, saveFx ) =
-                    if model.dirty then
+                    if model.dirty && model.current == Just path then
                         sendPut model.mtime model
 
                     else
@@ -8475,7 +8577,7 @@ sendBake draft model =
             in
             ( { m2 | bakeReq = Just m2.reqCounter, bakeFile = Just path, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
 
-        _ ->
+        Nothing ->
             ( model, Effect.none )
 
 
@@ -8489,6 +8591,14 @@ bakeCmdDeclared model =
 bakeUrlOf : Model -> Maybe String
 bakeUrlOf model =
     currentGroup model |> Maybe.andThen .bakeUrl
+
+
+{-| 指したファイルの宣言が持つ焼き係の URL(起こし待ちの後、今開いているファイルとは
+限らないファイルを焼く時に使う)。
+-}
+bakeUrlAt : Model -> String -> Maybe String
+bakeUrlAt model path =
+    groupForPath model path |> Maybe.andThen .bakeUrl
 
 
 {-| 焼き応答の notes から「カット N」の N(1 始まり)と理由を取り出す。
@@ -8820,12 +8930,20 @@ filmOf model =
 viewShotPreview : Model -> { cut : Int, png : String } -> List (Html Msg)
 viewShotPreview model shot =
     [ div [ HA.class "frame-shot relative mb-2" ]
-        [ img
-            [ HA.class "block w-full rounded border border-edge bg-well"
-            , HA.src (mediaUrl model shot.png)
-            , HA.alt ("カット " ++ String.fromInt shot.cut)
+        [ -- キー付き(shot.png)で包む: <img> の src を書き換えるだけだと、重い絵
+          -- (GIF 等)の読み込み中は仮想 DOM がノードを使い回し、前の絵が居座って
+          -- 見える。キーが変われば別ノードになり、読み込み中は空(=背景色)になる
+          Html.Keyed.node "div"
+            [ HA.class "contents" ]
+            [ ( shot.png
+              , img
+                    [ HA.class "block w-full rounded border border-edge bg-well"
+                    , HA.src (mediaUrl model shot.png)
+                    , HA.alt ("カット " ++ String.fromInt shot.cut)
+                    ]
+                    []
+              )
             ]
-            []
         , span [ HA.class "absolute top-1 left-1 rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
             [ text ("カット " ++ String.fromInt shot.cut ++ " の瞬間") ]
         , button
@@ -8868,35 +8986,43 @@ viewFilmPreview model result gif =
             clamp 0 last model.bakeFrame
     in
     [ div [ HA.class "relative mb-2" ]
-        [ if hasFrames then
-            case sceneId model of
-                Just id ->
+        [ -- キー付き(sceneId + gif パス)で包む: コマ送り(src の書き換えだけ)は
+          -- 同じノードのまま滑らかに進めたいが、ファイル/焼き直しが変われば
+          -- キーが変わって別ノードになり、前の絵が居座って見えるのを防ぐ
+          Html.Keyed.node "div"
+            [ HA.class "contents" ]
+            [ ( filmKey model result
+              , if hasFrames then
+                    case sceneId model of
+                        Just id ->
+                            img
+                                [ HA.classList
+                                    [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+                                    , ( "shot-pixelated", result.draft )
+                                    ]
+                                , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                                , HA.alt ("コマ " ++ String.fromInt at)
+                                ]
+                                []
+
+                        Nothing ->
+                            text ""
+
+                else
                     img
                         [ HA.classList
                             [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+
+                            -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
+                            -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
                             , ( "shot-pixelated", result.draft )
                             ]
-                        , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
-                        , HA.alt ("コマ " ++ String.fromInt at)
+                        , HA.src (mediaUrl model gif)
+                        , HA.alt "焼き上がり"
                         ]
                         []
-
-                Nothing ->
-                    text ""
-
-          else
-            img
-                [ HA.classList
-                    [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
-
-                    -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
-                    -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
-                    , ( "shot-pixelated", result.draft )
-                    ]
-                , HA.src (mediaUrl model gif)
-                , HA.alt "焼き上がり"
-                ]
-                []
+              )
+            ]
         , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
             [ if result.draft then
                 span [ HA.class "bake-draft-tag rounded-sm bg-amber-500/80 px-1.5 py-px text-[10px] text-black" ]
@@ -9018,51 +9144,66 @@ viewBakeZoom model =
                 [ HA.class "bake-zoom-layer fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/85"
                 , HE.onClick BakeZoomClosed
                 ]
-                [ case ( model.bakeZoomShot, model.bakePlaying, result.gif ) of
+                [ -- キー付き(url)で包む: インラインの瞬間表示と同じ理由
+                  -- (前の絵が居座って見えるのを防ぐ)
+                  case ( model.bakeZoomShot, model.bakePlaying, result.gif ) of
                     ( Just url, _, _ ) ->
-                        img
-                            [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
-                            , HA.src url
-                            , HA.alt "この瞬間"
+                        Html.Keyed.node "div"
+                            [ HA.class "contents" ]
+                            [ ( url
+                              , img
+                                    [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
+                                    , HA.src url
+                                    , HA.alt "この瞬間"
+                                    ]
+                                    []
+                              )
                             ]
-                            []
 
                     _ ->
                         text ""
-                , case ( model.bakeZoomShot, Api.pngFrameCount result > 0 || not model.bakePlaying, result.gif ) of
-                    -- GIF は今どのコマかを外から知れず(<img> の中で完結する)、
-                    -- シークバー(bakeFrame)と連動できない。コマ別 PNG があるなら
-                    -- 再生中も停止中もコマ送りに一本化する。GIF を出すのは
-                    -- コマ数不明の過去の焼き(pastBake)を再生中のときだけ
-                    ( Nothing, True, _ ) ->
-                        case sceneId model of
-                            Just id ->
+
+                -- キー付き(filmKey)で包む: viewFilmPreview と同じ理由・同じ鍵
+                -- (コマ送りは同じノードのまま、ファイル/焼き直しが変われば別ノードに)
+                , Html.Keyed.node "div"
+                    [ HA.class "contents" ]
+                    [ ( filmKey model result
+                      , case ( model.bakeZoomShot, Api.pngFrameCount result > 0 || not model.bakePlaying, result.gif ) of
+                            -- GIF は今どのコマかを外から知れず(<img> の中で完結する)、
+                            -- シークバー(bakeFrame)と連動できない。コマ別 PNG があるなら
+                            -- 再生中も停止中もコマ送りに一本化する。GIF を出すのは
+                            -- コマ数不明の過去の焼き(pastBake)を再生中のときだけ
+                            ( Nothing, True, _ ) ->
+                                case sceneId model of
+                                    Just id ->
+                                        img
+                                            [ HA.classList
+                                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
+                                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
+                                                ]
+                                            , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                                            , HA.alt ("コマ " ++ String.fromInt at)
+                                            ]
+                                            []
+
+                                    Nothing ->
+                                        text ""
+
+                            ( Nothing, False, Just gif ) ->
                                 img
                                     [ HA.classList
                                         [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
                                         , ( "shot-pixelated h-[82vh] w-auto", result.draft )
                                         ]
-                                    , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
-                                    , HA.alt ("コマ " ++ String.fromInt at)
+                                    , HA.src (mediaUrl model gif)
+                                    , HA.alt "焼き上がり"
                                     ]
                                     []
 
-                            Nothing ->
+                            _ ->
                                 text ""
-
-                    ( Nothing, False, Just gif ) ->
-                        img
-                            [ HA.classList
-                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
-                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
-                                ]
-                            , HA.src (mediaUrl model gif)
-                            , HA.alt "焼き上がり"
-                            ]
-                            []
-
-                    _ ->
-                        text ""
+                      )
+                    ]
                 , div
                     [ HA.class "flex w-[70vw] max-w-[52rem] items-center gap-2"
 
@@ -9106,6 +9247,16 @@ viewBakeZoom model =
 
         _ ->
             text ""
+
+
+{-| 焼き上がりの絵(通し)を Html.Keyed で包む時の鍵。ファイル(sceneId)か
+産物(gif の置き場)のどちらかが変われば別ノードになり、読み込み中に前の絵が
+居座って見えるのを防ぐ。コマ番号は含めない — コマ送りは同じノードのまま
+src だけ滑らかに進めたい。
+-}
+filmKey : Model -> Api.BakeResult -> String
+filmKey model result =
+    Maybe.withDefault "" (sceneId model) ++ "|" ++ Maybe.withDefault "" result.gif
 
 
 {-| コマ別 PNG の置き場。下書きは別の棚に焼かれるので、GIF の置き場から導く
@@ -9562,13 +9713,18 @@ viewModeSeg model =
 {-| 開いているファイルの属するリソースグループ(ヘッダの現在地表示)。 -}
 currentGroup : Model -> Maybe Api.ResourceGroup
 currentGroup model =
-    model.current
-        |> Maybe.andThen
-            (\path ->
-                model.groups
-                    |> List.filter (\g -> List.any (\f -> f.path == path) g.files)
-                    |> List.head
-            )
+    model.current |> Maybe.andThen (groupForPath model)
+
+
+{-| 指したファイルの属するリソースグループ。起こし待ちの間に別ファイルへ
+切り替えられても、押した時点の path で焼き係/実機の口を引き直せるように
+model.current に頼らない形も別に持つ(currentGroup はその特化)。
+-}
+groupForPath : Model -> String -> Maybe Api.ResourceGroup
+groupForPath model path =
+    model.groups
+        |> List.filter (\g -> List.any (\f -> f.path == path) g.files)
+        |> List.head
 
 
 {-| このプロジェクトのゲームがいま走っているか(ミニプレイヤーの状態行と同じ判定)。 -}

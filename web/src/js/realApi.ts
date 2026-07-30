@@ -132,6 +132,12 @@ export function realApi(base: string): Api {
             .then((res) => ({ exists: res.ok }))
             .catch(() => ({ exists: false }));
         }
+        // 前回の焼き(pastBake)はコマ数が分からないので、置き場の *.png を数えて貰う
+        // (URL は Elm 側で組む — mediaExists と同じ流儀)
+        case "mediaCount": {
+          const url = String((payload as { url: string }).url ?? "");
+          return getJson(url);
+        }
         case "goldenStatus":
           return getJson(`${base}/golden/status`);
         case "goldenBless":
