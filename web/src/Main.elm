@@ -145,6 +145,15 @@ type PendingAction
     | PerformAfterWake (Maybe Int)
 
 
+{-| 右ペインの絵の枠に「カットの瞬間」と「焼き上がりの通し」のどちらを出すか。
+行を選んで瞬間が更新されたら ShotPreview に、動かす/シーク/コマ送りをしたら
+FilmPreview に倒す(最後に指した方が勝つ)。
+-}
+type PreviewMode
+    = ShotPreview
+    | FilmPreview
+
+
 {-| 作業モード。ビジュアル=テーブル+フォーム主役(テキスト非表示)・
 分割=テキスト+ビジュアル・コード=テキスト全面。
 -}
@@ -578,8 +587,11 @@ type alias Model =
     , tilePicker : Maybe { path : List Seg, room : String }
 
     -- 焼き(ゲーム側の常駐サーバ)の進行と、その結果。
-    -- 進行中も編集は止めない(焼きは 20〜70 秒かかる)
+    -- 進行中も編集は止めない(焼きは 20〜70 秒かかる)。
+    -- bakeFile はどの脚本を焼いているか(切り替えても焼き自体は続くので、
+    -- 戻った時・別ファイルにいる時に取り違えないための道しるべ)
     , bakeReq : Maybe Int
+    , bakeFile : Maybe String
 
     -- 行を選んだ時の 1 枚焼き。cache は (ファイル, カット, 保存世代) → 絵の置き場で、
     -- 同じ姿を二度焼かない。saveGen は保存のたびに進む(焼き直すべき印)
@@ -632,6 +644,10 @@ type alias Model =
     , bakeSeconds : Int
     , bake : Maybe Api.BakeResult
     , bakeFrame : Int
+
+    -- 右ペインの絵の枠に「今どちらを出しているか」(最後に指した方)。
+    -- frameShot / bake の有無で実際に出す方は変わる(viewPreview が最終判断)
+    , previewMode : PreviewMode
 
     -- ロールで選んでいる音符(文書の中の並び順)。JSON の行を指すのに使う
     , selectedNote : Maybe Int
@@ -866,6 +882,7 @@ init _ =
         , soundLooping = False
         , tilePicker = Nothing
         , bakeReq = Nothing
+        , bakeFile = Nothing
         , frameShot = Nothing
         , frameCache = Dict.empty
         , frameSeq = 0
@@ -889,6 +906,7 @@ init _ =
         , bakeSeconds = 0
         , bake = Nothing
         , bakeFrame = 0
+        , previewMode = ShotPreview
         , selectedNote = Nothing
         , sounds = []
         , search = SearchView.init
@@ -993,6 +1011,7 @@ type Msg
     | BakeClicked
     | BakeFrameChanged String
     | BakeTick
+    | FilmAdvanced
     | FramePeeked Int
     | BakeDraftClicked
     | GoldenOpened
@@ -1716,8 +1735,9 @@ update msg model =
             startWake (PerformAfterWake (selectedCut model)) (performUrlOf model) model
 
         BakeCancelled ->
-            -- 長い待ちには必ず中断の口を置く。飛んでいる応答は id が合わなくなるので捨てられる
-            ( { model | waking = False, wakeReq = Nothing, bakeReq = Nothing, wakeSeq = model.wakeSeq + 1 }
+            -- 長い待ちには必ず中断の口を置く。飛んでいる応答は id が合わなくなるので捨てられる。
+            -- ファイルを跨いで進む裏の焼きも、これは問答無用で全部畳む
+            ( { model | waking = False, wakeReq = Nothing, bakeReq = Nothing, bakeFile = Nothing, wakeSeq = model.wakeSeq + 1 }
             , Effect.none
             )
 
@@ -1732,7 +1752,8 @@ update msg model =
             ( { model | bakeZoom = False }, Effect.none )
 
         BakePlayToggled ->
-            ( { model | bakePlaying = not model.bakePlaying }, Effect.none )
+            -- 動かす/止めるを押したら、絵の枠は通し(Film)へ倒す
+            ( { model | bakePlaying = not model.bakePlaying, previewMode = FilmPreview }, Effect.none )
 
         BakeTick ->
             if model.waking then
@@ -1742,13 +1763,38 @@ update msg model =
                 ( { model | bakeSeconds = model.bakeSeconds + 1 }, Effect.none )
 
         BakeFrameChanged text_ ->
-            -- コマを指したら動く絵は止める(動いている上でコマは指せない)
+            -- コマを指したら動く絵は止める(動いている上でコマは指せない)。
+            -- 絵の枠は通し(Film)へ倒す
             ( { model
                 | bakeFrame = String.toInt text_ |> Maybe.withDefault model.bakeFrame
                 , bakePlaying = False
+                , previewMode = FilmPreview
               }
             , Effect.none
             )
+
+        FilmAdvanced ->
+            -- 「▶ 動かす」の間、コマを 1 つ進める。最後まで行ったら 0 に戻してループ
+            case model.bake of
+                Just result ->
+                    let
+                        last =
+                            max 0 (Api.pngFrameCount result - 1)
+                    in
+                    ( { model
+                        | bakeFrame =
+                            if model.bakeFrame >= last then
+                                0
+
+                            else
+                                model.bakeFrame + 1
+                        , previewMode = FilmPreview
+                      }
+                    , Effect.none
+                    )
+
+                Nothing ->
+                    ( model, Effect.none )
 
         CutKindChosen basePath old new ->
             -- 種類の入れ替えは「前の鍵を消す + 新しい鍵を既定値で書く」の 2 本組。
@@ -6262,7 +6308,16 @@ handleOkByKind env model =
                                         ( model, Effect.none )
 
                 Err _ ->
-                    ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
+                    -- 成功の封筒なのに file の形でない(未選択エラー等が 200 で返った)。
+                    -- 要求札を畳まないと「スキーマを探しています…」が永久に残る
+                    if Just env.id == model.schemaReq then
+                        ( { model | schemaReq = Nothing, schemaState = SchemaMissing }, Effect.none )
+
+                    else if Just env.id == model.loadReq then
+                        ( { model | loadReq = Nothing, notice = Just "file 応答が読めませんでした" }, Effect.none )
+
+                    else
+                        ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
 
         "goldenStatus" ->
             case D.decodeValue Api.goldenStatusDecoder env.body of
@@ -6344,6 +6399,9 @@ handleOkByKind env model =
                                     , frameShot = Just { cut = shot.cut, png = png }
                                     , frameCache = Dict.insert (frameKey model shot.cut) png model.frameCache
                                     , frameNotes = shot.notes
+
+                                    -- 瞬間が更新されたので、絵の枠はこちらへ倒す
+                                    , previewMode = ShotPreview
                                   }
                                 , Effect.none
                                 )
@@ -6392,19 +6450,32 @@ handleOkByKind env model =
 
         "bakeCutscene" ->
             if Just env.id == model.bakeReq then
-                case D.decodeValue Api.bakeResultDecoder env.body of
-                    Ok result ->
-                        if result.reachable then
-                            ( { model | bakeReq = Nothing, bake = Just result, bakeFrame = 0, bakeStale = False }
-                            , Effect.none
-                            )
+                if model.bakeFile /= Nothing && model.bakeFile /= model.current then
+                    -- 焼いていたファイルから別のファイルへ移っている間に届いた。
+                    -- 表示(bake 等)はそのファイルの物のままにして触らない。
+                    -- 元のファイルへ戻れば lookForBaked の probe が焼きたての産物を拾う
+                    ( { model | bakeReq = Nothing, bakeFile = Nothing }, Effect.none )
 
-                        else
-                            showToast "焼き係に繋がりません(make cutscene-server で起動してください)"
-                                { model | bakeReq = Nothing, bake = Just result }
+                else
+                    case D.decodeValue Api.bakeResultDecoder env.body of
+                        Ok result ->
+                            if result.reachable then
+                                ( { model
+                                    | bakeReq = Nothing
+                                    , bakeFile = Nothing
+                                    , bake = Just result
+                                    , bakeFrame = 0
+                                    , bakeStale = False
+                                  }
+                                , Effect.none
+                                )
 
-                    Err _ ->
-                        showToast "焼きの応答が読めませんでした" { model | bakeReq = Nothing }
+                            else
+                                showToast "焼き係に繋がりません(make cutscene-server で起動してください)"
+                                    { model | bakeReq = Nothing, bakeFile = Nothing, bake = Just result }
+
+                        Err _ ->
+                            showToast "焼きの応答が読めませんでした" { model | bakeReq = Nothing, bakeFile = Nothing }
 
             else
                 ( model, Effect.none )
@@ -6970,6 +7041,19 @@ handleErrByKind env message model =
 
                                 else
                                     ( model, Effect.none )
+
+        "bakeCutscene" ->
+            -- id が合わなければ追い越された古い応答(既にやめた・撃ち直した)
+            if Just env.id == model.bakeReq then
+                if model.bakeFile /= Nothing && model.bakeFile /= model.current then
+                    -- 別のファイルへ移っている間の失敗。今の画面には出さない
+                    ( { model | bakeReq = Nothing, bakeFile = Nothing }, Effect.none )
+
+                else
+                    showToast ("焼けませんでした — " ++ message) { model | bakeReq = Nothing, bakeFile = Nothing }
+
+            else
+                ( model, Effect.none )
 
         "putFile" ->
             ( { model | putReq = Nothing, savingText = Nothing, notice = Just ("保存に失敗: " ++ message) }
@@ -8134,7 +8218,7 @@ peekFrame model =
         ( Just _, Just cut ) ->
             case Dict.get (frameKey model cut) model.frameCache of
                 Just png ->
-                    ( { model | frameShot = Just { cut = cut, png = png } }, Effect.none )
+                    ( { model | frameShot = Just { cut = cut, png = png }, previewMode = ShotPreview }, Effect.none )
 
                 Nothing ->
                     let
@@ -8205,8 +8289,12 @@ startBake model =
     startBakeWith False model
 
 
-{-| ファイルを切り替えた時に、前のファイルの焼き上がりを持ち越さない。
-進行中の起こし・1 枚焼きの予約は世代を進めて無効にする(やめると同じ仕組み)。
+{-| ファイルを切り替えた時に、前のファイルの「見せ方」を持ち越さない
+(絵・コマ・拡大・1 枚焼きの控え)。ただし進行中の焼き(起こし〜焼き、
+bakeReq・bakeFile・bakeSeconds・waking・wakeReq)は消さない — 切り替えても
+裏で続き、bakeCutscene の応答が bakeFile と今のファイルを突き合わせて
+戻り先を決める(startBakeWith/forgetBake のコメント参照)。
+1 枚焼きの予約は世代を進めて無効にする(やめると同じ仕組み)。
 -}
 forgetBake : Model -> Model
 forgetBake model =
@@ -8214,14 +8302,10 @@ forgetBake model =
         | bake = Nothing
         , bakeStale = False
         , bakeFrame = 0
+        , previewMode = ShotPreview
         , bakeZoom = False
         , bakeZoomShot = Nothing
         , bakeProbe = Nothing
-        , bakeReq = Nothing
-        , bakeSeconds = 0
-        , waking = False
-        , wakeReq = Nothing
-        , wakeSeq = model.wakeSeq + 1
         , frameShot = Nothing
         , frameNotes = []
         , frameReq = Nothing
@@ -8389,7 +8473,7 @@ sendBake draft model =
                         )
                         m1
             in
-            ( { m2 | bakeReq = Just m2.reqCounter, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
+            ( { m2 | bakeReq = Just m2.reqCounter, bakeFile = Just path, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
 
         _ ->
             ( model, Effect.none )
@@ -8541,17 +8625,33 @@ viewKnobPreviewBody model =
 viewBakePanel : Model -> List (Html Msg)
 viewBakePanel model =
     let
+        -- 焼き(・その前の起こし)は、別のファイルを開いている間も裏で進む
+        -- (forgetBake が bakeReq/bakeFile/waking 等を残すので生きたまま)。
+        -- ここではファイルを跨いで「焼けない(二重に頼めない)」ことだけ見る
         baking =
             model.bakeReq /= Nothing
 
         waking =
             model.waking
+
+        -- 「今のファイルを」焼いている・起こしているか(表示は取り違えない)
+        bakingHere =
+            baking && model.bakeFile == model.current
+
+        bakingElsewhere =
+            baking && model.bakeFile /= model.current
     in
     [ div [ HA.class "bake-bar mb-2 flex flex-wrap items-center gap-1.5" ]
         [ button
             [ HA.class "bake-run btn btn-mini"
             , HA.disabled (baking || waking)
-            , HA.title "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
+            , HA.title
+                (if bakingElsewhere then
+                    "別の脚本を焼いています(終わるまで待ってください)"
+
+                 else
+                    "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
+                )
             , HE.onClick BakeClicked
             ]
             [ text
@@ -8576,7 +8676,16 @@ viewBakePanel model =
                 text ""
         , if waking || baking then
             button
-                [ HA.class "bake-cancel btn btn-ghost btn-mini", HE.onClick BakeCancelled ]
+                [ HA.class "bake-cancel btn btn-ghost btn-mini"
+                , HA.title
+                    (if bakingElsewhere then
+                        "別の脚本の焼き(裏で進んでいる分)をやめます"
+
+                     else
+                        ""
+                    )
+                , HE.onClick BakeCancelled
+                ]
                 [ text "やめる" ]
 
           else
@@ -8584,7 +8693,13 @@ viewBakePanel model =
         , button
             [ HA.class "bake-draft btn btn-ghost btn-mini"
             , HA.disabled (baking || waking)
-            , HA.title "小さく粗い代わりに速い下書き(10 秒台)。動きの確かめ用"
+            , HA.title
+                (if bakingElsewhere then
+                    "別の脚本を焼いています(終わるまで待ってください)"
+
+                 else
+                    "小さく粗い代わりに速い下書き(10 秒台)。動きの確かめ用"
+                )
             , HE.onClick BakeDraftClicked
             ]
             [ text "下書きで焼く" ]
@@ -8604,10 +8719,16 @@ viewBakePanel model =
                     )
                 ]
 
-          else if baking then
+          else if bakingHere then
             span [ HA.class "flex items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text ("焼いています… " ++ String.fromInt model.bakeSeconds ++ "s")
+                ]
+
+          else if bakingElsewhere then
+            span [ HA.class "bake-elsewhere flex items-center gap-1.5 text-[11px] text-ink-soft" ]
+                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                , text "別の脚本を焼いています…"
                 ]
 
           else
@@ -8639,53 +8760,41 @@ viewBakePanel model =
                 text ""
         ]
     ]
-        ++ viewFrameShot model
-        ++ viewBakedFilm model
+        ++ viewPreview model
 
 
-{-| 行を選んだ時の 1 枚焼き。0.4 秒で返るので、選ぶたびにその瞬間が出る。
+{-| 右ペインの絵の枠。「カットの瞬間」(frameShot、行を選んだ 0.4 秒の 1 枚焼き)と
+「焼き上がりの通し」(bake、コマ送り)を 1 つの枠 + 1 本の操作列に統合する。
+
+出しているのはどちらか(model.previewMode)は「最後に指した方」で決めるが、
+どちらか一方しか無ければそちらを優先する(両方無ければ何も出さない)。
 未保存の編集があるうちは「今の脚本」ではないことを小さく断る(勝手には保存しない)。
 -}
-viewFrameShot : Model -> List (Html Msg)
-viewFrameShot model =
-    case model.frameShot of
-        Just shot ->
-            [ div [ HA.class "frame-shot relative mb-2" ]
-                [ img
-                    [ HA.class "block w-full rounded border border-edge bg-well"
-                    , HA.src (mediaUrl model shot.png)
-                    , HA.alt ("カット " ++ String.fromInt shot.cut)
-                    ]
-                    []
-                , span [ HA.class "absolute top-1 left-1 rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
-                    [ text ("カット " ++ String.fromInt shot.cut ++ " の瞬間") ]
-                , button
-                    [ HA.class "frame-zoom btn btn-mini absolute top-1 right-1"
-                    , HA.title "大きく見る(Esc で閉じる)"
-                    , HE.onClick (BakeZoomShot (mediaUrl model shot.png))
-                    ]
-                    [ text "⤢ 拡大" ]
-                ]
-            , if model.dirty then
-                div [ HA.class "mb-2 text-[10px] text-ink-faint" ]
-                    [ text "保存すると最新の脚本で焼けます" ]
-
-              else
-                text ""
-            , if List.isEmpty model.frameNotes then
-                text ""
-
-              else
-                div [ HA.class "mb-2 text-[10px] text-amber-300", HA.title (String.join "\n" model.frameNotes) ]
-                    [ text ("⚠ " ++ String.fromInt (List.length model.frameNotes) ++ " 件の報せ") ]
-            ]
-
-        Nothing ->
+viewPreview : Model -> List (Html Msg)
+viewPreview model =
+    case ( model.frameShot, filmOf model ) of
+        ( Nothing, Nothing ) ->
             if model.frameReq /= Nothing then
                 [ div [ HA.class "mb-2 text-[11px] text-ink-faint" ] [ text "この瞬間を焼いています…" ] ]
 
             else
-                []
+                [ div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
+                    [ text "「焼く」を押すと、この脚本を焼いて動く絵で見せます。" ]
+                ]
+
+        ( Just shot, Nothing ) ->
+            viewShotPreview model shot
+
+        ( Nothing, Just ( result, gif ) ) ->
+            viewFilmPreview model result gif
+
+        ( Just shot, Just ( result, gif ) ) ->
+            case model.previewMode of
+                ShotPreview ->
+                    viewShotPreview model shot
+
+                FilmPreview ->
+                    viewFilmPreview model result gif
 
 
 {-| 前回の焼き産物を「絵だけある」状態として持つ(コマ数は分からないので 0)。 -}
@@ -8701,115 +8810,162 @@ pastBake gif =
     }
 
 
-{-| 焼き上がり(GIF)と、コマ送り。コマ数は焼き応答の frames。 -}
-viewBakedFilm : Model -> List (Html Msg)
-viewBakedFilm model =
-    case model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif ))) of
-        Just ( result, gif ) ->
-            [ div [ HA.class "relative mb-2" ]
-                [ img
-                    [ HA.classList
-                        [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+{-| 焼き上がりの絵(GIF)。コマ別 PNG が焼けているかは Api.pngFrameCount で見る。 -}
+filmOf : Model -> Maybe ( Api.BakeResult, String )
+filmOf model =
+    model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif )))
 
-                        -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
-                        -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
-                        , ( "shot-pixelated", result.draft )
-                        ]
-                    , HA.src (mediaUrl model gif)
-                    , HA.alt "焼き上がり"
-                    ]
-                    []
-                , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
-                    [ if result.draft then
-                        span [ HA.class "bake-draft-tag rounded-sm bg-amber-500/80 px-1.5 py-px text-[10px] text-black" ]
-                            [ text "下書き(1/3 サイズ・1/2 コマ)" ]
 
-                      else
-                        text ""
-                    , if model.bakeStale then
-                        span [ HA.class "bake-stale rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
-                            [ text "前回の焼き" ]
-
-                      else
-                        text ""
-                    ]
-                , button
-                    [ HA.class "bake-zoom btn btn-mini absolute top-1 right-1"
-                    , HA.title "大きく見る(← → でコマ送り・Space で再生 / 止める・Esc で閉じる)"
-                    , HE.onClick BakeZoomOpened
-                    ]
-                    [ text "⤢ 拡大" ]
-                ]
-            , if Api.pngFrameCount result <= 1 then
-                text ""
-
-              else
-                viewFilmstrip model result
-
-            , div [ HA.class "text-[10px] text-ink-faint" ]
-                [ text "焼き上がりは保存した脚本のもの(編集しただけでは変わりません)" ]
+{-| カットの瞬間(frameShot)を枠に出す。拡大はその 1 枚(BakeZoomShot)。 -}
+viewShotPreview : Model -> { cut : Int, png : String } -> List (Html Msg)
+viewShotPreview model shot =
+    [ div [ HA.class "frame-shot relative mb-2" ]
+        [ img
+            [ HA.class "block w-full rounded border border-edge bg-well"
+            , HA.src (mediaUrl model shot.png)
+            , HA.alt ("カット " ++ String.fromInt shot.cut)
             ]
-
-        Nothing ->
-            [ div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
-                [ text "「焼く」を押すと、この脚本を焼いて動く絵で見せます。" ]
+            []
+        , span [ HA.class "absolute top-1 left-1 rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
+            [ text ("カット " ++ String.fromInt shot.cut ++ " の瞬間") ]
+        , button
+            [ HA.class "frame-zoom btn btn-mini absolute top-1 right-1"
+            , HA.title "大きく見る(Esc で閉じる)"
+            , HE.onClick (BakeZoomShot (mediaUrl model shot.png))
             ]
+            [ text "⤢ 拡大" ]
+        ]
+    , if model.dirty then
+        div [ HA.class "mb-2 text-[10px] text-ink-faint" ]
+            [ text "保存すると最新の脚本で焼けます" ]
+
+      else
+        text ""
+    , if List.isEmpty model.frameNotes then
+        text ""
+
+      else
+        div [ HA.class "mb-2 text-[10px] text-amber-300", HA.title (String.join "\n" model.frameNotes) ]
+            [ text ("⚠ " ++ String.fromInt (List.length model.frameNotes) ++ " 件の報せ") ]
+    ]
 
 
-{-| コマ送り。◀ ▶ とスライダで 1 コマずつ(絵は frames/<id>/<n>.png)。 -}
-viewFilmstrip : Model -> Api.BakeResult -> Html Msg
-viewFilmstrip model result =
+{-| 焼き上がりの通し(GIF またはコマ別 PNG)を枠に出し、下に操作列を添える。
+コマ別 PNG が焼けていれば(再生中も停止中も)そのコマの PNG を出す。
+GIF は今どのコマかを外から知れず操作列と連動できないので、コマ数不明の
+過去の焼き(pastBake)を出す時だけ従来どおり GIF を出す。拡大は通し全体(BakeZoomOpened)。
+-}
+viewFilmPreview : Model -> Api.BakeResult -> String -> List (Html Msg)
+viewFilmPreview model result gif =
     let
+        hasFrames =
+            Api.pngFrameCount result > 0
+
         last =
             max 0 (Api.pngFrameCount result - 1)
 
         at =
             clamp 0 last model.bakeFrame
-
-        step delta =
-            button
-                [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
-                , HE.onClick (BakeFrameChanged (String.fromInt (clamp 0 last (at + delta))))
-                ]
-                [ text
-                    (if delta < 0 then
-                        "◀"
-
-                     else
-                        "▶"
-                    )
-                ]
     in
-    div [ HA.class "filmstrip mb-2" ]
-        [ case sceneId model of
-            Just id ->
-                img
-                    [ HA.classList
-                        [ ( "film-frame block w-full rounded border border-edge bg-well", True )
-                        , ( "shot-pixelated", result.draft )
+    [ div [ HA.class "relative mb-2" ]
+        [ if hasFrames then
+            case sceneId model of
+                Just id ->
+                    img
+                        [ HA.classList
+                            [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+                            , ( "shot-pixelated", result.draft )
+                            ]
+                        , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
+                        , HA.alt ("コマ " ++ String.fromInt at)
                         ]
-                    , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
-                    , HA.alt ("コマ " ++ String.fromInt at)
-                    ]
-                    []
+                        []
 
-            Nothing ->
-                text ""
-        , div [ HA.class "mt-1 flex items-center gap-1.5" ]
-            [ step -1
-            , input
-                [ HA.class "film-slider min-w-0 flex-1"
-                , HA.type_ "range"
-                , HA.min "0"
-                , HA.max (String.fromInt last)
-                , HA.value (String.fromInt at)
-                , HE.onInput BakeFrameChanged
+                Nothing ->
+                    text ""
+
+          else
+            img
+                [ HA.classList
+                    [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
+
+                    -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
+                    -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
+                    , ( "shot-pixelated", result.draft )
+                    ]
+                , HA.src (mediaUrl model gif)
+                , HA.alt "焼き上がり"
                 ]
                 []
-            , step 1
-            , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
-                [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
+        , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
+            [ if result.draft then
+                span [ HA.class "bake-draft-tag rounded-sm bg-amber-500/80 px-1.5 py-px text-[10px] text-black" ]
+                    [ text "下書き(1/3 サイズ・1/2 コマ)" ]
+
+              else
+                text ""
+            , if model.bakeStale then
+                span [ HA.class "bake-stale rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
+                    [ text "前回の焼き" ]
+
+              else
+                text ""
             ]
+        , button
+            [ HA.class "bake-zoom btn btn-mini absolute top-1 right-1"
+            , HA.title "大きく見る(← → でコマ送り・Space で再生 / 止める・Esc で閉じる)"
+            , HE.onClick BakeZoomOpened
+            ]
+            [ text "⤢ 拡大" ]
+        ]
+    , if Api.pngFrameCount result <= 1 then
+        text ""
+
+      else
+        viewFilmControls model at last
+
+    , div [ HA.class "text-[10px] text-ink-faint" ]
+        [ text "焼き上がりは保存した脚本のもの(編集しただけでは変わりません)" ]
+    ]
+
+
+{-| 通しの操作列。再生ボタン・◀ ▶・シークバー・i/n 表示。コマ別 PNG があるときだけ出す
+(絵は frames/<id>/<n>.png、再生は購読(FilmAdvanced)が model.bakeFrame を進める)。
+-}
+viewFilmControls : Model -> Int -> Int -> Html Msg
+viewFilmControls model at last =
+    div [ HA.class "filmstrip mb-2 flex items-center gap-1.5" ]
+        [ button
+            [ HA.class "zoom-play btn btn-ghost btn-mini shrink-0", HE.onClick BakePlayToggled ]
+            [ text
+                (if model.bakePlaying then
+                    "⏸ 止める"
+
+                 else
+                    "▶ 動かす"
+                )
+            ]
+        , button
+            [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
+            , HE.onClick (BakeFrameChanged (String.fromInt (max 0 (at - 1))))
+            ]
+            [ text "◀" ]
+        , input
+            [ HA.class "film-slider min-w-0 flex-1"
+            , HA.type_ "range"
+            , HA.min "0"
+            , HA.max (String.fromInt last)
+            , HA.value (String.fromInt at)
+            , HE.onInput BakeFrameChanged
+            ]
+            []
+        , button
+            [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
+            , HE.onClick (BakeFrameChanged (String.fromInt (min last (at + 1))))
+            ]
+            [ text "▶" ]
+        , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
+            [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
         ]
 
 
@@ -8873,19 +9029,12 @@ viewBakeZoom model =
 
                     _ ->
                         text ""
-                , case ( model.bakeZoomShot, model.bakePlaying, result.gif ) of
-                    ( Nothing, True, Just gif ) ->
-                        img
-                            [ HA.classList
-                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
-                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
-                                ]
-                            , HA.src (mediaUrl model gif)
-                            , HA.alt "焼き上がり"
-                            ]
-                            []
-
-                    ( Nothing, False, _ ) ->
+                , case ( model.bakeZoomShot, Api.pngFrameCount result > 0 || not model.bakePlaying, result.gif ) of
+                    -- GIF は今どのコマかを外から知れず(<img> の中で完結する)、
+                    -- シークバー(bakeFrame)と連動できない。コマ別 PNG があるなら
+                    -- 再生中も停止中もコマ送りに一本化する。GIF を出すのは
+                    -- コマ数不明の過去の焼き(pastBake)を再生中のときだけ
+                    ( Nothing, True, _ ) ->
                         case sceneId model of
                             Just id ->
                                 img
@@ -8900,6 +9049,17 @@ viewBakeZoom model =
 
                             Nothing ->
                                 text ""
+
+                    ( Nothing, False, Just gif ) ->
+                        img
+                            [ HA.classList
+                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
+                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
+                                ]
+                            , HA.src (mediaUrl model gif)
+                            , HA.alt "焼き上がり"
+                            ]
+                            []
 
                     _ ->
                         text ""
@@ -13018,6 +13178,21 @@ subscriptions model =
 
           else
             Sub.none
+
+        -- 「▶ 動かす」の間、コマ別 PNG を送って再生する。
+        -- GIF は今どのコマかを外から知れない(<img> の中で完結する)ので、
+        -- シークバー(bakeFrame)と連動できない → コマ送りに一本化する。
+        -- 焼きは 30fps を 1 コマおきに間引いた 15fps なので 1000/15 ≈ 66.7ms
+        , case ( model.bakePlaying, model.bake ) of
+            ( True, Just result ) ->
+                if Api.pngFrameCount result > 0 then
+                    Time.every 66.7 (\_ -> FilmAdvanced)
+
+                else
+                    Sub.none
+
+            _ ->
+                Sub.none
 
         -- 右クリックメニューが開いている間だけ Esc で閉じる(外側クリックは受け皿の仕事)
         , if model.fileMenu /= Nothing then

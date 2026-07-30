@@ -21,6 +21,7 @@ mod Editor {
     import com.sun.net.httpserver.HttpHandler
     import com.sun.net.httpserver.HttpExchange
     import java.lang.{String => JavaString}
+    import java.util.concurrent.Executors
 
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
@@ -89,6 +90,11 @@ mod Editor {
                     }
                 }
         });
+        // executor 無し(null)だと全リクエストが 1 本のスレッドで直列になり、
+        // 焼きの取り次ぎ(BakeProxy — 最長 3 分)の間、スキーマ取得やファイル読みが
+        // 全部後ろに並んで画面が固まる。プールで並行に受ける — 共有状態は
+        // ConcurrentHashMap と putIfAbsent の排他(Runner)で既に並行前提の作り。
+        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
         // 音を焼く口を持つゲームなら、開いた瞬間から焼き係を温め始める
         // （立ち上げに 1〜2 分かかるので、触られてからでは間に合わない）。
@@ -213,6 +219,11 @@ mod Editor {
             case ("GET", "/gallery/list") => withProject(selection, exchange, dir ->
                 sendJson(200, Gallery.listJson(dir), exchange))
             case ("GET", "/gallery/image") => withProject(selection, exchange, dir ->
+                handleGalleryImage(dir, params, exchange))
+            // HEAD も受ける — 画面が「前回の焼きが残っているか」を本文なしで訊く口
+            // (mediaExists)。GET だけだと HEAD は静的配信へ落ちて常に 404 = 「無い」に
+            // 化け、再起動後の焼き産物が二度と出ない。
+            case ("HEAD", "/gallery/image") => withProject(selection, exchange, dir ->
                 handleGalleryImage(dir, params, exchange))
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
@@ -980,15 +991,21 @@ mod Editor {
         exchange.close()
 
     /// JSON 応答を返す。許可したオリジンのエディタ画面から読めるよう CORS ヘッダを付ける。
+    /// HEAD にはヘッダだけ返す (sendBytes と同じ — 本文を書くと HttpServer が怒る)。
     def sendJson(status: Int32, json: Json, exchange: HttpExchange): Unit \ IO =
         applyCors(exchange);
         let headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "application/json; charset=utf-8");
-        let bytes = (Util.Json.toPrettyString(2, json) + "\n").getBytes("UTF-8");
-        exchange.sendResponseHeaders(status, Int32.toInt64(Array.length(bytes)));
-        let out = exchange.getResponseBody();
-        out.write(bytes);
-        out.close()
+        if (exchange.getRequestMethod() == "HEAD") {
+            exchange.sendResponseHeaders(status, -1i64);
+            exchange.close()
+        } else {
+            let bytes = (Util.Json.toPrettyString(2, json) + "\n").getBytes("UTF-8");
+            exchange.sendResponseHeaders(status, Int32.toInt64(Array.length(bytes)));
+            let out = exchange.getResponseBody();
+            out.write(bytes);
+            out.close()
+        }
 
     /// 失敗応答の本文 {ok: false, error}。
     def errorJson(message: String): Json =

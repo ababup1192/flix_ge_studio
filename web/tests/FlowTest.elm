@@ -729,6 +729,45 @@ cutsText =
 }"""
 
 
+{-| cutsResourcesBody の 2 本立て版(ファイル切り替え中に焼きが裏で進む検査用)。 -}
+twoCutsResourcesBody : E.Value
+twoCutsResourcesBody =
+    E.object
+        [ ( "resources"
+          , E.list identity
+                [ E.object
+                    [ ( "id", E.string "scenes" )
+                    , ( "bakeUrl", E.string "http://127.0.0.1:8792/cutscene" )
+                    , ( "performUrl", E.string "http://127.0.0.1:7777/scene" )
+                    , ( "pattern", E.string "assets/*.scene.json" )
+                    , ( "title", E.string "場面" )
+                    , ( "files"
+                      , E.list identity
+                            [ E.object
+                                [ ( "path", E.string "assets/prologue.scene.json" )
+                                , ( "schema", E.string "assets/scene.schema.json" )
+                                ]
+                            , E.object
+                                [ ( "path", E.string "assets/second.scene.json" )
+                                , ( "schema", E.string "assets/scene.schema.json" )
+                                ]
+                            ]
+                      )
+                    ]
+                ]
+          )
+        ]
+
+
+secondCutsText : String
+secondCutsText =
+    """{
+  "id": "second",
+  "room": "hall1",
+  "cuts": [ { "wait": 1.0 } ]
+}"""
+
+
 {-| oneOf の Doc を開き、2 行目(言葉 + 添え物)を選んだ状態。 -}
 openedCuts : App
 openedCuts =
@@ -1824,6 +1863,116 @@ suite =
                     |> respondOk 9 "bakeCutscene" bakeOkBody
                     |> ProgramTest.expectView
                         (Query.findAll [ class "row-note" ] >> Query.count (Expect.equal 1))
+        , test "焼く: 焼き途中に別ファイルへ切り替えても焼きは裏で続き、戻ると届いた焼き上がりが出る" <|
+            \() ->
+                -- id 番号は「開くたび横断辞書(他ファイル)を読みに行く」分も含めて実測した並び
+                -- (2 本立ての resources なので、開くたびにもう 1 本の getFile が飛ぶ)。
+                -- 主眼は id 11(bakeCutscene)を最後まで寝かせて、ファイルを行き来しても
+                -- 生きたまま戻って来られることだけ
+                bootedWith twoCutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 8 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    -- 焼き始める(起こし → 焼き係へ取り次ぎ、id 11 の応答をまだ寝かせる)
+                    |> clickOn "bake-run"
+                    |> respondOk 9 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    |> respondOk 10 "bakeWake" wakeOkBody
+                    -- 別ファイルへ切り替える(焼き応答はまだ届いていない)
+                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> respondOk 12 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 13 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    -- 別ファイルを見ている間は「別の脚本を焼いています」の札で、焼くボタンは押せない
+                    |> ProgramTest.ensureViewHas [ text "別の脚本を焼いています" ]
+                    |> ProgramTest.ensureView
+                        (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
+                    |> respondOk 14 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 15 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 16 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    -- 元のファイルへ戻る(まだ焼き応答は届いていない)
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> respondOk 18 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 19 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 20 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 21 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 22 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    |> respondOk 23 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
+                    -- ここでようやく焼き応答(id 11)が届く。戻ったファイルと一致するので、そのまま表示に映る
+                    |> respondOk 11 "bakeCutscene" bakeOkBody
+                    |> ProgramTest.expectViewHas
+                        [ class "bake-gif"
+                        , text "⚠ 飛ばしたカット 1 件"
+                        ]
+
+        -- 不具合 2(「スキーマを探しています…」で止まる)の再現の試み。
+        -- id での突き合わせが本当に頑丈か、応答の並びを崩して確かめる
+        , test "開く: スキーマが本文より先に届いても止まらない(逆順)" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    -- スキーマ(id 5)を先に、本文(id 4)を後に
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> ProgramTest.expectViewHasNot [ text "スキーマを探しています" ]
+        , test "開く: A→B→A と速く切り替え、一番古い応答が一番最後に届いても止まらない" <|
+            \() ->
+                bootedWith twoCutsResourcesBody
+                    -- 3 回続けて開き直す(どの応答もまだ受け取っていない)
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 4(本文A-1回目)・5(スキーマA-1回目)
+                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    -- id 6(本文B)・7(スキーマB)
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 8(本文A-2回目)・9(スキーマA-2回目) ← これだけが「今」の要求
+                    |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 9 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 8 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> ProgramTest.expectViewHasNot [ text "スキーマを探しています" ]
+        , test "開く: 焼き応答が本文・スキーマ応答の間に割り込んでも止まらない" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ensureKinds [ "getFile", "getFile" ]
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    -- スキーマ応答がまだ届く前に、無関係な焼き応答(飛んでいる要求など無い)が割り込む
+                    |> respondOk 999 "bakeCutscene" bakeOkBody
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> ProgramTest.expectViewHasNot [ text "スキーマを探しています" ]
+        , test "開く: 追い越された古いスキーマ要求の失敗 envelope が今のスキーマの後に届いても壊さない" <|
+            \() ->
+                bootedWith twoCutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 4(本文A-1回目)・5(スキーマA-1回目、後で失敗させる)
+                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    -- id 6(本文B)・7(スキーマB) ← 今はこちらが「今」
+                    |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
+                    |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    -- 追い越された古い要求(id 5)の失敗がここで届く
+                    |> respondErr 5 "getFile" "404 Not Found"
+                    |> ProgramTest.expectViewHasNot [ text "スキーマを探しています" ]
+        , test "開く: 同じファイルを連打しても、一番新しい要求の応答だけで止まらない" <|
+            \() ->
+                bootedWith cutsResourcesBody
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 4(本文-1回目)・5(スキーマ-1回目)
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 6(本文-2回目)・7(スキーマ-2回目) ← これが「今」
+                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    -- id 8(本文-3回目)・9(スキーマ-3回目) ← 本当の「今」
+                    -- 一番古い要求の応答が一番最後に届く極端な並び
+                    |> respondOk 9 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 8 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 6 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
+                    |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
+                    |> ProgramTest.expectViewHasNot [ text "スキーマを探しています" ]
         , test "実機で再生: 起こしてから、選んでいるカットを from に添えて頼む" <|
             \() ->
                 cutsWarm
@@ -1864,12 +2013,14 @@ suite =
                     |> ProgramTest.expectViewHas [ class "bake-gif", text "前回の焼き" ]
         , test "ファイルを切り替えると、前のファイルの焼き上がりは消える" <|
             \() ->
-                cutsWarm
+                -- 瞬間(frameShot)を選ばず焼く: 右ペインの絵の枠は通し(Film)を出す
+                -- (瞬間と通しが両方あれば「最後に指した方」を出すので、ここでは瞬間を挟まない)
+                openedCuts
                     |> clickOn "bake-run"
                     |> ensureKinds [ "bakeWake" ]
-                    |> respondOk 9 "bakeWake" wakeOkBody
+                    |> respondOk 8 "bakeWake" wakeOkBody
                     |> ensureKinds [ "bakeCutscene" ]
-                    |> respondOk 10 "bakeCutscene" bakeOkBody
+                    |> respondOk 9 "bakeCutscene" bakeOkBody
                     |> ProgramTest.ensureViewHas [ class "bake-gif" ]
                     -- 同じ一覧のもう 1 本を開く(この見本は 1 本なので開き直しで見る)
                     |> ProgramTest.clickButton "assets/prologue.scene.json"

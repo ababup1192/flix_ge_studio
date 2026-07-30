@@ -13,9 +13,9 @@ mod Caches {
     pub type alias Stamped[a] = { mtime = Int64, value = a }
 
     /// キャッシュ一式。Editor.serve が起動時に 1 回だけ作り、リクエスト処理へ引き回す。
-    // WhyNot: ConcurrentHashMap を選んだのは同期のためではない — サーバは executor 無し (null) の
-    // 1 スレッド直列で、同時アクセスは起きない。リクエストをまたいで生きる可変の入れ物が
-    // Flix 側に無い (Ref は region の寿命に縛られる) ので、Java の Map を器として借りている。
+    // WhyNot: サーバはスレッドプールで並行にリクエストを受ける (Editor.serve の setExecutor)
+    // ので、同時アクセスに耐える ConcurrentHashMap を使う。リクエストをまたいで生きる
+    // 可変の入れ物が Flix 側に無い (Ref は region の寿命に縛られる) 事情も同じ。
     pub type alias Caches = {
         fontAtlases  = JMap[String, Stamped[FontAtlas]],
         textureSizes = JMap[String, Stamped[(Float64, Float64)]]

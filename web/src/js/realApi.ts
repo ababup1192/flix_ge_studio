@@ -18,17 +18,27 @@ export function realApi(base: string): Api {
     }
     throw new Error(`HTTP ${res.status}: ${url}${detail}`);
   };
-  const getJson = async (url: string) => {
-    const res = await fetch(url);
+  // 応答が来ないまま黙って待ち続けない — 期限切れは失敗の封筒になり、
+  // Elm 側が「探しています…」を畳める。焼きの取り次ぎだけはサーバの上限
+  // (180 秒)より長く待つ。
+  const QUICK_MS = 20_000;
+  const BAKE_MS = 200_000;
+  const fetchWithin = (url: string, init: RequestInit, ms: number): Promise<Response> => {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), ms);
+    return fetch(url, { ...init, signal: abort.signal }).finally(() => clearTimeout(timer));
+  };
+  const getJson = async (url: string, ms: number = QUICK_MS) => {
+    const res = await fetchWithin(url, {}, ms);
     if (!res.ok) await raiseHttpError(res, url);
     return res.json();
   };
-  const sendJson = async (method: string, url: string, body: unknown) => {
-    const res = await fetch(url, {
+  const sendJson = async (method: string, url: string, body: unknown, ms: number = QUICK_MS) => {
+    const res = await fetchWithin(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }, ms);
     if (!res.ok) await raiseHttpError(res, url);
     return res.json();
   };
@@ -109,9 +119,12 @@ export function realApi(base: string): Api {
           return sendJson("POST", `${base}/bake/wake`, payload);
         // 実機へ「ここから演じて」と頼む(本文は text/plain。判別は Elm 側)
         case "performScene":
-          return sendJson("POST", `${base}/bake/proxy`, payload);
+          return sendJson("POST", `${base}/bake/proxy`, payload, BAKE_MS);
         case "bakeCutscene":
-          return sendJson("POST", `${base}/bake/proxy`, payload);
+          return sendJson("POST", `${base}/bake/proxy`, payload, BAKE_MS);
+        // 1 枚焼き(選んだカットの瞬間)。宣言の口 + /frame への取り次ぎ
+        case "cutsceneFrame":
+          return sendJson("POST", `${base}/bake/proxy`, payload, BAKE_MS);
         // 焼き産物が既にあるか(既存の配信の口へ HEAD を撃つだけ)
         case "mediaExists": {
           const url = String((payload as { url: string }).url ?? "");
