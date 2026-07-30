@@ -566,9 +566,6 @@ type alias BakeResult =
     -- コマ別 PNG の枚数(応答が明示する時だけ)と、間引きの歩幅
     , pngFrames : Maybe Int
     , stride : Int
-
-    -- 下書き焼き(小さく粗い代わりに速い)の産物か
-    , draft : Bool
     , notes : List String
     }
 
@@ -597,7 +594,7 @@ bakeResultDecoder =
             (\reachable ->
                 if not reachable then
                     D.succeed
-                        { reachable = False, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
+                        { reachable = False, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
 
                 else
                     D.field "body" D.string
@@ -610,27 +607,30 @@ bakeResultDecoder =
                                         , frames = baked.frames
                                         , pngFrames = baked.pngFrames
                                         , stride = baked.stride
-                                        , draft = baked.draft
                                         , notes = baked.notes
                                         }
 
                                     Err _ ->
-                                        { reachable = True, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
+                                        { reachable = True, gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
                             )
             )
 
 
-{-| 焼き係の本文 {"baked":[{gif,frames,notes}]}。1 本だけ焼く前提で先頭を採る。 -}
+{-| 焼き係の本文 {"baked":[{gif,frames,notes}]}。1 本だけ焼く前提で先頭を採る。
+下書き焼き(?draft=1)は Studio からは撤去したので "draft" は読まない —
+焼き係サーバ側の口は他ゲームのために残っているので、応答に乗っていても
+単に無視する(壊れない)。
+-}
 type alias Baked =
-    { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, draft : Bool, notes : List String }
+    { gif : Maybe String, frames : Int, pngFrames : Maybe Int, stride : Int, notes : List String }
 
 
 emptyBaked : Baked
 emptyBaked =
-    { gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, draft = False, notes = [] }
+    { gif = Nothing, frames = 0, pngFrames = Nothing, stride = 2, notes = [] }
 
 
-{-| 焼き係の本文。1 本だけ焼く時は {"baked":[…]}、下書き / 1 枚焼きは
+{-| 焼き係の本文。1 本だけ焼く時は {"baked":[…]}、1 枚焼きは
 そのまま 1 つの物として返る — どちらの形でも同じ 1 件に落として読む。
 -}
 bakedDecoder : D.Decoder Baked
@@ -643,12 +643,11 @@ bakedDecoder =
 
 bakedItemDecoder : D.Decoder Baked
 bakedItemDecoder =
-    D.map6 (\gif frames pngFrames stride draft notes -> { gif = gif, frames = frames, pngFrames = pngFrames, stride = stride, draft = draft, notes = notes })
+    D.map5 (\gif frames pngFrames stride notes -> { gif = gif, frames = frames, pngFrames = pngFrames, stride = stride, notes = notes })
         (opt "gif" D.string)
         (withDefault 0 (D.field "frames" D.int))
         (opt "pngFrames" D.int)
         (withDefault 2 (D.field "stride" D.int))
-        (withDefault False (D.field "draft" D.bool))
         (withDefault [] (D.field "notes" (D.list D.string)))
 
 

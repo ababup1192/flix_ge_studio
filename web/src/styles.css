@@ -675,12 +675,6 @@ sl-alert.notice::part(message) {
   color: var(--color-warn);
 }
 
-/* 等倍で焼かれた絵(下書き)を、にじませず整数倍で伸ばす。
-   本番(3 倍で焼く)と見かけの大きさを揃えつつ、粗さは残して見分けられるように */
-.shot-pixelated {
-  image-rendering: pixelated;
-}
-
 /* 検索から飛んだ欄の目印。1 度だけ薄く光らせて、どこへ来たのかを示す */
 .jump-flash {
   animation: jump-flash 1.2s ease-out;

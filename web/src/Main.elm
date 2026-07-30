@@ -138,13 +138,13 @@ type alias EditPayload =
     Edit.Payload
 
 
-{-| 焼き係 / 実機が起きた後にやること。draft はどちらで焼くか、from は
-どのカットから演じるか(選んでいなければ頭から)。path は押した時点で開いていた
-ファイル — 起こし待ちの間に別ファイルへ切り替えても、焼く/演じるのはこの path
+{-| 焼き係 / 実機が起きた後にやること。from はどのカットから演じるか
+(選んでいなければ頭から)。path は押した時点で開いていたファイル —
+起こし待ちの間に別ファイルへ切り替えても、焼く/演じるのはこの path
 (今開いているファイルではない)。
 -}
 type PendingAction
-    = BakeAfterWake { draft : Bool, path : String }
+    = BakeAfterWake String
     | PerformAfterWake { from : Maybe Int, path : String }
 
 
@@ -557,6 +557,10 @@ type alias Model =
     -- とみられる)印。打ちかけがあれば閉じずに知らせるだけ、無ければ安全に閉じる
     , currentMissing : Bool
 
+    -- changes 応答が持つ集計値(どれか 1 つの mtime 変化・増減で必ず別の値になる)。
+    -- 「前回の焼きから何も変わっていないか」を見るのに使う(bakedToken 参照)
+    , latestToken : Maybe String
+
     -- スキーマ駆動フォーム(右ペイン)
     , schemaState : SchemaState
     , schemaReq : Maybe Int
@@ -601,6 +605,12 @@ type alias Model =
     , bakeReq : Maybe Int
     , bakeFile : Maybe String
 
+    -- 焼きが成功で完了した時点の (ファイル, その時知っていた最新 token) の控え。
+    -- 「焼く」ボタンの無効化(前回の焼きから何も変わっていない)の判定材料。
+    -- ファイル切替では消さない(ファイル名で突き合わせるので安全)。
+    -- 焼き始めでは消す(古い控えのまま次の焼きを迎えない)
+    , bakedToken : Maybe { file : String, token : Maybe String }
+
     -- 行を選んだ時の 1 枚焼き。cache は (ファイル, カット, 保存世代) → 絵の置き場で、
     -- 同じ姿を二度焼かない。saveGen は保存のたびに進む(焼き直すべき印)
     , frameShot : Maybe { cut : Int, png : String }
@@ -626,7 +636,7 @@ type alias Model =
     -- 出しているのが「前回の焼き」(今の脚本で焼いた物ではない)か
     , bakeStale : Bool
 
-    -- 「前回の焼き」を探している最中の置き場(本番 → 下書きの順に 1 つずつ訊く)
+    -- 「前回の焼き」を探している最中の置き場
     , bakeProbe : Maybe String
 
     -- pastBake(前回の焼き)はコマ数(pngFrames)が分からないので、その場でコマ別
@@ -880,6 +890,7 @@ init _ =
         , conflict = Nothing
         , staleMtime = Nothing
         , currentMissing = False
+        , latestToken = Nothing
         , schemaState = SchemaNone
         , schemaReq = Nothing
         , sectionKey = Nothing
@@ -896,6 +907,7 @@ init _ =
         , tilePicker = Nothing
         , bakeReq = Nothing
         , bakeFile = Nothing
+        , bakedToken = Nothing
         , frameShot = Nothing
         , frameCache = Dict.empty
         , frameSeq = 0
@@ -905,7 +917,7 @@ init _ =
         , golden = GoldenView.init
         , wakeReq = Nothing
         , wakeSeconds = 0
-        , pendingAction = BakeAfterWake { draft = False, path = "" }
+        , pendingAction = BakeAfterWake ""
         , wakeSeq = 0
         , waking = False
         , wakeUrl = Nothing
@@ -1027,7 +1039,6 @@ type Msg
     | BakeTick
     | FilmAdvanced
     | FramePeeked Int
-    | BakeDraftClicked
     | GoldenOpened
     | GoldenClosed
     | GoldenSelected String
@@ -1699,9 +1710,6 @@ update msg model =
 
             else
                 ( model, Effect.none )
-
-        BakeDraftClicked ->
-            startBakeWith True model
 
         GoldenOpened ->
             -- 開くたびに見比べ直す(焼き直した直後に開くのが普通の使い方)。
@@ -5722,12 +5730,17 @@ handleOkByKind env model =
             -- 効かせる — 選択・スクロール・編集中の文書には触らない)。
             -- (2) 開いているファイルの鮮度: 変わっていて打ちかけが無ければ黙って
             -- 読み直す。打ちかけがあるときだけ帯で知らせる(保存は 409 が最後の砦)。
-            -- 一覧から消えていれば、打ちかけが無ければ閉じる・あれば知らせるだけ
+            -- 一覧から消えていれば、打ちかけが無ければ閉じる・あれば知らせるだけ。
+            -- token(集計値)はここで常に最新へ更新する — 「焼く」ボタンの
+            -- 無効化(bakedToken との突き合わせ)が使う
             case D.decodeValue diskMtimesDecoder env.body of
                 Ok mtimes ->
                     let
+                        latestToken =
+                            D.decodeValue (D.field "token" D.string) env.body |> Result.toMaybe
+
                         ( m1, listFx ) =
-                            syncFileListIfNeeded mtimes model
+                            syncFileListIfNeeded mtimes { model | latestToken = latestToken }
 
                         ( m2, freshFx ) =
                             case model.current of
@@ -6127,6 +6140,8 @@ handleOkByKind env model =
                                     , conflict = Nothing
                                     , staleMtime = Nothing
                                     , currentMissing = False
+                                    , latestToken = Nothing
+                                    , bakedToken = Nothing
                                     , wizard = Nothing
                                     , resourceWarnings = []
                                     , activeDocs = Dict.empty
@@ -6397,14 +6412,9 @@ handleOkByKind env model =
                     , countFx
                     )
 
-                ( Just path, False ) ->
-                    -- 本番が無ければ下書きを見に行く(それも無ければ空のまま)
-                    case ( String.contains "/draft/" path, sceneId model ) of
-                        ( False, Just id ) ->
-                            probeBaked (draftGifPath id) model
-
-                        _ ->
-                            ( { model | bakeProbe = Nothing }, Effect.none )
+                ( Just _, False ) ->
+                    -- 本番が無ければ空のまま(下書きへのフォールバックは Studio からは撤去した)
+                    ( { model | bakeProbe = Nothing }, Effect.none )
 
                 _ ->
                     ( model, Effect.none )
@@ -6448,8 +6458,8 @@ handleOkByKind env model =
                 in
                 if reachable then
                     case m1.pendingAction of
-                        BakeAfterWake { draft, path } ->
-                            sendBake draft path { m1 | waking = False }
+                        BakeAfterWake path ->
+                            sendBake path { m1 | waking = False }
 
                         PerformAfterWake { from, path } ->
                             sendPerform from path { m1 | waking = False }
@@ -6543,6 +6553,18 @@ handleOkByKind env model =
                                     , bake = Just result
                                     , bakeFrame = 0
                                     , bakeStale = False
+
+                                    -- 「前回の焼きから何も変わっていない」判定の控え。完了時に
+                                    -- dirty なら控えない — 焼いている間に編集して保存すると
+                                    -- token が動くので、その時点の token を控えると
+                                    -- (実は変わったのに)誤って無効化してしまう。この場合は
+                                    -- 諦める(次の保存でまた押せるようになる)
+                                    , bakedToken =
+                                        if model.dirty then
+                                            Nothing
+
+                                        else
+                                            model.bakeFile |> Maybe.map (\file -> { file = file, token = model.latestToken })
                                   }
                                 , Effect.none
                                 )
@@ -7388,8 +7410,9 @@ reloadCurrent model =
             ( { model | conflict = Nothing, staleMtime = Nothing, currentMissing = False, savingText = Nothing }, Effect.none )
 
 
-{-| GET /changes の files(パス → mtime ミリ秒)。token は使わない — 見たいのは
-「開いているファイルが変わったか」の 1 点だけなので、集計より個別の方が素直。
+{-| GET /changes の files(パス → mtime ミリ秒)。「開いているファイルが変わったか」
+は個別の mtime を直接見る(集計より素直)。token(model.latestToken)は別に読む —
+「前回の焼きから何か変わったか」はファイル横断で見たいので、こちらは集計値が要る。
 -}
 diskMtimesDecoder : D.Decoder (Dict.Dict String Int)
 diskMtimesDecoder =
@@ -8416,19 +8439,11 @@ frameKey model cut =
         ++ String.fromInt model.saveGen
 
 
-{-| 焼く。未保存があれば先に保存してから頼む(サーバは毎回ファイルを読み直すので、
-保存前に頼むと古い脚本が焼ける)。焼いている間も編集は止めない。
--}
-startBake : Model -> ( Model, Effect )
-startBake model =
-    startBakeWith False model
-
-
 {-| ファイルを切り替えた時に、前のファイルの「見せ方」を持ち越さない
 (絵・コマ・拡大・1 枚焼きの控え)。ただし進行中の焼き(起こし〜焼き、
 bakeReq・bakeFile・bakeSeconds・waking・wakeReq)は消さない — 切り替えても
 裏で続き、bakeCutscene の応答が bakeFile と今のファイルを突き合わせて
-戻り先を決める(startBakeWith/forgetBake のコメント参照)。
+戻り先を決める(startBake/forgetBake のコメント参照)。
 1 枚焼きの予約は世代を進めて無効にする(やめると同じ仕組み)。
 -}
 forgetBake : Model -> Model
@@ -8449,7 +8464,7 @@ forgetBake model =
     }
 
 
-{-| 開いたファイルに前回の焼き産物があるか訊く(本番 → 下書きの順)。
+{-| 開いたファイルに前回の焼き産物があるか訊く。
 あれば「前回の焼き」として出す — 今の脚本と同じ保証は無いので札を添える。
 -}
 lookForBaked : Model -> ( Model, Effect )
@@ -8472,8 +8487,7 @@ probeBaked path model =
 
 {-| pastBake(前回の焼き)は応答にコマ数が乗らない(GIF が「絵だけある」で
 復元されるだけ)ので、コマ別 PNG の置き場を数え直して埋め合わせる。
-GIF の置き場から frames/ の置き場を導く(framesDir と同じ道具)ので、
-本番・下書きどちらの pastBake でも正しい棚を数えられる。
+GIF の置き場から frames/ の置き場を導く(framesDir と同じ道具)。
 -}
 requestFramesCount : Model -> Api.BakeResult -> ( Model, Effect )
 requestFramesCount model result =
@@ -8494,27 +8508,26 @@ requestFramesCount model result =
             ( model, Effect.none )
 
 
-{-| 焼き上がりの置き場(本番)。下書きは同じ名前で draft/ の下に住む。 -}
+{-| 焼き上がりの置き場(本番のみ。下書きは Studio からは廃止した — 焼き係サーバ
+側の ?draft=1 の口は他ゲームのために残っているが、Studio は本番焼きに一本化)。
+-}
 bakedGifPath : String -> String
 bakedGifPath id =
     "debug/cutscene/" ++ id ++ ".gif"
 
 
-draftGifPath : String -> String
-draftGifPath id =
-    "debug/cutscene/draft/" ++ id ++ ".gif"
-
-
-{-| 焼く前に焼き係を起こす(繋がっていれば server 側で即返る)。
-起こしている間は「起こしています… n 秒」を出し、返ってから焼きへ進む。
-押した時点のファイル(path)を控える — 起こし待ちの間に別ファイルへ
-切り替えられても、焼くのはこの path(sendBake 参照)。
+{-| 焼く。未保存があれば先に保存してから頼む(サーバは毎回ファイルを読み直すので、
+保存前に頼むと古い脚本が焼ける)。焼いている間も編集は止めない。
+焼く前に焼き係を起こす(繋がっていれば server 側で即返る)。起こしている間は
+「起こしています… n 秒」を出し、返ってから焼きへ進む。押した時点のファイル
+(path)を控える — 起こし待ちの間に別ファイルへ切り替えられても、焼くのは
+この path(sendBake 参照)。
 -}
-startBakeWith : Bool -> Model -> ( Model, Effect )
-startBakeWith draft model =
+startBake : Model -> ( Model, Effect )
+startBake model =
     case model.current of
         Just path ->
-            startWake (BakeAfterWake { draft = draft, path = path }) (bakeUrlOf model) model
+            startWake (BakeAfterWake path) (bakeUrlOf model) model
 
         Nothing ->
             ( model, Effect.none )
@@ -8620,13 +8633,14 @@ performUrlAt model path =
     groupForPath model path |> Maybe.andThen .performUrl
 
 
-{-| 起こし終えた後の本番。未保存があれば先に保存してから頼む。path は startBakeWith
+{-| 起こし終えた後の本番。未保存があれば先に保存してから頼む。path は startBake
 で控えた「押した時点のファイル」— 起こし待ちの間に別ファイルへ切り替えられていても、
 焼くのはこの path。保存は「今開いていて、かつ同じファイル」の時だけ
-(別ファイルの未保存編集をここで勝手に保存しない)。
+(別ファイルの未保存編集をここで勝手に保存しない)。常に本番焼き —
+下書き(?draft=1)は Studio からは撤去した(焼き係サーバ側の口は他ゲームのために残る)。
 -}
-sendBake : Bool -> String -> Model -> ( Model, Effect )
-sendBake draft path model =
+sendBake : String -> Model -> ( Model, Effect )
+sendBake path model =
     case bakeUrlAt model path of
         Just url ->
             let
@@ -8642,20 +8656,12 @@ sendBake draft path model =
                         (E.object
                             [ ( "url", E.string url )
                             , ( "file", E.string path )
-                            , ( "query"
-                              , E.string
-                                    (if draft then
-                                        "draft=1"
-
-                                     else
-                                        ""
-                                    )
-                              )
+                            , ( "query", E.string "" )
                             ]
                         )
                         m1
             in
-            ( { m2 | bakeReq = Just m2.reqCounter, bakeFile = Just path, bakeSeconds = 0 }, Effect.batch [ saveFx, bakeFx ] )
+            ( { m2 | bakeReq = Just m2.reqCounter, bakeFile = Just path, bakeSeconds = 0, bakedToken = Nothing }, Effect.batch [ saveFx, bakeFx ] )
 
         Nothing ->
             ( model, Effect.none )
@@ -8830,14 +8836,48 @@ viewBakePanel model =
 
         bakingElsewhere =
             baking && model.bakeFile /= model.current
+
+        -- 前回の焼きから何も変わっていないか。迷ったら押せる側に倒す —
+        -- token 未取得・stamp 無し・別ファイル・dirty・過去の焼きの復元
+        -- (pastBake は bakedToken を持たない)は、どれも「有効」のまま。
+        -- ゲーム側の Flix コード変更は検知できないが、それを理由に諦めない
+        -- (rare な取りこぼしより日々の誤爆防止を取る)
+        unchanged =
+            case model.bakedToken of
+                Just stamp ->
+                    model.current
+                        == Just stamp.file
+                        && not model.dirty
+                        && stamp.token
+                        /= Nothing
+                        && stamp.token
+                        == model.latestToken
+
+                Nothing ->
+                    False
     in
     [ div [ HA.class "bake-bar mb-2 flex flex-wrap items-center gap-1.5" ]
-        [ button
-            [ HA.class "bake-run btn btn-mini"
-            , HA.disabled (baking || waking)
+        [ case performUrlOf model of
+            Just _ ->
+                button
+                    [ HA.class "perform-run btn btn-mini"
+                    , HA.disabled (baking || waking || model.performReq /= Nothing)
+                    , HA.title "実機(ゲームの窓)で、選んでいるカットから演じさせます"
+                    , HE.onClick PerformClicked
+                    ]
+                    [ text "▶ 実機で再生" ]
+
+            Nothing ->
+                text ""
+        , button
+            [ HA.class "bake-run btn btn-ghost btn-mini"
+            , HA.disabled (baking || waking || unchanged)
             , HA.title
                 (if bakingElsewhere then
                     "別の脚本を焼いています(終わるまで待ってください)"
+
+                 else if unchanged then
+                    "前回の焼きから何も変わっていません(脚本や部屋の JSON を変えると押せるようになります)"
 
                  else
                     "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
@@ -8852,18 +8892,6 @@ viewBakePanel model =
                     "焼く"
                 )
             ]
-        , case performUrlOf model of
-            Just _ ->
-                button
-                    [ HA.class "perform-run btn btn-ghost btn-mini"
-                    , HA.disabled (baking || waking || model.performReq /= Nothing)
-                    , HA.title "実機(ゲームの窓)で、選んでいるカットから演じさせます"
-                    , HE.onClick PerformClicked
-                    ]
-                    [ text "▶ 実機で再生" ]
-
-            Nothing ->
-                text ""
         , if waking || baking then
             button
                 [ HA.class "bake-cancel btn btn-ghost btn-mini"
@@ -8880,19 +8908,6 @@ viewBakePanel model =
 
           else
             text ""
-        , button
-            [ HA.class "bake-draft btn btn-ghost btn-mini"
-            , HA.disabled (baking || waking)
-            , HA.title
-                (if bakingElsewhere then
-                    "別の脚本を焼いています(終わるまで待ってください)"
-
-                 else
-                    "小さく粗い代わりに速い下書き(10 秒台)。動きの確かめ用"
-                )
-            , HE.onClick BakeDraftClicked
-            ]
-            [ text "下書きで焼く" ]
         , if waking then
             span [ HA.class "bake-waking flex items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
@@ -8995,7 +9010,6 @@ pastBake gif =
     , frames = 0
     , pngFrames = Nothing
     , stride = 2
-    , draft = String.contains "/draft/" gif
     , notes = []
     }
 
@@ -9076,10 +9090,7 @@ viewFilmPreview model result gif =
                     case sceneId model of
                         Just id ->
                             img
-                                [ HA.classList
-                                    [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
-                                    , ( "shot-pixelated", result.draft )
-                                    ]
+                                [ HA.class "bake-gif block w-full rounded border border-edge bg-well"
                                 , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
                                 , HA.alt ("コマ " ++ String.fromInt at)
                                 ]
@@ -9090,13 +9101,7 @@ viewFilmPreview model result gif =
 
                 else
                     img
-                        [ HA.classList
-                            [ ( "bake-gif block w-full rounded border border-edge bg-well", True )
-
-                            -- 下書きは等倍で焼かれる。にじませず整数倍で伸ばして
-                            -- 本番と同じ見かけに揃える(粗さは残す = 下書きと分かる)
-                            , ( "shot-pixelated", result.draft )
-                            ]
+                        [ HA.class "bake-gif block w-full rounded border border-edge bg-well"
                         , HA.src (mediaUrl model gif)
                         , HA.alt "焼き上がり"
                         ]
@@ -9104,13 +9109,7 @@ viewFilmPreview model result gif =
               )
             ]
         , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
-            [ if result.draft then
-                span [ HA.class "bake-draft-tag rounded-sm bg-amber-500/80 px-1.5 py-px text-[10px] text-black" ]
-                    [ text "下書き(1/3 サイズ・1/2 コマ)" ]
-
-              else
-                text ""
-            , if model.bakeStale then
+            [ if model.bakeStale then
                 span [ HA.class "bake-stale rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
                     [ text "前回の焼き" ]
 
@@ -9257,10 +9256,7 @@ viewBakeZoom model =
                                 case sceneId model of
                                     Just id ->
                                         img
-                                            [ HA.classList
-                                                [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
-                                                , ( "shot-pixelated h-[82vh] w-auto", result.draft )
-                                                ]
+                                            [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
                                             , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
                                             , HA.alt ("コマ " ++ String.fromInt at)
                                             ]
@@ -9271,10 +9267,7 @@ viewBakeZoom model =
 
                             ( Nothing, False, Just gif ) ->
                                 img
-                                    [ HA.classList
-                                        [ ( "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain", True )
-                                        , ( "shot-pixelated h-[82vh] w-auto", result.draft )
-                                        ]
+                                    [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
                                     , HA.src (mediaUrl model gif)
                                     , HA.alt "焼き上がり"
                                     ]
@@ -9339,8 +9332,8 @@ filmKey model result =
     Maybe.withDefault "" (sceneId model) ++ "|" ++ Maybe.withDefault "" result.gif
 
 
-{-| コマ別 PNG の置き場。下書きは別の棚に焼かれるので、GIF の置き場から導く
-(応答が置き場を明示しないので、同じ産物の隣を指す)。
+{-| コマ別 PNG の置き場。GIF の置き場から導く(応答が置き場を明示しないので、
+同じ産物の隣を指す)。
 -}
 framesDir : Model -> Api.BakeResult -> String
 framesDir _ result =
