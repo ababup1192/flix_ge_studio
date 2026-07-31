@@ -55,6 +55,7 @@ type alias State =
     , root : String
     , running : Bool
     , starting : Bool
+    , failed : Bool
     }
 
 
@@ -207,13 +208,17 @@ viewStatus handlers state =
                 [ HA.classList
                     [ ( "inline-block h-2 w-2 rounded-full", True )
                     , ( "bg-ok", running )
-                    , ( "bg-ink-faint", not running )
+                    , ( "bg-danger", not running && state.failed )
+                    , ( "bg-ink-faint", not running && not state.failed )
                     ]
                 ]
                 []
             , text
                 (if running then
                     "起動中"
+
+                 else if state.failed then
+                    "起動できませんでした"
 
                  else
                     "停止中"
@@ -225,6 +230,9 @@ viewStatus handlers state =
               else if state.starting then
                 button [ HA.class "btn btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]
 
+              else if state.failed then
+                button [ HA.class "mini-retry btn btn-mini", HE.onClick handlers.onStart ] [ text "↻ もう一度起動する" ]
+
               else
                 button [ HA.class "btn btn-mini", HE.onClick handlers.onStart ] [ text "▶ 起動する" ]
             ]
@@ -232,6 +240,9 @@ viewStatus handlers state =
             [ text
                 (if running then
                     "保存はゲームの画面にすぐ反映されます(ここは焼き上がりの記録)"
+
+                 else if state.failed then
+                    "アトリエのタブに、しくじった時のログが残っています"
 
                  else
                     "▶ 起動すると、保存が実際のゲームにすぐ反映されます"

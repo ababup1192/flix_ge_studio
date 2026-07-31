@@ -156,7 +156,8 @@ mod Runner {
 
     /// プロジェクトの dir で `make target` を走らせ、標準出力+標準エラーを 1 行ずつログへ積む。
     /// この Mac の DEVELOPER_DIR/SDKROOT は nix パスが刺さっていて子プロセスを壊すので外す
-    /// (Editor.runCommand と同じ理由)。
+    /// (Editor.runCommand と同じ理由)。engine の場所は ENGINE で教える —
+    /// ゲームの Makefile の `ENGINE ?=` はこちらが優先される。
     def runMake(state: State, dir: String, target: String, extraArgs: List[String], envVars: List[(String, String)]): Unit \ IO =
         let args = new ArrayList();
         discard args.add("make");
@@ -168,6 +169,13 @@ mod Runner {
         let env = pb.environment();
         discard env.remove("DEVELOPER_DIR");
         discard env.remove("SDKROOT");
+        match EngineHome.forGames() {
+            case Some(engine) => discard env.put("ENGINE", engine)
+            // 見当たらないなら、ゲームの Makefile が持つ既定に賭けるしかない。
+            // 黙って賭けると、転んだ時にログが「make の中で何かが起きた」としか言わない。
+            case None         =>
+                appendLine(state, "[runner] engine が見当たりません (${EngineHome.dir()}) — ゲームの Makefile の既定で試します")
+        };
         foreach (envVar <- envVars) {
             let (name, value) = envVar;
             discard env.put(name, value)

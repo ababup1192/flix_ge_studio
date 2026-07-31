@@ -179,6 +179,10 @@ mod BakeHost {
             discard env.remove("DEVELOPER_DIR");
             discard env.remove("SDKROOT");
             discard env.put("BAKE_PORT", "${port}");
+            match EngineHome.forGames() {
+                case Some(engine) => discard env.put("ENGINE", engine)
+                case None         => ()
+            };
             let proc = pb.start();
             discard proc.waitFor()
         } catch {

@@ -26,8 +26,19 @@ JAVA_BIN  := $(ENGINE)/.devbox/nix/profile/default/bin/java
 JDK_HOME  := $(shell dirname $(shell dirname $(shell readlink -f $(JAVA_BIN))))
 JLINK     := $(JDK_HOME)/bin/jlink
 
-# 同梱 JRE に入れるモジュール (editor_server が要る最小構成 = 元 app と同じ)。
-JRE_MODULES := java.base,java.datatransfer,java.xml,java.prefs,java.desktop,java.logging,java.management,java.security.sasl,java.naming,java.net.http,jdk.httpserver
+# 同梱 JRE に入れるモジュール。editor_server が要る分に加えて、この JRE は
+# 同梱 engine がゲームを走らせる・作るのにも使う。後ろ 2 つがその分:
+#   jdk.unsupported … lwjgl (GL/音) が掴む sun.misc.Unsafe の在り処。抜くとコンパイルは
+#                     通るのに起動の瞬間 ClassNotFoundException で落ちる。
+#   jdk.crypto.ec   … TLS の楕円曲線。抜くと cacerts があっても handshake_failure になり、
+#                     新しいゲームの初回ビルド (Maven から lwjgl を取る) が通らない。
+JRE_MODULES := java.base,java.datatransfer,java.xml,java.prefs,java.desktop,java.logging,java.management,java.security.sasl,java.naming,java.net.http,jdk.httpserver,jdk.unsupported,jdk.crypto.ec
+
+# .app に同梱する Flix コンパイラ。engine の devbox profile が指す nix store の実体から
+# 借りる。engine の bin/flix.jar を既定にしないのは、あれが手で置いた古い版のことが
+# あり、ゲームの flix.toml が要求する版と食い違うため。FLIX_JAR= で差し替えられる。
+FLIX_JAR ?= $(shell real=$$(readlink -f $(ENGINE)/.devbox/nix/profile/default/bin/flix 2>/dev/null); \
+              [ -n "$$real" ] && echo "$$(dirname $$(dirname $$real))/share/java/flix/flix.jar")
 
 ROOT      := $(shell pwd)
 # flix build-fatjar は「プロジェクトのディレクトリ名.jar」を吐く。studio では
@@ -36,6 +47,9 @@ JAR       := $(ROOT)/server/artifact/server.jar
 WEB_DIST  := $(ROOT)/web/dist
 JRE_DIR   := $(ROOT)/app/runtime/jre
 RESOURCES := $(ROOT)/app/src-tauri/resources
+# .app の中の engine 一式。ゲームを走らせる・焼く・新しく作るのに要る物だけを写す
+# (engine のソースは持たない — ゲームは flix.toml で fpkg として引く)。
+ENGINE_STAGE := $(RESOURCES)/engine
 APP_BUNDLE := $(ROOT)/app/src-tauri/target/release/bundle/macos/Flix GE Studio.app
 
 all: app
@@ -87,6 +101,42 @@ swap-web: web
 	done
 	@echo "==> [swap-web] 完了。Studio を Cmd+Q → 開き直しで反映されます（web 変更のみ）。"
 
+# --- swap-engine: 動いている .app に同梱 engine の変更を反映 ---
+# ラッパ (app/engine/flix) やテンプレを直したときに使う。jar / web と同じ流儀。
+.PHONY: swap-engine
+swap-engine: stage-engine
+	@for app in \
+	  "$(APP_BUNDLE)" \
+	  "/Applications/Flix GE Studio.app" \
+	  "$(HOME)/Applications/Flix GE Studio.app"; do \
+	    if [ -d "$$app" ]; then \
+	      rm -rf "$$app/Contents/Resources/engine" \
+	        && cp -R "$(ENGINE_STAGE)" "$$app/Contents/Resources/engine" \
+	        && codesign --force --deep -s - "$$app" >/dev/null 2>&1 \
+	        && echo "==> [swap-engine] 差し替え+署名: $$app" \
+	        || echo "!! [swap-engine] 失敗: $$app"; \
+	    fi; \
+	done
+	@echo "==> [swap-engine] 完了。Studio を Cmd+Q → 開き直しで反映されます。"
+
+# --- swap-jre: 動いている .app に同梱 JRE の変更を反映 ---
+# JRE_MODULES を足したときに使う (この JRE は server だけでなくゲームも走らせる)。
+.PHONY: swap-jre
+swap-jre: jre
+	@for app in \
+	  "$(APP_BUNDLE)" \
+	  "/Applications/Flix GE Studio.app" \
+	  "$(HOME)/Applications/Flix GE Studio.app"; do \
+	    if [ -d "$$app" ]; then \
+	      rm -rf "$$app/Contents/Resources/jre" \
+	        && cp -R "$(JRE_DIR)" "$$app/Contents/Resources/jre" \
+	        && codesign --force --deep -s - "$$app" >/dev/null 2>&1 \
+	        && echo "==> [swap-jre] 差し替え+署名: $$app" \
+	        || echo "!! [swap-jre] 失敗: $$app"; \
+	    fi; \
+	done
+	@echo "==> [swap-jre] 完了。Studio を Cmd+Q → 開き直しで反映されます。"
+
 # --- web: Vite build ---
 # devbox 経由 (nodejs@22 + elm)。npm 直呼びは環境が揃わないので使わない。
 web:
@@ -119,6 +169,7 @@ app: jar web jre
 	cp $(JAR) $(RESOURCES)/editor_server.jar
 	cp -R $(WEB_DIST) $(RESOURCES)/dist
 	cp -R $(JRE_DIR) $(RESOURCES)/jre
+	$(MAKE) stage-engine
 	@echo "==> [app] cargo tauri build (bundle=app)"
 	cd app/src-tauri && env -u DEVELOPER_DIR -u SDKROOT cargo tauri build --bundles app
 	# Tauri の署名後にリソース (jre 等) が注入されて署名が壊れるので、
@@ -127,6 +178,40 @@ app: jar web jre
 	codesign --force --deep -s - "$(APP_BUNDLE)"
 	codesign --verify --deep --strict "$(APP_BUNDLE)"
 	@echo "==> [app] 完了。生成 .app: $(APP_BUNDLE)"
+
+# --- stage-engine: .app に入れる engine 一式を揃える ---
+# ゲームの Makefile が $(ENGINE)/bin/flix を呼ぶ形はそのままに、その ENGINE の実体を
+# .app の中へ移す。ここに要るのは「走らせる手」だけ:
+#   bin/flix      … 同梱 JRE と隣の flix.jar だけを見るラッパ (app/engine/flix)
+#   bin/flix.jar  … Flix コンパイラ本体
+#   Makefile      … 新しいゲームを作る (new-game) のに使う
+#   flix.toml     … その new-game が engine の版を読むのに要る
+#   templates/    … その複製元。ジャンル札のサムネ (golden/title.png) もここから読む
+#   engine_full/  … 生まれたゲームの lib/ に置かれる engine の fpkg と toml
+#   agents-pack/  … 生まれたゲームに配る AGENTS.md と skills の元
+.PHONY: stage-engine
+stage-engine:
+	@echo "==> [engine] 同梱 engine をステージ"
+	@test -n "$(FLIX_JAR)" -a -f "$(FLIX_JAR)" \
+	  || (echo "!! flix.jar が見つかりません (FLIX_JAR= で場所を指定してください)" && exit 1)
+	rm -rf $(ENGINE_STAGE)
+	mkdir -p $(ENGINE_STAGE)/bin $(ENGINE_STAGE)/engine_full/artifact
+	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
+	cp $(ROOT)/app/engine/flix $(ENGINE_STAGE)/bin/flix
+	chmod +x $(ENGINE_STAGE)/bin/flix
+	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
+	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
+	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml
+	cp -R $(ENGINE)/agents-pack $(ENGINE_STAGE)/agents-pack
+	cp -R $(ENGINE)/templates $(ENGINE_STAGE)/templates
+	# テンプレが抱えている lib/ は複製時に new-game が捨てて engine_full から置き直すので
+	# 運ばない。中身が fpkg だけで対の toml が無く、Tauri のリソース収集が転ぶのもある。
+	find $(ENGINE_STAGE)/templates -type d -name lib -exec rm -rf {} +
+	cp $(ENGINE)/engine_full/artifact/engine_full.fpkg $(ENGINE_STAGE)/engine_full/artifact/
+	# nix store から写した flix.jar は読み取り専用で来る。後段の Tauri のリソース収集が
+	# Permission denied で死ぬので、書けるようにしてから渡す (jre と同じ手当て)。
+	chmod -R u+w $(ENGINE_STAGE)
+	@echo "==> [engine] OK: $(ENGINE_STAGE) ($$(du -sh $(ENGINE_STAGE) | cut -f1))"
 
 # --- dev: 開発起動 ---
 # server を web/dist 配信で起動 (ブラウザ / .app なしでの動作確認用)。

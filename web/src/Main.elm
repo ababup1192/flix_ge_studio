@@ -5978,7 +5978,20 @@ handleOkByKind env model =
         "gameLog" ->
             case D.decodeValue Atelier.gameLogDecoder env.body of
                 Ok log ->
-                    ( { model | atelier = Atelier.gotGameLog log model.atelier }, Effect.none )
+                    let
+                        atelier =
+                            Atelier.gotGameLog log model.atelier
+
+                        m1 =
+                            { model | atelier = atelier }
+                    in
+                    -- しくじりはどの画面に居ても届くように知らせる(実況パネルは
+                    -- ホームとアトリエにしか無く、他のタブでは黙って終わってしまう)
+                    if Atelier.launchJustFailed model.atelier atelier then
+                        showToast "ゲームを起動できませんでした — ログを確認してください" m1
+
+                    else
+                        ( m1, Effect.none )
 
                 Err _ ->
                     ( model, Effect.none )
@@ -7371,8 +7384,10 @@ handleErrByKind env message model =
                 { model | atelier = Atelier.gameStartFailed model.atelier }
 
         "gameLog" ->
-            -- ログ口が無い・落ちた。回し続けても仕方ない(status 側が真実を教える)
-            ( { model | atelier = Atelier.gameStartFailed model.atelier }, Effect.none )
+            -- ログ口が無い・落ちた。回し続けても仕方ないので待つのはやめるが、
+            -- ボタンだけ黙って戻すと「押したのに何も起きない」に見える
+            showToast "起動の様子が分からなくなりました — ゲームの窓が出たか確かめてください"
+                { model | atelier = Atelier.gameStartFailed model.atelier }
 
         "runnerLog" ->
             -- ログ口が無いサーバでも進捗パネルは一言だけで生きる(fail-open)。
@@ -7800,6 +7815,7 @@ miniState model =
 
             _ ->
                 False
+    , failed = Atelier.launchHasFailed model.atelier
     }
 
 
@@ -7831,19 +7847,24 @@ viewHome model =
         ]
 
 
-{-| ゲーム起動の実況。起動を待つ間だけ、提案のカードの下に
+{-| ゲーム起動の実況。起動を待つ間と、しくじった後、提案のカードの下に
 アトリエと同じ形(インジケーター+一言+ログ末尾)で出す。
 -}
 viewLaunchLine : Model -> Html Msg
 viewLaunchLine model =
-    case Atelier.launchStarting model.atelier of
+    case Atelier.launchLine model.atelier of
         Just info ->
             div [ HA.class "launch-line mx-auto mt-3 w-full max-w-lg px-4" ]
                 [ Html.map AtelierMsg
                     (Progress.view
-                        { message = "起動しています…(初回は少しかかります)"
+                        { message =
+                            if info.failed then
+                                "起動に失敗しました。ログを確認してください(ターミナルの make debug でも試せます)"
+
+                            else
+                                "起動しています…(初回は少しかかります)"
                         , lines = info.lines
-                        , failed = False
+                        , failed = info.failed
                         , expanded = info.expanded
                         , onToggle = Atelier.LaunchLogToggled
                         }

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 同梱 engine の flix ラッパ。Studio の .app の中だけで完結する —
+# 隣の flix.jar と、Studio が同梱している JRE だけを見る。
+# ゲームの Makefile が $(ENGINE)/bin/flix として呼ぶ。
+#
+# WhyNot: PATH 上の java / flix を探しに行かない。.app から起こした子プロセスの PATH は
+# /usr/bin:/bin:/usr/sbin:/sbin に絞られ、そこに居る /usr/bin/java は本物の JDK が
+# 入っていなければ「Java を入れてください」と言うだけのスタブ。探せば必ずそれを掴む。
+set -e
+
+# WhyNot: 素の pwd (論理パス) で済ませない。Studio はこの engine を、空白を含まない
+# 別名 (symlink) 経由でゲームに渡す。論理パスのままでも隣の JRE への道 (.. 越え) は
+# カーネルがリンクを解いてから辿るので今は当たるが、その運任せをしない。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+ENGINE_DIR="$(dirname "$SCRIPT_DIR")"
+JAVA="$ENGINE_DIR/../jre/bin/java"
+FLIX_JAR="$SCRIPT_DIR/flix.jar"
+
+if [ ! -x "$JAVA" ]; then
+    echo "同梱の Java が見つかりません: $JAVA" >&2
+    exit 127
+fi
+if [ ! -f "$FLIX_JAR" ]; then
+    echo "同梱の flix.jar が見つかりません: $FLIX_JAR" >&2
+    exit 127
+fi
+
+# -XstartOnFirstThread は macOS の GLFW/AppKit がメインスレッドを要求するための専用フラグ。
+# Linux の JVM はこのオプションを知らず起動に失敗するので、Darwin のときだけ付ける。
+FLAGS=""
+if [ "$(uname)" = "Darwin" ]; then
+    FLAGS="-XstartOnFirstThread"
+fi
+
+# test と焼き (run --entrypoint Bake.*) は実ウィンドウを開かないので headless を明示する。
+# -XstartOnFirstThread 下でワーカースレッドが AWT を初期化すると AppKit 待ちで永久に
+# ハングし得るため。ゲームの実機起動 (素の run) には付けない。
+case "$1 $*" in
+    test\ *|test) FLAGS="$FLAGS -Djava.awt.headless=true" ;;
+    *"--entrypoint Bake"*) FLAGS="$FLAGS -Djava.awt.headless=true" ;;
+esac
+
+exec "$JAVA" $FLAGS -jar "$FLIX_JAR" "$@"

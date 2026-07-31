@@ -14,6 +14,8 @@ import Json.Encode as E
 import Main
 import SceneView
 import Test exposing (Test, describe, test)
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 
 
 change : String -> Int -> Journey.Change
@@ -22,6 +24,35 @@ change name ver =
     , ver = ver
     , before = "golden/archive/" ++ name
     , after = "golden/" ++ name
+    }
+
+
+{-| 下段の見た目だけを見たいので、押した先は問わない。 -}
+handlers : SceneView.Handlers ()
+handlers =
+    { onToggle = ()
+    , onScene = \_ -> ()
+    , onZoomOpen = \_ -> ()
+    , onZoomClosed = ()
+    , onStart = ()
+    }
+
+
+openWith : { running : Bool, starting : Bool, failed : Bool } -> SceneView.State
+openWith flags =
+    { open = True
+    , swapNotice = False
+    , scenes = []
+    , pin = Nothing
+    , changes = []
+    , baking = False
+    , zoom = Nothing
+    , refresh = 0
+    , serverBase = ""
+    , root = "/Users/me/Desktop/flix_ge_village"
+    , running = flags.running
+    , starting = flags.starting
+    , failed = flags.failed
     }
 
 
@@ -106,4 +137,21 @@ suite =
                         Main.update (Main.GotApiResponse saved) { m0 | putReq = Just 6 }
                 in
                 after.changesBaking |> Expect.equal True
+        , test "起動にしくじると、下段は黙って『▶ 起動する』に戻らず理由を出す" <|
+            \() ->
+                SceneView.view handlers (openWith { running = False, starting = False, failed = True })
+                    |> Query.fromHtml
+                    |> Expect.all
+                        [ Query.has [ Selector.text "起動できませんでした" ]
+                        , Query.has [ Selector.text "↻ もう一度起動する" ]
+                        , Query.hasNot [ Selector.text "▶ 起動する" ]
+                        ]
+        , test "しくじっていなければ下段はいつもの『▶ 起動する』" <|
+            \() ->
+                SceneView.view handlers (openWith { running = False, starting = False, failed = False })
+                    |> Query.fromHtml
+                    |> Expect.all
+                        [ Query.has [ Selector.text "▶ 起動する" ]
+                        , Query.hasNot [ Selector.text "起動できませんでした" ]
+                        ]
         ]

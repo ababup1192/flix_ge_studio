@@ -27,14 +27,8 @@ mod Scaffold {
 
     // ── 新しいゲーム (POST /projects/new) ─────────────────
 
-    /// engine リポの場所: EDITOR_ENGINE か既定の $HOME/Desktop/flix_game_engine。
-    /// (Genesis のジャンルカードの絵も同じ解決を使う)
-    pub def engineDir(): String \ IO =
-        let value = System.getenv("EDITOR_ENGINE");
-        if (Object.isNull(value) or value == "")
-            "${System.getProperty("user.home")}/Desktop/flix_game_engine"
-        else
-            value
+    /// engine の場所 (Genesis のジャンルカードの絵も同じ解決を使う)。
+    pub def engineDir(): String \ IO = EngineHome.dir()
 
     /// 置き場所の親: body の parent か既定の $HOME/Desktop。
     def parentOf(fields: Map[String, Json]): String \ IO =

@@ -44,7 +44,9 @@ module Atelier exposing
     , init
     , isBaking
     , isLaunchPolling
-    , launchStarting
+    , launchHasFailed
+    , launchJustFailed
+    , launchLine
     , lightboxOpen
     , lightboxShownFile
     , materialTitleOf
@@ -1193,15 +1195,41 @@ isLaunchPolling model =
             False
 
 
-{-| 起動待ちの間だけ Just(実況パネルの材料)。ホームの提案カードの下も同じ形で使う。 -}
-launchStarting : Model -> Maybe { lines : List String, expanded : Bool }
-launchStarting model =
+{-| 起動の実況パネルの材料(待っている間と、しくじった後だけ Just)。
+ホームの提案カードの下も同じ形で使う。
+-}
+-- WhyNot: 待っている間だけを Just にしない — しくじった瞬間にパネルごと消えて、
+-- 押した人には「黙って何も起きなかった」ようにしか見えない。
+
+
+launchLine : Model -> Maybe { lines : List String, expanded : Bool, failed : Bool }
+launchLine model =
     case model.launch of
         LaunchStarting info ->
-            Just { lines = info.lines, expanded = model.launchLogExpanded }
+            Just { lines = info.lines, expanded = model.launchLogExpanded, failed = False }
+
+        LaunchFailed info ->
+            Just { lines = info.lines, expanded = model.launchLogExpanded, failed = True }
 
         _ ->
             Nothing
+
+
+{-| 起動がしくじったまま止まっているか(ミニプレイヤーの下段が見る)。 -}
+launchHasFailed : Model -> Bool
+launchHasFailed model =
+    case model.launch of
+        LaunchFailed _ ->
+            True
+
+        _ ->
+            False
+
+
+{-| この 1 手でしくじりへ落ちたか(前, 後)。Main はこれを見て一度だけ知らせを出す。 -}
+launchJustFailed : Model -> Model -> Bool
+launchJustFailed before after =
+    launchHasFailed after && not (launchHasFailed before)
 
 
 {-| POST /atelier/promote 成功。選択を畳んでオーバーレイの祝いへ。 -}

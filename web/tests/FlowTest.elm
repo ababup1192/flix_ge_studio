@@ -8,6 +8,7 @@ update が返す Effect を模擬ポートへ流し、apiResponse を注入し�
 
 -}
 
+import Atelier
 import Effect exposing (Effect)
 import Expect
 import Json.Decode as D
@@ -1433,6 +1434,81 @@ suite =
                     -- ホームに居たまま、提案カードの下に実況が出る
                     |> ProgramTest.ensureViewHas [ text "起動しています…(初回は少しかかります)" ]
                     |> ProgramTest.expectViewHas [ class "launch-line" ]
+        , test "ホーム: 起動がしくじったら実況は消えず、理由と知らせが出る" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "journeyChanges" ]
+                    |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
+                    |> ProgramTest.clickButton "▶ 起動する"
+                    |> ensureKinds [ "gameStart" ]
+                    |> respondOk 4 "gameStart" (E.object [ ( "ok", E.bool True ) ])
+                    |> respondOk 0
+                        "gameLog"
+                        (E.object
+                            [ ( "running", E.bool False )
+                            , ( "exitCode", E.int 2 )
+                            , ( "lines", E.list E.string [ "Unable to locate a Java Runtime" ] )
+                            ]
+                        )
+                    |> ProgramTest.ensureViewHas [ class "launch-line" ]
+                    |> ProgramTest.ensureViewHas [ text "Unable to locate a Java Runtime" ]
+                    |> ProgramTest.expectViewHas [ text "起動に失敗しました。ログを確認してください(ターミナルの make debug でも試せます)" ]
+        , test "起動のしくじりは、どの画面に居ても届くよう知らせにもなる" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    starting =
+                        { m0 | atelier = Atelier.gameStarted m0.atelier }
+
+                    died =
+                        E.object
+                            [ ( "id", E.int 0 )
+                            , ( "kind", E.string "gameLog" )
+                            , ( "ok", E.bool True )
+                            , ( "body"
+                              , E.object
+                                    [ ( "running", E.bool False )
+                                    , ( "exitCode", E.int 2 )
+                                    , ( "lines", E.list E.string [ "boom" ] )
+                                    ]
+                              )
+                            ]
+
+                    ( after, _ ) =
+                        Main.update (Main.GotApiResponse died) starting
+                in
+                after.notice
+                    |> Expect.equal (Just "ゲームを起動できませんでした — ログを確認してください")
+        , test "静かに終わった(exitCode 0)だけなら知らせは出さない" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    starting =
+                        { m0 | atelier = Atelier.gameStarted m0.atelier }
+
+                    closed =
+                        E.object
+                            [ ( "id", E.int 0 )
+                            , ( "kind", E.string "gameLog" )
+                            , ( "ok", E.bool True )
+                            , ( "body"
+                              , E.object
+                                    [ ( "running", E.bool False )
+                                    , ( "exitCode", E.int 0 )
+                                    , ( "lines", E.list E.string [] )
+                                    ]
+                              )
+                            ]
+
+                    ( after, _ ) =
+                        Main.update (Main.GotApiResponse closed) starting
+                in
+                after.notice |> Expect.equal Nothing
         , test "ホーム: 起動が確認できたら提案を取り直す(カードが次の一歩へ進む)" <|
             \() ->
                 bootedWith resourcesBody

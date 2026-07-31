@@ -374,6 +374,53 @@ suite =
                     in
                     ( Atelier.isLaunchPolling model, model.launchLogExpanded )
                         |> Expect.equal ( False, True )
+            , test "しくじった後も実況パネルの材料は残る(failed で出る)" <|
+                \_ ->
+                    begin (stopped withCandidates)
+                        |> select
+                        |> step Atelier.SwapClicked
+                        |> step Atelier.StartGameClicked
+                        |> Tuple.first
+                        |> Atelier.gotGameLog
+                            { running = False, exitCode = Just 2, lines = [ "boom" ] }
+                        |> Atelier.launchLine
+                        |> Expect.equal
+                            (Just { lines = [ "boom" ], expanded = True, failed = True })
+            , test "しくじりへ落ちた 1 手だけ launchJustFailed が True" <|
+                \_ ->
+                    let
+                        starting =
+                            begin (stopped withCandidates)
+                                |> select
+                                |> step Atelier.SwapClicked
+                                |> step Atelier.StartGameClicked
+                                |> Tuple.first
+
+                        failed =
+                            starting
+                                |> Atelier.gotGameLog
+                                    { running = False, exitCode = Just 2, lines = [ "boom" ] }
+
+                        again =
+                            failed
+                                |> Atelier.gotGameLog
+                                    { running = False, exitCode = Just 2, lines = [ "boom" ] }
+                    in
+                    ( Atelier.launchJustFailed starting failed
+                    , Atelier.launchJustFailed failed again
+                    )
+                        |> Expect.equal ( True, False )
+            , test "静かに終わった(exitCode 0)のはしくじりにしない" <|
+                \_ ->
+                    begin (stopped withCandidates)
+                        |> select
+                        |> step Atelier.SwapClicked
+                        |> step Atelier.StartGameClicked
+                        |> Tuple.first
+                        |> Atelier.gotGameLog
+                            { running = False, exitCode = Just 0, lines = [] }
+                        |> Atelier.launchHasFailed
+                        |> Expect.equal False
             , test "既定ではログ全文は開かず、⤢ で開く" <|
                 \_ ->
                     let

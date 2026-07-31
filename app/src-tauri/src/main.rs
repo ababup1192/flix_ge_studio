@@ -118,11 +118,14 @@ static SERVER_PGID: AtomicI32 = AtomicI32::new(0);
 const FALLBACK_JAVA: &str =
     "/Users/abab/Desktop/flix_game_engine/.devbox/nix/profile/default/bin/java";
 
-// 実行に要る 3 つの在処 (java 実行ファイル・jar・配信 dist)。
+// 実行に要る在処 (java 実行ファイル・jar・配信 dist・同梱 engine)。
+// engine は固めた .app のときだけ Some — 固めていない開発起動では server 側の
+// 既定 ($HOME/Desktop/flix_game_engine) に任せる。
 struct Assets {
     java: PathBuf,
     jar: PathBuf,
     web: PathBuf,
+    engine: Option<PathBuf>,
 }
 
 // .app に固めた時のリソース置き場を実行時に解決する。
@@ -137,9 +140,21 @@ fn resolve_assets() -> Assets {
         let java = resources.join("jre").join("bin").join("java");
         let jar = resources.join("editor_server.jar");
         let web = resources.join("dist");
+        let engine = resources.join("engine");
         // 同梱 JRE が居れば「固めた .app として起動された」と判断する。
         if java.exists() && jar.exists() {
-            Some(Assets { java, jar, web })
+            Some(Assets {
+                java,
+                jar,
+                web,
+                // ラッパまで揃っている時だけ同梱 engine と認める(欠けたまま渡すと
+                // ゲームの make が中身の無い ENGINE を掴んで転ぶ)。
+                engine: engine
+                    .join("bin")
+                    .join("flix")
+                    .exists()
+                    .then_some(engine),
+            })
         } else {
             None
         }
@@ -176,7 +191,12 @@ fn dev_assets() -> Assets {
         .filter(|p| p.exists())
         .unwrap_or_else(|| PathBuf::from(FALLBACK_JAVA));
 
-    Assets { java, jar, web }
+    Assets {
+        java,
+        jar,
+        web,
+        engine: None,
+    }
 }
 
 struct ServerProc(Mutex<Option<Child>>);
@@ -255,7 +275,13 @@ fn pick_free_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn spawn_editor_server(java: &Path, jar: &Path, port: u16, web: &str) -> std::io::Result<Child> {
+fn spawn_editor_server(
+    java: &Path,
+    jar: &Path,
+    port: u16,
+    web: &str,
+    engine: Option<&Path>,
+) -> std::io::Result<Child> {
     let mut cmd = Command::new(java);
     cmd.args([
         "-Djava.awt.headless=true",
@@ -271,6 +297,12 @@ fn spawn_editor_server(java: &Path, jar: &Path, port: u16, web: &str) -> std::io
     .env_remove("SDKROOT")
     .stdout(Stdio::null())
     .stderr(Stdio::null());
+
+    // ゲームを走らせる・焼く・新しく作るのに使う engine の在処。同梱していれば
+    // .app の中を指す = 手元に engine リポが無くても Studio だけで完結する。
+    if let Some(dir) = engine {
+        cmd.env("EDITOR_ENGINE", dir);
+    }
 
     // 子を新しいプロセスグループのリーダーにする → 終了時にグループごと kill できる。
     #[cfg(unix)]
@@ -314,17 +346,28 @@ fn main() {
         std::process::exit(1);
     }
     eprintln!(
-        "[editor_app] java={} jar={} web={}",
+        "[editor_app] java={} jar={} web={} engine={}",
         assets.java.display(),
         assets.jar.display(),
-        assets.web.display()
+        assets.web.display(),
+        assets
+            .engine
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(同梱なし)".into())
     );
 
     let port = pick_free_port().expect("空きポートの取得に失敗");
     eprintln!("[editor_app] 選択ポート = {port}");
 
     let web = assets.web.to_string_lossy().into_owned();
-    let child = match spawn_editor_server(&assets.java, &assets.jar, port, &web) {
+    let child = match spawn_editor_server(
+        &assets.java,
+        &assets.jar,
+        port,
+        &web,
+        assets.engine.as_deref(),
+    ) {
         Ok(c) => {
             eprintln!("[editor_app] editor_server 起動 pid={} port={port}", c.id());
             // process_group(0) で子は自分自身を pgid とするリーダーになる。
