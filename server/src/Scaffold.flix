@@ -64,6 +64,8 @@ mod Scaffold {
         }
 
     /// 名前・大きさの検分が済んだ後の、置き場所と engine の検分 → 起動。
+    /// 産むのは NewGame (server 自身の手)。engine の flix.jar が無い手元開発では
+    /// macOS に限り従来の `make new-game` に倒れる (Windows に make は無い)。
     def startNewChecked(state: Runner.State, parent: String, name: String, title: String, w: Int32, h: Int32, starter: String): (Int32, Json) \ IO =
         let gameDir = "${parent}/${name}";
         let engine = engineDir();
@@ -71,25 +73,46 @@ mod Scaffold {
             (400, failJson("親ディレクトリがありません: ${parent}"))
         else if (new JFile(gameDir).exists())
             (409, failJson("すでにあります: ${gameDir}"))
-        else if (not new JFile("${engine}/Makefile").isFile())
-            (500, failJson("engine が見つかりません (Makefile 無し): ${engine} — EDITOR_ENGINE で場所を教えてください"))
+        else if (not new JFile("${engine}/templates").isDirectory())
+            (500, failJson("engine が見つかりません (templates 無し): ${engine} — EDITOR_ENGINE で場所を教えてください"))
         else {
-            // テンプレート指定時は W/H を渡さない (サイズと Doc はテンプレートが持つ)。
-            let args =
-                if (starter == "")
-                    "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}" :: "W=${w}" :: "H=${h}" :: Nil
-                else
-                    "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}"
-                        :: "TEMPLATE=${String.dropLeft(String.length("templates/"), starter)}" :: Nil;
-            let (status, json) = Runner.launchMake(state, engine, "new-game", args,
-                busy = "新しいゲームを作っている最中です");
+            let (status, json) = launchCreate(state, engine, gameDir, name, title, w, h, starter);
             // 産まれる場所を web に教える — 完了後の「開く」はこの dir を使う
-            // (ログの target は make のターゲット名であってパスではない)。
+            // (ログの target は仕事の名前であってパスではない)。
             let withDir = match json {
                 case JObject(fields) => JObject(Map.insert("dir", JString(gameDir), fields))
                 case other           => other
             };
             (status, withDir)
+        }
+
+    /// 産み方を選んで裏で起こす。starter 指定はテンプレ名だけ違い、W/H はテンプレの
+    /// 既定 (トークン札が無いので書き換え自体が空振りして無害)。
+    def launchCreate(state: Runner.State, engine: String, gameDir: String, name: String, title: String, w: Int32, h: Int32, starter: String): (Int32, Json) \ IO =
+        let busy = "新しいゲームを作っている最中です";
+        match EngineTasks.exec() {
+            case Some(_) => {
+                let template = if (starter == "") "game-starter"
+                               else String.dropLeft(String.length("templates/"), starter);
+                let request: NewGame.Request = {
+                    engine = engine, gameDir = gameDir, name = name, title = title,
+                    w = if (w == 0) 480 else w, h = if (h == 0) 300 else h,
+                    template = template
+                };
+                Runner.launchWork(state, "new-game", () -> NewGame.create(state, request), busy = busy)
+            }
+            case None =>
+                if (EngineTasks.isWindows())
+                    (500, failJson("engine の bin/flix.jar が見つかりません: ${engine} — 同梱が壊れています"))
+                else {
+                    let args =
+                        if (starter == "")
+                            "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}" :: "W=${w}" :: "H=${h}" :: Nil
+                        else
+                            "GAME=${gameDir}" :: "NAME=${name}" :: "TITLE=${title}"
+                                :: "TEMPLATE=${String.dropLeft(String.length("templates/"), starter)}" :: Nil;
+                    Runner.launchMake(state, engine, "new-game", args, busy = busy)
+                }
         }
 
     /// 失敗応答の本文。error を {message} の形にするのは Runner・Atelier と同じ読み方。

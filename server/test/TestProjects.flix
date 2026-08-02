@@ -46,12 +46,15 @@ mod TestProjects {
     // 探索起点 (EDITOR_SCAN_ROOTS) の分解
     // ========================================================================
 
-    /// コロン区切り。空要素 (先頭・連続コロン) は捨てる。
+    /// 区切り文字は OS の PATH と同じ流儀で引数渡し。空要素 (先頭・連続区切り) は捨てる。
+    /// Windows のセミコロン区切りでは "C:\" のコロンで割れないことも見る。
     @Test
     def testSplitRoots(): Unit \ Assert =
         Assert.assertEq(
-            expected = ("/a" :: "/b/c" :: Nil, "/only" :: Nil),
-            (Projects.splitRoots("/a::/b/c"), Projects.splitRoots(":/only")))
+            expected = ("/a" :: "/b/c" :: Nil, "/only" :: Nil, "C:\\Users\\a" :: "D:\\games" :: Nil),
+            (Projects.splitRoots(separator = ":", "/a::/b/c"),
+             Projects.splitRoots(separator = ":", ":/only"),
+             Projects.splitRoots(separator = ";", "C:\\Users\\a;D:\\games")))
 
     /// 一覧に見せる題名の代用: パスの最後の要素 (末尾スラッシュがあっても同じ)。
     @Test

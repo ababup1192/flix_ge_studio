@@ -54,17 +54,20 @@ mod Projects {
     // 切替候補の探索
     // ════════════════════════════════════════════════════════
 
-    /// プロジェクト探索の起点。EDITOR_SCAN_ROOTS (コロン区切り)、未設定なら $HOME/Desktop。
+    /// プロジェクト探索の起点。EDITOR_SCAN_ROOTS (PATH と同じ区切り文字)、
+    /// 未設定なら $HOME/Desktop。
     pub def scanRootsFromEnv(): List[String] \ IO =
         let value = System.getenv("EDITOR_SCAN_ROOTS");
         if (Object.isNull(value) or value == "")
             "${System.getProperty("user.home")}/Desktop" :: Nil
         else
-            splitRoots(value)
+            splitRoots(separator = System.getProperty("path.separator"), value)
 
-    /// コロン区切りの起点指定を分解する (空要素は捨てる)。
-    pub def splitRoots(text: String): List[String] =
-        String.splitOn(substr = ":", text) |> List.filter(root -> root != "")
+    /// 起点指定を分解する (空要素は捨てる)。区切り文字は引数で受ける —
+    /// Unix はコロンだが、Windows のパスは "C:\" とコロンを含むのでセミコロンで割る
+    /// (どちらも OS の PATH と同じ流儀)。
+    pub def splitRoots(separator: {separator = String}, text: String): List[String] =
+        String.splitOn(substr = separator#separator, text) |> List.filter(root -> root != "")
 
     /// 各起点の深さ 2 まで (起点/* と 起点/*/*) で project.json を持つディレクトリを列挙する。
     pub def findProjects(roots: List[String]): List[String] \ IO =

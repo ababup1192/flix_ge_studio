@@ -26,5 +26,9 @@ app/runtime/
 app/src-tauri/resources/
 app/src-tauri/gen/
 
+# --- CI パッケージング (ci/package-windows.ps1) の作業場と成果物 ---
+build/
+FlixGEStudio-*.zip
+
 # OS ゴミ
 .DS_Store

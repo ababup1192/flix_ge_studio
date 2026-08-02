@@ -327,6 +327,8 @@ export function realApi(base: string): Api {
             return {}; // 202 が本文なしでも受理は受理
           }
         }
+        case "gameStop":
+          return sendJson("POST", `${base}/game/stop`, {});
         case "gameLog":
           return getJson(`${base}/game/log`);
         case "previewItems":

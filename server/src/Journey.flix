@@ -83,8 +83,8 @@ mod Journey {
         isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir))
 
     /// GET /journey/state の本文。unseen は Changes の未読の知らせの数。
-    pub def stateJson(dir: String, unseen: Int32): Json \ IO =
-        let checks = gatherChecks(dir);
+    pub def stateJson(game: Game.Runtime, dir: String, unseen: Int32): Json \ IO =
+        let checks = gatherChecks(game, dir);
         let suggestion = suggest(checks, unseen);
         JObject(Map#{
             "suggestion" => JObject(Map#{
@@ -106,7 +106,7 @@ mod Journey {
 
     /// ディスクから判断の材料を集める。ディレクトリが無いのは全部「0 個・差分無し」扱い。
     /// atelier/ の数は退避ファイル (prev-N) を除いた「本物の試作」だけ数える。
-    def gatherChecks(dir: String): Checks \ IO =
+    def gatherChecks(game: Game.Runtime, dir: String): Checks \ IO =
         let candidates = jsonNames(dir, "atelier")
             |> List.filter(name -> not Atelier.isPrevName(name))
             |> List.length;
@@ -119,7 +119,7 @@ mod Journey {
         // 産まれたてテンプレートの見分け: 雛形 Doc がまだそのまま居るか。
         let hasStarterDoc = new JFile("${dir}/assets/sample.kind.json").isFile();
         // このプロジェクトのゲームが走っているか (GET /game/status と同じ見方)。
-        let gameRunning = Game.isRunning(dir);
+        let gameRunning = Game.isRunning(game, dir);
         { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
           goldenEmpty = goldenEmpty, hasStarterDoc = hasStarterDoc, gameRunning = gameRunning }
 

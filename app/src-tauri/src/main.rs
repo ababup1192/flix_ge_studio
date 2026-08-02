@@ -5,8 +5,12 @@
 //   2. editor_server の実行可能 jar を java で子プロセス起動 (EDITOR_PORT/EDITOR_WEB を渡す)
 //   3. /health を 200 が返るまでポーリング
 //   4. WebView をその URL に向ける
-//   5. アプリ終了時に子プロセス "グループごと" kill (java の残留 = ポート占有を防ぐ)
+//   5. アプリ終了時に子プロセスを道連れに kill (java の残留 = ポート占有を防ぐ)
+//      — Unix はプロセスグループ + シグナル、Windows は Job Object (win.rs)。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+#[cfg(windows)]
+mod win;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -30,6 +34,7 @@ struct RunningGame {
 // プロセス列挙は sysinfo。ただし macOS では sysinfo が他プロセスの引数/cwd を
 // 権限不足で読めない (task_for_pid が要る) ので、引数は ps、cwd は lsof に
 // フォールバックする。どちらも権限不要で全プロセスを読める外部コマンド。
+#[cfg(unix)]
 #[tauri::command]
 fn list_running_games() -> Vec<RunningGame> {
     use sysinfo::{ProcessesToUpdate, System};
@@ -72,7 +77,17 @@ fn list_running_games() -> Vec<RunningGame> {
     games
 }
 
+// Windows には -XstartOnFirstThread の目印が無い (macOS 専用フラグ)。
+// 走っているゲームは server の書き残し (GET /running-games) が知っているので、
+// ランチャー側は空を返すだけでよい。
+#[cfg(not(unix))]
+#[tauri::command]
+fn list_running_games() -> Vec<RunningGame> {
+    Vec::new()
+}
+
 // sysinfo が引数を取れない時の保険。ps は権限不要で全引数を返す。
+#[cfg(unix)]
 fn cmdline_via_ps(pid: u32) -> String {
     Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
@@ -86,6 +101,7 @@ fn cmdline_via_ps(pid: u32) -> String {
 }
 
 // sysinfo が cwd を取れない時の保険。lsof の cwd 行の最終列がそれ。
+#[cfg(unix)]
 fn cwd_via_lsof(pid: u32) -> String {
     Command::new("lsof")
         .args(["-a", "-d", "cwd", "-p", &pid.to_string(), "-Fn"])
@@ -107,19 +123,44 @@ fn cwd_via_lsof(pid: u32) -> String {
 // シグナルハンドラからも触れるよう atomic のグローバルに置く (0 = 未起動)。
 static SERVER_PGID: AtomicI32 = AtomicI32::new(0);
 
-// 開発時 (cargo run = バンドル外) のフォールバックパス。
-// .app に固めた時はこれらを使わず、バンドル内リソースから解決する。
-// studio では 3 部品を 1 リポにまとめたので、パスは studio 内の相対
-// (実行ファイルの位置から studio ルートを辿る) で解決する。
-//   実行ファイル = <studio>/app/src-tauri/target/{debug,release}/editor-app
-//   → 4 つ上が <studio>
-// java は make jre で作った studio 内 JRE (app/runtime/jre) を最優先し、
-// 無ければ engine の devbox JRE にフォールバックする。
-const FALLBACK_JAVA: &str =
-    "/Users/abab/Desktop/flix_game_engine/.devbox/nix/profile/default/bin/java";
+// ランチャー自身のログ。stderr へ出しつつ、Windows ではファイルにも残す —
+// windows_subsystem = "windows" だとコンソールが無く stderr が消えるので、
+// 「白紙のまま何も起きない」の理由がログでしか追えない。
+fn log_line(message: &str) {
+    eprintln!("{message}");
+    #[cfg(windows)]
+    {
+        if let Some(dir) = log_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("launcher.log"))
+            {
+                use std::io::Write;
+                let _ = writeln!(file, "{message}");
+            }
+        }
+    }
+}
+
+// ログ置き場。zip の展開先は読み取り専用のことがあるので、ユーザーの領域に置く。
+#[cfg(windows)]
+fn log_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("FlixGEStudio").join("logs"))
+}
+
+// java の実行ファイル名 (Windows だけ拡張子つき)。
+fn java_name() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
 
 // 実行に要る在処 (java 実行ファイル・jar・配信 dist・同梱 engine)。
-// engine は固めた .app のときだけ Some — 固めていない開発起動では server 側の
+// engine は固めた配布物のときだけ Some — 固めていない開発起動では server 側の
 // 既定 ($HOME/Desktop/flix_game_engine) に任せる。
 struct Assets {
     java: PathBuf,
@@ -128,30 +169,32 @@ struct Assets {
     engine: Option<PathBuf>,
 }
 
-// .app に固めた時のリソース置き場を実行時に解決する。
-// バンドルは <App>.app/Contents/MacOS/<bin> に実行ファイル、
-// <App>.app/Contents/Resources/ に bundle.resources のファイルが入る。
-// AppHandle はまだ無い (health を待ってから WebView を開く設計) ので、
-// 実行ファイルの隣から Contents/Resources を自前で辿る。
+// 固めた配布物のリソース置き場を実行時に解決する。
+//   macOS:   <App>.app/Contents/MacOS/<bin> の隣 → Contents/Resources/
+//   Windows: <展開先>/<bin>.exe の隣 → resources/   (ポータブル zip の自前レイアウト)
+// AppHandle はまだ無い (health を待ってから WebView を開く設計) ので自前で辿る。
 fn resolve_assets() -> Assets {
     let bundled = std::env::current_exe().ok().and_then(|exe| {
-        // exe = .../<App>.app/Contents/MacOS/<bin> → Resources へ
-        let resources = exe.parent()?.parent()?.join("Resources");
-        let java = resources.join("jre").join("bin").join("java");
+        let resources = if cfg!(windows) {
+            exe.parent()?.join("resources")
+        } else {
+            exe.parent()?.parent()?.join("Resources")
+        };
+        let java = resources.join("jre").join("bin").join(java_name());
         let jar = resources.join("editor_server.jar");
         let web = resources.join("dist");
         let engine = resources.join("engine");
-        // 同梱 JRE が居れば「固めた .app として起動された」と判断する。
+        // 同梱 JRE が居れば「固めた配布物として起動された」と判断する。
         if java.exists() && jar.exists() {
             Some(Assets {
                 java,
                 jar,
                 web,
-                // ラッパまで揃っている時だけ同梱 engine と認める(欠けたまま渡すと
-                // ゲームの make が中身の無い ENGINE を掴んで転ぶ)。
+                // コンパイラ jar まで揃っている時だけ同梱 engine と認める (欠けたまま
+                // 渡すと server が中身の無い ENGINE を掴んで転ぶ)。
                 engine: engine
                     .join("bin")
-                    .join("flix")
+                    .join("flix.jar")
                     .exists()
                     .then_some(engine),
             })
@@ -167,9 +210,9 @@ fn resolve_assets() -> Assets {
 // 実行ファイルの位置から studio ルートを辿り、studio 内の成果物を指す。
 //   jar = <studio>/server/artifact/editor_server.jar   (make jar)
 //   web = <studio>/web/dist                            (make web)
-//   java = <studio>/app/runtime/jre/bin/java があればそれ、無ければ engine の devbox java
+//   java = <studio>/app/runtime/jre/bin/java → STUDIO_JAVA → JAVA_HOME → PATH の java
 fn dev_assets() -> Assets {
-    // <studio>/app/src-tauri/target/{debug,release}/editor-app → 4 つ上が <studio>
+    // <studio>/app/src-tauri/target/{debug,release}/editor-app → 5 つ上が <studio>
     let studio = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.parent()?.parent()?.parent()?.parent()?.to_path_buf()));
@@ -178,7 +221,7 @@ fn dev_assets() -> Assets {
         Some(root) => (
             root.join("server").join("artifact").join("editor_server.jar"),
             root.join("web").join("dist"),
-            Some(root.join("app").join("runtime").join("jre").join("bin").join("java")),
+            Some(root.join("app").join("runtime").join("jre").join("bin").join(java_name())),
         ),
         None => (
             PathBuf::from("server/artifact/editor_server.jar"),
@@ -189,7 +232,11 @@ fn dev_assets() -> Assets {
 
     let java = studio_java
         .filter(|p| p.exists())
-        .unwrap_or_else(|| PathBuf::from(FALLBACK_JAVA));
+        .or_else(|| std::env::var_os("STUDIO_JAVA").map(PathBuf::from))
+        .or_else(|| {
+            std::env::var_os("JAVA_HOME").map(|home| PathBuf::from(home).join("bin").join(java_name()))
+        })
+        .unwrap_or_else(|| PathBuf::from(java_name()));
 
     Assets {
         java,
@@ -224,8 +271,11 @@ fn kill_process_group(child: &mut Child) {
     SERVER_PGID.store(0, Ordering::SeqCst);
 }
 
+// Windows は Job Object が子孫ごと倒す (win.rs)。
 #[cfg(not(unix))]
 fn kill_process_group(child: &mut Child) {
+    #[cfg(windows)]
+    win::terminate_all();
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -265,6 +315,7 @@ fn install_signal_handlers() {
     }
 }
 
+// Windows に Unix シグナルは無い。強制終了の道連れは Job Object (KILL_ON_JOB_CLOSE) が担う。
 #[cfg(not(unix))]
 fn install_signal_handlers() {}
 
@@ -285,23 +336,46 @@ fn spawn_editor_server(
     let mut cmd = Command::new(java);
     cmd.args([
         "-Djava.awt.headless=true",
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
         "-jar",
         &jar.to_string_lossy(),
     ])
     .env("EDITOR_PORT", port.to_string())
     .env("EDITOR_WEB", web)
+    // server がゲームを走らせる・焼くのに使う java (同梱 JRE)。
+    .env("EDITOR_JAVA", java)
     // EDITOR_DIR はあえて渡さない = プロジェクト未選択で起動し画面で選ばせる。
     // この Mac のシェルには存在しない nix パスの DEVELOPER_DIR/SDKROOT が刺さっており、
     // 子プロセスに漏らすと悪さをするので外す。
     .env_remove("DEVELOPER_DIR")
-    .env_remove("SDKROOT")
-    .stdout(Stdio::null())
-    .stderr(Stdio::null());
+    .env_remove("SDKROOT");
 
     // ゲームを走らせる・焼く・新しく作るのに使う engine の在処。同梱していれば
-    // .app の中を指す = 手元に engine リポが無くても Studio だけで完結する。
+    // 配布物の中を指す = 手元に engine リポが無くても Studio だけで完結する。
     if let Some(dir) = engine {
         cmd.env("EDITOR_ENGINE", dir);
+    }
+
+    // server の口は普段は捨てる。Windows だけファイルに残す — コンソールが無く、
+    // 起動失敗の理由 (web UI: 無効 など) がそこにしか出ないため。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        match server_log_files() {
+            Some((out, err)) => {
+                cmd.stdout(out).stderr(err);
+            }
+            None => {
+                cmd.stdout(Stdio::null()).stderr(Stdio::null());
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
 
     // 子を新しいプロセスグループのリーダーにする → 終了時にグループごと kill できる。
@@ -311,23 +385,33 @@ fn spawn_editor_server(
         cmd.process_group(0);
     }
 
-    cmd.spawn()
+    let child = cmd.spawn()?;
+    // 子孫 (server が起こすゲーム) ごと Job に入れて、道連れの網を張る。
+    #[cfg(windows)]
+    win::assign(&child);
+    Ok(child)
+}
+
+// server の stdout/stderr の書き先 (Windows のみ)。同じファイルへ 2 本とも流す。
+#[cfg(windows)]
+fn server_log_files() -> Option<(std::fs::File, std::fs::File)> {
+    let dir = log_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("server.log"))
+        .ok()?;
+    let clone = file.try_clone().ok()?;
+    Some((file, clone))
 }
 
 // /health が 200 を返すまで待つ。java の cold start ぶんを見て ~20 秒でタイムアウト。
+// 素の TcpStream で 1 往復する — curl は Windows で `-o /dev/null` が書けず使えない。
 fn wait_for_health(port: u16, timeout: Duration) -> bool {
-    let url = format!("http://127.0.0.1:{port}/health");
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        // curl は macOS 標準。--fail で HTTP エラーを非0終了に、-s で無音。
-        let ok = Command::new("curl")
-            .args(["-s", "-f", "-o", "/dev/null", "--max-time", "2", &url])
-            .env_remove("DEVELOPER_DIR")
-            .env_remove("SDKROOT")
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
+        if health_ok(port) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -335,17 +419,52 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
     false
 }
 
+fn health_ok(port: u16) -> bool {
+    use std::io::{Read, Write};
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(800))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let request =
+        format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 32];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    // curl -f と同じ判定: 2xx/3xx を「起きた」とみなす。
+    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+    head.starts_with("HTTP/1.1 2") || head.starts_with("HTTP/1.1 3")
+}
+
 fn main() {
+    #[cfg(windows)]
+    {
+        win::init_job();
+        // WebView2 が無い Windows では窓を開けない。白紙で黙るのではなく案内して終わる。
+        if tauri::webview_version().is_err() {
+            win::message_box(
+                "Flix GE Studio",
+                "WebView2 ランタイムが見つかりません。\n\
+                 https://developer.microsoft.com/microsoft-edge/webview2/ から\n\
+                 「エバーグリーン ブートストラッパー」をインストールして、もう一度開いてください。",
+            );
+            std::process::exit(1);
+        }
+    }
+
     let assets = resolve_assets();
     if !assets.jar.exists() {
-        eprintln!(
+        log_line(&format!(
             "[editor_app] editor_server の jar が見つかりません: {}\n\
              先にビルドしてください: make jar (flix_ge_studio ルートで)",
             assets.jar.display()
-        );
+        ));
         std::process::exit(1);
     }
-    eprintln!(
+    log_line(&format!(
         "[editor_app] java={} jar={} web={} engine={}",
         assets.java.display(),
         assets.jar.display(),
@@ -355,10 +474,10 @@ fn main() {
             .as_deref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "(同梱なし)".into())
-    );
+    ));
 
     let port = pick_free_port().expect("空きポートの取得に失敗");
-    eprintln!("[editor_app] 選択ポート = {port}");
+    log_line(&format!("[editor_app] 選択ポート = {port}"));
 
     let web = assets.web.to_string_lossy().into_owned();
     let child = match spawn_editor_server(
@@ -369,26 +488,41 @@ fn main() {
         assets.engine.as_deref(),
     ) {
         Ok(c) => {
-            eprintln!("[editor_app] editor_server 起動 pid={} port={port}", c.id());
+            log_line(&format!(
+                "[editor_app] editor_server 起動 pid={} port={port}",
+                c.id()
+            ));
             // process_group(0) で子は自分自身を pgid とするリーダーになる。
             SERVER_PGID.store(c.id() as i32, Ordering::SeqCst);
             install_signal_handlers();
             c
         }
         Err(e) => {
-            eprintln!("[editor_app] editor_server の起動に失敗: {e}");
+            log_line(&format!("[editor_app] editor_server の起動に失敗: {e}"));
+            #[cfg(windows)]
+            win::message_box(
+                "Flix GE Studio",
+                "内部サーバを起動できませんでした。\n\
+                 %LOCALAPPDATA%\\FlixGEStudio\\logs\\launcher.log を確認してください。",
+            );
             std::process::exit(1);
         }
     };
 
-    eprintln!("[editor_app] /health を待機中 (最大 20 秒)...");
+    log_line("[editor_app] /health を待機中 (最大 20 秒)...");
     if !wait_for_health(port, Duration::from_secs(20)) {
-        eprintln!("[editor_app] editor_server が起動しませんでした。子プロセスを片付けて終了します。");
+        log_line("[editor_app] editor_server が起動しませんでした。子プロセスを片付けて終了します。");
         let mut child = child;
         kill_process_group(&mut child);
+        #[cfg(windows)]
+        win::message_box(
+            "Flix GE Studio",
+            "内部サーバが応答しませんでした。\n\
+             %LOCALAPPDATA%\\FlixGEStudio\\logs\\server.log を確認してください。",
+        );
         std::process::exit(1);
     }
-    eprintln!("[editor_app] /health OK。WebView を開きます。");
+    log_line("[editor_app] /health OK。WebView を開きます。");
 
     let url = format!("http://127.0.0.1:{port}/");
     let external: tauri::Url = url.parse().expect("URL の生成に失敗");
@@ -410,7 +544,7 @@ fn main() {
         if let RunEvent::Exit = event {
             if let Some(mut c) = app_handle.state::<ServerProc>().0.lock().unwrap().take() {
                 kill_process_group(&mut c);
-                eprintln!("[editor_app] editor_server (プロセスグループ) を kill しました。");
+                log_line("[editor_app] editor_server (プロセスグループ) を kill しました。");
             }
         }
     });

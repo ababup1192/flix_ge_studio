@@ -36,6 +36,7 @@ type alias Handlers msg =
     , onZoomOpen : String -> msg
     , onZoomClosed : msg
     , onStart : msg
+    , onStop : msg
     }
 
 
@@ -225,7 +226,7 @@ viewStatus handlers state =
                 )
             , span [ HA.class "flex-1" ] []
             , if running then
-                text ""
+                button [ HA.class "btn btn-mini", HE.onClick handlers.onStop ] [ text "■ 止める" ]
 
               else if state.starting then
                 button [ HA.class "btn btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]

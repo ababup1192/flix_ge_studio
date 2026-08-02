@@ -31,9 +31,15 @@ mod BakeHost {
     /// 焼き係に頼む口の名前 (ゲーム側の Makefile がこの名前で用意する)。
     def target(): String = "bake-server"
 
-    /// そのプロジェクトが焼き係を持てるか (Makefile に口があるか)。
-    /// 無ければエディタは「焼き係が無い」と伝えるだけで、壊れない。
+    /// そのプロジェクトが焼き係を持てるか。project.json の studioTasks 宣言が最優先
+    /// (両 OS で起こせる)。宣言が無ければ Makefile の口を見る — こちらは make で起こす
+    /// 道なので、make を持たない Windows では「持てない」に倒す (永遠の準備中を防ぐ)。
     pub def canHost(dir: String): Bool \ IO =
+        Option.nonEmpty(EngineTasks.declaredEntry(dir, target()))
+            or (not EngineTasks.isWindows() and makefileHasTarget(dir))
+
+    /// Makefile に bake-server: の口があるか。
+    def makefileHasTarget(dir: String): Bool \ IO =
         try {
             let file = new JFile("${dir}/Makefile");
             if (not file.isFile()) false
@@ -164,25 +170,58 @@ mod BakeHost {
         socket.close();
         port
 
-    /// `make bake-server` を起こす。焼き係は放置で自分から終わるので、
+    /// 焼き係を起こす。入口の宣言 (studioTasks の bake-server) があれば java を直接呼び、
+    /// 無ければ従来の `make bake-server` (macOS のみ)。焼き係は放置で自分から終わるので、
     /// ここでは終わるまで待つだけ (待ち終えたら次の頼みごとで立て直される)。
     def launch(dir: String, port: Int32): Unit \ IO =
+        match (EngineTasks.declaredEntry(dir, target()), EngineTasks.exec()) {
+            case (Some(entry), Some(exec)) =>
+                launchWith(dir, port,
+                    EngineTasks.argv(exec, EngineTasks.isMac(), EngineTasks.Task.EntryPoint(entry)),
+                    withEngine = false)
+            case _ =>
+                if (EngineTasks.isWindows())
+                    // canHost は宣言を見て true と言ったのに flix.jar が無い = 同梱の破損。
+                    // 黙って何もしないと「永遠の準備中」になるので、理由をログに書き残す。
+                    note(dir, "engine の bin/flix.jar が見つからないため焼き係を起こせません (同梱が壊れています)")
+                else launchWith(dir, port, "make" :: target() :: Nil, withEngine = true)
+        }
+
+    /// 焼き係のログファイルに理由を 1 行残す (起こせなかったときの読み先を揃える)。
+    def note(dir: String, message: String): Unit \ IO =
+        try {
+            discard new JFile("${dir}/debug").mkdirs();
+            let _ = run { Fs.WriteFile.write(str = "[bake-host] ${message}\n", "${dir}/debug/bake-server.log") }
+                with Fs.WriteFile.runWithFileWrite
+                with Fs.FileWrite.runWithIO;
+            ()
+        } catch {
+            case _: Exception => ()
+        }
+
+    /// コマンド列で焼き係を起こして待つ。ENGINE はゲームの Makefile が engine の場所を
+    /// 知るための環境変数なので、make の道だけに渡す。
+    def launchWith(dir: String, port: Int32, cmdArgs: List[String], withEngine: {withEngine = Bool}): Unit \ IO =
         try {
             let args = new ArrayList();
-            discard args.add("make");
-            discard args.add(target());
+            foreach (arg <- cmdArgs) discard args.add(arg);
             let pb = new ProcessBuilder(args);
             discard pb.directory(new JFile(dir));
             discard pb.redirectErrorStream(true);
+            // ログ先の debug/ はテンプレ外のゲームだと無いことがある — 無いままだと
+            // 起こす前に例外で無言に終わるので、先に作っておく。
+            discard new JFile("${dir}/debug").mkdirs();
             discard pb.redirectOutput(new JFile("${dir}/debug/bake-server.log"));
             let env = pb.environment();
             discard env.remove("DEVELOPER_DIR");
             discard env.remove("SDKROOT");
             discard env.put("BAKE_PORT", "${port}");
-            match EngineHome.forGames() {
-                case Some(engine) => discard env.put("ENGINE", engine)
-                case None         => ()
-            };
+            if (withEngine#withEngine)
+                match EngineHome.forGames() {
+                    case Some(engine) => discard env.put("ENGINE", engine)
+                    case None         => ()
+                }
+            else ();
             let proc = pb.start();
             discard proc.waitFor()
         } catch {

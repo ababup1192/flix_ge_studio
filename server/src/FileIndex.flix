@@ -80,14 +80,18 @@ mod FileIndex {
     /// リクエストで来た相対パスを dir 配下の絶対パスへ解決する。
     /// 絶対パス・`..` 入り・正規化すると dir の外へ出るものは None。
     /// ブラウザから来る値でプロジェクト外を読み書きさせないための門番。
+    /// 区切りは "\" も "/" と同じに扱う — Windows の JFile は "\" も道の区切りと読むので、
+    /// "/" だけ見ていると "\.." のすり抜けと「正規化の結果が \ 区切りで返って照合が必ず外れ、
+    /// 全ファイルがプロジェクト外扱いになる」の両方が起きる。
     pub def resolveInside(dir: String, relPath: String): Option[String] \ IO =
-        let hasDotDot = String.splitOn(substr = "/", relPath) |> List.exists(segment -> segment == "..");
-        if (String.startsWith(prefix = "/", relPath) or hasDotDot)
+        let normalized = String.replace(src = "\\", dst = "/", relPath);
+        let hasDotDot = String.splitOn(substr = "/", normalized) |> List.exists(segment -> segment == "..");
+        if (String.startsWith(prefix = "/", normalized) or hasDotDot)
             None
         else {
             let rootCanonical = new JFile(dir).getCanonicalPath();
             let target = new JFile("${dir}/${relPath}").getCanonicalPath();
-            if (String.startsWith(prefix = rootCanonical + "/", target)) Some(target) else None
+            if (String.startsWith(prefix = rootCanonical + JFile.separator, target)) Some(target) else None
         }
 
     /// dir 相対パスのファイルを読む。プロジェクト外・読めないは Err(理由)。

@@ -497,6 +497,11 @@ type alias Model =
     -- トースト通知(数秒で消える notice)の連番。消灯タイマーが発火した時に
     -- 「まだ自分が出した通知のままか」を確かめる合鍵
     , noticeSeq : Int
+
+    -- いちばん最近しくじった裏の仕事(焼き/起動/新規作成)のログ。トーストは数秒で
+    -- 消えるので、あとから ⚠ バッジ → モーダルで全文を読めるようにここへ残す
+    , lastFailure : Maybe { title : String, lines : List String }
+    , failureOpen : Bool
     , picker : PickerState
 
     -- 「＋ 新しいゲームをはじめる」(ピッカー画面のまっさら開始)
@@ -885,6 +890,8 @@ init _ =
         , reqCounter = 0
         , notice = Nothing
         , noticeSeq = 0
+        , lastFailure = Nothing
+        , failureOpen = False
         , picker = emptyPicker
         , newGame = NewGame.init
         , title = ""
@@ -1145,6 +1152,8 @@ type Msg
     | WizardFieldMoved Int Int
     | WizardCreateClicked
     | NoticeExpired { seq : Int, message : String }
+    | FailureLogOpened
+    | FailureLogClosed
     | PanePressed PaneSide Float
     | PaneMoved Float
     | PaneReleased
@@ -1170,6 +1179,7 @@ type Msg
     | MiniPlayerToggled
     | MiniSceneClicked (Maybe String)
     | MiniStartClicked
+    | MiniStopClicked
     | MiniSwapNoticeExpired
     | MiniZoomOpened String
     | MiniZoomClosed
@@ -1418,6 +1428,11 @@ update msg model =
 
                 _ ->
                     ( m1, Effect.none )
+
+        MiniStopClicked ->
+            -- 止めるのは server への頼み 1 本 (POST /game/stop)。結果は gameStop の応答で
+            -- 状態を取り直して画面へ返す
+            request "gameStop" (E.object []) model
 
         MiniSwapNoticeExpired ->
             ( { model | miniSwapNotice = False }, Effect.none )
@@ -2575,6 +2590,12 @@ update msg model =
                 Nothing ->
                     ( model, Effect.none )
 
+        FailureLogOpened ->
+            ( { model | failureOpen = True }, Effect.none )
+
+        FailureLogClosed ->
+            ( { model | failureOpen = False }, Effect.none )
+
         NoticeExpired info ->
             -- 消すのは「自分が出した通知がまだ最新のまま」の時だけ。連続保存は
             -- 最後の通知の番号(seq)だけが合い、後から出た別文言(エラー等)は
@@ -3720,6 +3741,15 @@ showToast message model =
     ( { model | notice = Just message, noticeSeq = seq }
     , Effect.ExpireNotice { seq = seq, message = message, afterMs = 3500 }
     )
+
+
+{-| 裏の仕事のしくじりを知らせる: トースト + ⚠ バッジ用のログ保存。
+トーストは数秒で消えるので、読める形 (topbar の ⚠ ログ → モーダル) も一緒に残す。
+-}
+showFailure : String -> List String -> Model -> ( Model, Effect )
+showFailure title lines model =
+    showToast (title ++ " — 右上の ⚠ ログ で詳細を見られます")
+        { model | lastFailure = Just { title = title, lines = lines } }
 
 
 {-| 保存完了の文言。宣言リソース(project.json の editor 宣言)のファイルは
@@ -5975,6 +6005,10 @@ handleOkByKind env model =
             -- どちらも「起動処理は走っている」— ポーリングが本当の姿を教える
             ( { model | atelier = Atelier.gameStarted model.atelier }, Effect.none )
 
+        "gameStop" ->
+            -- 止まったはずなので状態を取り直す (バッジと「▶ 起動する」の復帰)
+            ( model, requestInfo "gameStatus" )
+
         "gameLog" ->
             case D.decodeValue Atelier.gameLogDecoder env.body of
                 Ok log ->
@@ -5988,7 +6022,7 @@ handleOkByKind env model =
                     -- しくじりはどの画面に居ても届くように知らせる(実況パネルは
                     -- ホームとアトリエにしか無く、他のタブでは黙って終わってしまう)
                     if Atelier.launchJustFailed model.atelier atelier then
-                        showToast "ゲームを起動できませんでした — ログを確認してください" m1
+                        showFailure "ゲームを起動できませんでした" log.lines m1
 
                     else
                         ( m1, Effect.none )
@@ -6001,7 +6035,20 @@ handleOkByKind env model =
             -- 進捗パネルへ流し込む(失敗の自動展開も Atelier の規則)
             case D.decodeValue Atelier.gameLogDecoder env.body of
                 Ok log ->
-                    ( { model | atelier = Atelier.gotBakeLog log model.atelier }, Effect.none )
+                    let
+                        atelier =
+                            Atelier.gotBakeLog log model.atelier
+
+                        m1 =
+                            { model | atelier = atelier }
+                    in
+                    -- 描き出しのしくじりも起動と同じ約束で一度だけ知らせる —
+                    -- アトリエ以外のタブに居ても「出るはずの物が出ない」に気づけるように
+                    if Atelier.bakeJustFailed model.atelier atelier then
+                        showFailure "プレビューを描き出せませんでした" log.lines m1
+
+                    else
+                        ( m1, Effect.none )
 
                 Err _ ->
                     ( model, Effect.none )
@@ -6082,8 +6129,12 @@ handleOkByKind env model =
                             in
                             ( m3, Effect.batch [ toastFx, requestInfo "projects", selectFx ] )
 
+                        NewGame.LogFailure ->
+                            -- パネルがログの尻尾を見せるのに加え、トーストと ⚠ ログでも知らせる
+                            showFailure "新しいゲームを作れませんでした" log.lines m1
+
                         _ ->
-                            -- 走行中(継続)か失敗(パネルがログの尻尾を見せる)
+                            -- 走行中(継続)
                             ( m1, Effect.none )
 
                 Err _ ->
@@ -7383,6 +7434,9 @@ handleErrByKind env message model =
             showToast ("ゲームを起動できませんでした — " ++ message)
                 { model | atelier = Atelier.gameStartFailed model.atelier }
 
+        "gameStop" ->
+            showToast ("止められませんでした — " ++ message) model
+
         "gameLog" ->
             -- ログ口が無い・落ちた。回し続けても仕方ないので待つのはやめるが、
             -- ボタンだけ黙って戻すと「押したのに何も起きない」に見える
@@ -7617,7 +7671,10 @@ view model =
 
         Picker ->
             -- root が入っている = 編集の状態を保持したまま開いた(戻る道を出す)
-            viewPicker (model.root /= "") model.newGame model.picker
+            div []
+                [ viewPicker (model.root /= "") model.newGame model.picker
+                , viewFailureDialog model
+                ]
 
         Editing ->
             -- ミニプレイヤー(fixed)はアトリエタブの間だけ右下に居る
@@ -7662,6 +7719,7 @@ viewShell model content =
             [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
             , viewNavTabs model.tab
             , viewSearchButton
+            , viewFailureBadge model
             , viewGoldenBadge model
             , viewProjectSwitch
             ]
@@ -7670,7 +7728,53 @@ viewShell model content =
         -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
         , viewSearchPanel model
         , viewGoldenWindow model
+        , viewFailureDialog model
         ]
+
+
+{-| 裏の仕事 (焼き・起動・新規作成) のしくじりの目印。トーストは数秒で消えるので、
+最後の失敗ログが読める間だけ赤く残す。
+-}
+viewFailureBadge : Model -> Html Msg
+viewFailureBadge model =
+    case model.lastFailure of
+        Just _ ->
+            button
+                [ HA.class "btn btn-ghost btn-mini shrink-0 text-danger"
+                , HA.title "最後にしくじった仕事のログを見る"
+                , HE.onClick FailureLogOpened
+                ]
+                [ text "⚠ ログ" ]
+
+        Nothing ->
+            text ""
+
+
+{-| 最後にしくじった仕事のログを読むモーダル (topbar の ⚠ ログ から)。 -}
+viewFailureDialog : Model -> Html Msg
+viewFailureDialog model =
+    case ( model.failureOpen, model.lastFailure ) of
+        ( True, Just failure ) ->
+            Html.node "sl-dialog"
+                [ HA.class "changes-dialog"
+                , HE.on "sl-request-close" (D.succeed FailureLogClosed)
+                , HA.attribute "label" failure.title
+                , HA.attribute "open" ""
+                , HA.attribute "style" "--width: 56rem"
+                ]
+                [ Progress.view
+                    { message = failure.title
+                    , lines = failure.lines
+                    , failed = True
+                    , expanded = True
+                    , onToggle = FailureLogClosed
+                    }
+                , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
+                    [ button [ HA.class "btn", HE.onClick FailureLogClosed ] [ text "閉じる" ] ]
+                ]
+
+        _ ->
+            text ""
 
 
 {-| 焼き上がりの見張りの数字。割れていれば琥珀、揃っていれば静かな緑。
@@ -7789,6 +7893,7 @@ miniHandlers =
     , onZoomOpen = MiniZoomOpened
     , onZoomClosed = MiniZoomClosed
     , onStart = MiniStartClicked
+    , onStop = MiniStopClicked
     }
 
 
@@ -9673,6 +9778,7 @@ viewTopbar model =
         [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
         , viewNavTabs model.tab
         , viewSearchButton
+        , viewFailureBadge model
         , viewGoldenBadge model
         , viewProjectSwitch
         , case model.notice of
@@ -13615,9 +13721,10 @@ subscriptions model =
           else
             Sub.none
 
-        -- 描き出し中はアトリエ表示中だけログ末尾も追う(1 秒間隔)。
-        -- 進捗パネル(インジケーター+一言+末尾数行)の材料
-        , if model.screen == Editing && model.tab == AtelierTab && Atelier.isBaking model.atelier then
+        -- 描き出し中はログ末尾も追う(1 秒間隔)。進捗パネルの材料であり、
+        -- 失敗の検知 (exitCode) もこれが運ぶので、アトリエ以外のタブでも追い続ける —
+        -- タブを離れている間の失敗が誰にも見えなくなるため
+        , if model.screen == Editing && Atelier.isBaking model.atelier then
             Time.every 1000 (\_ -> RunnerPollTick)
 
           else

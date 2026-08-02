@@ -17,14 +17,16 @@
 
 # Flix コンパイラは engine リポの bin/flix ラッパ経由 (nix store の flix.jar を
 # 借りて手元の java で実行する)。fpkg 取得の rate limit 回避に GITHUB_TOKEN を渡す。
+# FLIX / JLINK / FLIX_JAR は ?= — CI (devbox の無い GitHub Actions) が
+# `make app FLIX="java -jar flix.jar" JLINK=$$JAVA_HOME/bin/jlink …` の形で差し替える。
 ENGINE      ?= /Users/abab/Desktop/flix_game_engine
-FLIX        := $(ENGINE)/bin/flix
+FLIX        ?= $(ENGINE)/bin/flix
 GITHUB_TOKEN ?= $(shell gh auth token 2>/dev/null)
 
 # jlink で最小 JRE を作るための JDK ホーム (devbox の zulu-21)。
-JAVA_BIN  := $(ENGINE)/.devbox/nix/profile/default/bin/java
-JDK_HOME  := $(shell dirname $(shell dirname $(shell readlink -f $(JAVA_BIN))))
-JLINK     := $(JDK_HOME)/bin/jlink
+JAVA_BIN  ?= $(ENGINE)/.devbox/nix/profile/default/bin/java
+JDK_HOME  ?= $(shell dirname $(shell dirname $(shell readlink -f $(JAVA_BIN) 2>/dev/null)))
+JLINK     ?= $(JDK_HOME)/bin/jlink
 
 # 同梱 JRE に入れるモジュール。editor_server が要る分に加えて、この JRE は
 # 同梱 engine がゲームを走らせる・作るのにも使う。後ろ 2 つがその分:
@@ -138,11 +140,12 @@ swap-jre: jre
 	@echo "==> [swap-jre] 完了。Studio を Cmd+Q → 開き直しで反映されます。"
 
 # --- web: Vite build ---
-# devbox 経由 (nodejs@22 + elm)。npm 直呼びは環境が揃わないので使わない。
+# 手元は devbox 経由 (nodejs@22 + elm)。CI は素の node が居るので WEB_NPM=npm で差し替える。
+WEB_NPM ?= devbox run -- npm
 web:
 	@echo "==> [web] resource editor を dist にビルド"
-	cd web && devbox run -- npm install --no-audit --no-fund
-	cd web && devbox run -- npm run build
+	cd web && $(WEB_NPM) install --no-audit --no-fund
+	cd web && $(WEB_NPM) run build
 	@test -d $(WEB_DIST) && echo "==> [web] OK: $(WEB_DIST)" || (echo "!! dist が出力されませんでした" && exit 1)
 
 # --- jre: jlink 最小 JRE ---

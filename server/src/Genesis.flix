@@ -51,7 +51,7 @@ mod Genesis {
             includes = "疑似3Dホバーレース・高速コース・ジャンプ",
             controls = "←→ + アクセル / ブレーキ + ブースト",
             skeleton = "4:3の後方視点で大きなカーブを読む / ブレーキ旋回・加速帯・ジャンプ台 / 壁で反発してエネルギー0なら爆発 / 速度追従の駆動音。終わり: 規定周回で順位と時間を表示(周回数は Doc)",
-            starter = "templates/midnight-apex-starter" }
+            starter = "templates/race-starter" }
        :: { id = "puzzle",  name = "パズル",
             verb = "積んで、そろえて、消す",
             includes = "落ち物パズル・同色そろえ・連鎖",

@@ -19,7 +19,8 @@ mod EngineHome {
         resolve(given, "${System.getProperty("user.home")}")
 
     /// ゲームの make に渡す ENGINE の値。走らせる手を持たない置き場なら None =
-    /// 何も渡さない。
+    /// 何も渡さない。make に倒れる道 (macOS 専用) だけが使う — タスク表 (EngineTasks) の
+    /// 道はシェルを通らないので、この別名貼り (ln) もクォートの心配も要らない。
     // WhyNot: 使えない場所でも渡してしまう、はしない — ゲームの Makefile が持つ既定で
     // 動ける見込みを、こちらの空振りで潰さないため。
     pub def forGames(): Option[String] \ IO =

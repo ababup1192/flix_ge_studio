@@ -27,7 +27,7 @@ mod Changes {
     pub def make(): State \ IO = new JMap()
 
     /// 1 目盛り進めて、いまの様子を返す。冪等 — 何度呼んでも安全。
-    pub def pump(state: State, runner: Runner.State, ports: Game.Ports, dir: String): Json \ IO =
+    pub def pump(state: State, runner: Runner.State, game: Game.Runtime, dir: String): Json \ IO =
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingGolden") |> List.map(fst);
@@ -35,7 +35,7 @@ mod Changes {
         let stale = Journey.staleGalleryOf(dir);
         let baking =
             if (stale and not running) {
-                let (status, _) = launchBake(runner, ports, dir);
+                let (status, _) = launchBake(runner, game, dir);
                 status == 202
             } else
                 running;
@@ -58,12 +58,12 @@ mod Changes {
     /// (生死の確認と POST は焼き係スレッドの中 — PUT /file の応答経路から呼ばれても
     /// ここでは待たない)。覚えていなければ従来の make bake。頼めなかったときの
     /// make bake への切り替えと、古い覚え書きの掃除は Runner.launchRemoteBake の中。
-    def launchBake(runner: Runner.State, ports: Game.Ports, dir: String): (Int32, Json) \ IO =
-        match Game.portOf(ports, dir) {
+    def launchBake(runner: Runner.State, game: Game.Runtime, dir: String): (Int32, Json) \ IO =
+        match Game.portOf(game#ports, dir) {
             case Some(port) =>
                 Runner.launchRemoteBake(runner, dir, port,
-                    alive = () -> Game.isRunning(dir),
-                    forget = () -> Game.forgetPort(ports, dir),
+                    alive = () -> Game.isRunning(game, dir),
+                    forget = () -> Game.forgetPort(game#ports, dir),
                     busy = "ほかの作業が走っています")
             case None =>
                 Runner.launchTarget(runner, dir, "bake", busy = "ほかの作業が走っています")

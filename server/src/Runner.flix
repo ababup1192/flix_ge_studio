@@ -7,12 +7,15 @@
 // (そこだけテストする)。
 
 mod Runner {
+    import java.lang.Process
     import java.lang.ProcessBuilder
+    import java.lang.System
     import java.util.concurrent.Executors
     import java.util.concurrent.Callable
     import java.lang.Exception
     import java.util.ArrayList
     import java.util.concurrent.{ConcurrentHashMap => JMap}
+    import java.util.concurrent.TimeUnit
     import java.io.{File => JFile}
     import java.io.FileOutputStream
     import java.lang.{String => JavaString}
@@ -73,17 +76,32 @@ mod Runner {
         String.lines(body) |> List.head
             |> Option.exists(line -> String.startsWith(prefix = "ok ", line))
 
+    /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
+    /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
+    pub def taskOfTarget(target: String): Option[EngineTasks.Task] =
+        match target {
+            case "debug"           => Some(EngineTasks.Task.Debug)
+            case "bake"            => Some(EngineTasks.Task.Bake)
+            case "atelier-preview" => Some(EngineTasks.Task.AtelierPreview)
+            case _                 => None
+        }
+
     /// ログで覚える行数の上限。
     def logCap(): Int32 = 500
 
-    /// 走行権を取れたら `make target` を起動する。Game (make debug) も別の器でこれを使う。
+    /// 走行権を取れたら対象を起動する。タスク表に載っている対象は make を使わず
+    /// java を直接呼び、載っていない対象は従来の make に倒す (runTarget)。
     pub def launchTarget(state: State, dir: String, target: String, busy: {busy = String}): (Int32, Json) \ IO =
-        launchMake(state, dir, target, Nil, busy)
+        launchTargetEnv(state, dir, target, Nil, busy)
 
-    /// launchTarget の環境変数つきの形: `make target` へ環境変数を渡せる
-    /// (Game が DEBUG_HTTP_PORT を渡すのに使う)。
+    /// launchTarget の環境変数つきの形 (Game が DEBUG_HTTP_PORT を渡すのに使う)。
     pub def launchTargetEnv(state: State, dir: String, target: String, envVars: List[(String, String)], busy: {busy = String}): (Int32, Json) \ IO =
-        launchJob(state, target, () -> runMake(state, dir, target, Nil, envVars), busy)
+        launchTargetEnvHook(state, dir, target, envVars, _ -> checked_ecast(()), busy)
+
+    /// launchTargetEnv の子プロセス受け取りつきの形: 起動した Process を呼び手へ渡す
+    /// (Game が実機再生の生死と停止を自分で握るのに使う)。make に倒れた場合は渡らない。
+    pub def launchTargetEnvHook(state: State, dir: String, target: String, envVars: List[(String, String)], onStart: Process -> Unit \ IO, busy: {busy = String}): (Int32, Json) \ IO =
+        launchJob(state, target, () -> runTarget(state, dir, target, envVars, onStart), busy)
 
     /// launchTarget の一般形: `make target ARG=…` のように追加引数を渡せる (Scaffold が使う)。
     pub def launchMake(state: State, dir: String, target: String, extraArgs: List[String], busy: {busy = String}): (Int32, Json) \ IO =
@@ -98,6 +116,25 @@ mod Runner {
     /// make の器としての Runner を Game へ依存させないため。
     pub def launchRemoteBake(state: State, dir: String, port: Int32, alive: {alive = Unit -> Bool \ IO}, forget: {forget = Unit -> Unit \ IO}, busy: {busy = String}): (Int32, Json) \ IO =
         launchJob(state, "bake", () -> runRemoteBake(state, dir, port, alive, forget), busy)
+
+    /// 走行権を取れたら任意の仕事を裏で走らせ、返ってきた終了コードを記録する
+    /// (NewGame が使う)。取れなければ 409。
+    pub def launchWork(state: State, target: String, work: Unit -> Int32 \ IO, busy: {busy = String}): (Int32, Json) \ IO =
+        launchJob(state, target, () -> finish(state, work()), busy)
+
+    /// ログへ 1 行足す (他の係が同じ器へ進み具合を書けるように)。
+    pub def logLine(state: State, line: String): Unit \ IO = appendLine(state, line)
+
+    /// タスク表の 1 仕事をその場で走らせ、出力をログへ流して終了コードを返す
+    /// (走行権はいじらない — launchWork の仕事の中から使う)。flix.jar が無ければ -1。
+    pub def runTaskLogged(state: State, dir: String, task: EngineTasks.Task): Int32 \ IO =
+        match EngineTasks.exec() {
+            case Some(exec) => runProcess(state, dir, exec, task, Nil, _ -> checked_ecast(()))
+            case None => {
+                appendLine(state, "[runner] engine の bin/flix.jar が見つかりません (${EngineHome.dir()})");
+                -1
+            }
+        }
 
     /// 走行権を取れたら仕事を別スレッドで起こして 202、取れなければ 409。
     /// putIfAbsent が入れ物ごと排他になるので、同時に来た 2 本のうち 1 本だけが通る。
@@ -154,6 +191,99 @@ mod Runner {
         });
         executor.shutdown()
 
+    /// 対象を走らせる道を選ぶ: タスク表に載っているか、ゲームが project.json の
+    /// studioTasks で入口を宣言していて、engine の flix.jar もあるなら java 直呼び。
+    /// どちらも無ければ macOS は従来の make に倒し、make を持たない Windows は
+    /// 走らせられない旨をログに残して終える (黙って 202 のまま何も起きない、を防ぐ)。
+    def runTarget(state: State, dir: String, target: String, envVars: List[(String, String)], onStart: Process -> Unit \ IO): Unit \ IO =
+        let task = match taskOfTarget(target) {
+            case Some(known) => Some(known)
+            case None        => EngineTasks.declaredEntry(dir, target)
+                                    |> Option.map(entry -> EngineTasks.Task.EntryPoint(entry))
+        };
+        match (task, EngineTasks.exec()) {
+            case (Some(found), Some(exec)) => runTask(state, dir, exec, found, envVars, onStart)
+            case _ =>
+                if (EngineTasks.isWindows()) {
+                    appendLine(state, "[runner] この環境では ${target} を走らせる手がありません (engine の bin/flix.jar が無いか、project.json の studioTasks に ${target} の宣言がありません)");
+                    finish(state, -1)
+                } else
+                    runMake(state, dir, target, Nil, envVars)
+        }
+
+    /// タスク表で 1 本走らせて終了を記録する。焼き (Bake) は、パレットを持つゲームなら
+    /// 先にパレットを書き出し、書けなければ焼きを中止する (make の `bake: palette` と
+    /// 同じ順・同じ厳しさ)。持たないゲームでは前段を丸ごと飛ばす — 必ず失敗する
+    /// 1 コンパイルを毎回の焼きに足さない。
+    def runTask(state: State, dir: String, exec: EngineTasks.Exec, task: EngineTasks.Task, envVars: List[(String, String)], onStart: Process -> Unit \ IO): Unit \ IO =
+        if (task == EngineTasks.Task.Bake and EngineTasks.hasPalette(dir)) {
+            let paletteExit = runProcess(state, dir, exec, EngineTasks.Task.Palette, Nil, _ -> checked_ecast(()));
+            if (paletteExit != 0) {
+                appendLine(state, "[runner] パレットが書けなかったので焼きを中止します");
+                finish(state, paletteExit)
+            } else
+                finish(state, runProcess(state, dir, exec, task, envVars, onStart))
+        } else
+            finish(state, runProcess(state, dir, exec, task, envVars, onStart))
+
+    /// タスクを 1 プロセス走らせ、出力を 1 行ずつログへ流し、終了コードを返す
+    /// (走行権や終了記録はいじらない — 呼び手が束ねる)。
+    def runProcess(state: State, dir: String, exec: EngineTasks.Exec, task: EngineTasks.Task, envVars: List[(String, String)], onStart: Process -> Unit \ IO): Int32 \ IO =
+        let args = new ArrayList();
+        foreach (arg <- EngineTasks.argv(exec, EngineTasks.isMac(), task)) discard args.add(arg);
+        let pb = new ProcessBuilder(args);
+        discard pb.directory(new JFile(dir));
+        discard pb.redirectErrorStream(true);
+        let env = pb.environment();
+        discard env.remove("DEVELOPER_DIR");
+        discard env.remove("SDKROOT");
+        foreach (envVar <- EngineTasks.envOf(task) ::: envVars) {
+            let (name, value) = envVar;
+            discard env.put(name, value)
+        };
+        let proc = pb.start();
+        onStart(proc);
+        if (EngineTasks.isHeadless(task)) watchdog(state, proc) else ();
+        let reader = new BufferedReader(new InputStreamReader(proc.getInputStream(), "UTF-8"));
+        pump(state, reader);
+        proc.waitFor()
+
+    /// 窓なしの仕事の見張り番: 「出力が 10 分止まったら」打ち切る — 固まったコンパイルが
+    /// 走行権を握ったまま黙り込むのを防ぐ。合計時間では見ない — 遅い機械の初回コンパイルや
+    /// 大きな焼きは 10 分を超えても、喋り続けている限り正当な仕事だから。
+    /// 実機再生 (窓あり) には付けない — 遊んでいる時間はいくら長くてもよい。
+    def watchdog(state: State, proc: Process): Unit \ IO =
+        stampOutput(state);
+        let executor = Executors.newSingleThreadExecutor();
+        discard executor.submit(new Callable[String] {
+            def call(_this: Callable[String]): String \ IO = {
+                watchLoop(state, proc);
+                ""
+            }
+        });
+        executor.shutdown()
+
+    /// 30 秒おきに様子を見て、最後の出力から 10 分過ぎていたら打ち切る。
+    def watchLoop(state: State, proc: Process): Unit \ IO =
+        if (proc.waitFor(30i64, TimeUnit.SECONDS)) ()
+        else {
+            let silent = System.currentTimeMillis() - lastOutputAt(state);
+            if (silent > 10i64 * 60i64 * 1000i64) {
+                appendLine(state, "[runner] 出力が 10 分止まったままなので打ち切りました");
+                discard proc.destroyForcibly()
+            } else
+                watchLoop(state, proc)
+        }
+
+    /// 最後に出力を見た時刻を書く/読む (見張り番の材料)。記録が無ければ「いま」扱い。
+    def stampOutput(state: State): Unit \ IO =
+        discard state.put("lastLineAt", "${System.currentTimeMillis()}")
+
+    def lastOutputAt(state: State): Int64 \ IO =
+        let value: String = state.get("lastLineAt");
+        if (Object.isNull(value)) System.currentTimeMillis()
+        else Int64.fromString(value) |> Option.getWithDefault(System.currentTimeMillis())
+
     /// プロジェクトの dir で `make target` を走らせ、標準出力+標準エラーを 1 行ずつログへ積む。
     /// この Mac の DEVELOPER_DIR/SDKROOT は nix パスが刺さっていて子プロセスを壊すので外す
     /// (Editor.runCommand と同じ理由)。engine の場所は ENGINE で教える —
@@ -194,7 +324,7 @@ mod Runner {
         if (not (alive#alive)()) {
             (forget#forget)();
             appendLine(state, "[runner] ゲームが走っていないので make bake で焼きます");
-            runMake(state, dir, "bake", Nil, Nil)
+            runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
         } else {
             appendLine(state, "[runner] 走行中のゲームに焼きを頼みます (POST 127.0.0.1:${port}/bake)");
             match postBake(port) {
@@ -206,12 +336,12 @@ mod Runner {
                     } else {
                         (forget#forget)();
                         appendLine(state, "[runner] ゲームが焼けなかったので make bake で焼きます: ${headLineOf(body)}");
-                        runMake(state, dir, "bake", Nil, Nil)
+                        runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
                     }
                 case Err(message) => {
                     (forget#forget)();
                     appendLine(state, "[runner] ゲームに繋がらなかったので make bake で焼きます: ${message}");
-                    runMake(state, dir, "bake", Nil, Nil)
+                    runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
                 }
             }
         }
@@ -251,6 +381,7 @@ mod Runner {
     /// ログへ 1 行足し、上限を超えたぶんを頭から捨てる。書き手は焼き係スレッド 1 本だけなので、
     /// 読み手 (GET /runner/log) は put 単位の一貫したスナップショットを見る。
     def appendLine(state: State, line: String): Unit \ IO =
+        stampOutput(state);
         let current: String = state.get("log");
         let text = if (Object.isNull(current) or current == "") line else "${current}\n${line}";
         let trimmed = keepTail(logCap(), String.lines(text)) |> List.join("\n");

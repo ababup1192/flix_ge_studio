@@ -35,6 +35,7 @@ handlers =
     , onZoomOpen = \_ -> ()
     , onZoomClosed = ()
     , onStart = ()
+    , onStop = ()
     }
 
 

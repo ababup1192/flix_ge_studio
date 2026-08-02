@@ -1481,7 +1481,35 @@ suite =
                         Main.update (Main.GotApiResponse died) starting
                 in
                 after.notice
-                    |> Expect.equal (Just "ゲームを起動できませんでした — ログを確認してください")
+                    |> Expect.equal (Just "ゲームを起動できませんでした — 右上の ⚠ ログ で詳細を見られます")
+        , test "描き出し(runnerLog)のしくじりも、知らせと ⚠ ログの両方になる" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    died =
+                        E.object
+                            [ ( "id", E.int 0 )
+                            , ( "kind", E.string "runnerLog" )
+                            , ( "ok", E.bool True )
+                            , ( "body"
+                              , E.object
+                                    [ ( "running", E.bool False )
+                                    , ( "exitCode", E.int 1 )
+                                    , ( "lines", E.list E.string [ "compile error" ] )
+                                    ]
+                              )
+                            ]
+
+                    ( after, _ ) =
+                        Main.update (Main.GotApiResponse died) m0
+                in
+                ( after.notice, after.lastFailure )
+                    |> Expect.equal
+                        ( Just "プレビューを描き出せませんでした — 右上の ⚠ ログ で詳細を見られます"
+                        , Just { title = "プレビューを描き出せませんでした", lines = [ "compile error" ] }
+                        )
         , test "静かに終わった(exitCode 0)だけなら知らせは出さない" <|
             \() ->
                 let

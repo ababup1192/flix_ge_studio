@@ -8,5 +8,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-sysinfo = "0.33"
 serde = { version = "1", features = ["derive"] }
+
+# プロセス列挙は macOS の実行中ゲーム検知にだけ使う (Windows は server の書き残しが担う)。
+[target.'cfg(unix)'.dependencies]
+sysinfo = "0.33"
+
+# Job Object (子孫プロセスの道連れ) と MessageBox (起動失敗の案内) 用。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_UI_WindowsAndMessaging",
+] }

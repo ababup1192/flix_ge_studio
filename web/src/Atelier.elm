@@ -37,6 +37,7 @@ module Atelier exposing
     , gotCandidates
     , gotGameLog
     , gotExtendPrompt
+    , bakeJustFailed
     , gotGameStatus
     , gotPrompt
     , gotSlots
@@ -375,6 +376,7 @@ type alias Model =
 
     -- プレビューの描き出し(/runner/log)のログ末尾。進捗ミニパネルの材料
     , bakeLines : List String
+    , bakeFailed : Bool
 
     -- 焼きの進捗ミニパネルの全文展開。焼いていない時は
     -- 「作れませんでした」の『ログ』リンクでパネルごと開く印を兼ねる
@@ -414,6 +416,7 @@ init =
     , launch = LaunchIdle
     , launchLogExpanded = False
     , bakeLines = []
+    , bakeFailed = False
     , bakeLogExpanded = False
     , bust = 0
     , lightbox = Nothing
@@ -1155,11 +1158,23 @@ isBaking model =
 -}
 gotBakeLog : GameLog -> Model -> Model
 gotBakeLog log model =
+    let
+        failed =
+            not log.running && Maybe.withDefault 0 log.exitCode /= 0
+    in
     { model
         | bakeLines = log.lines
-        , bakeLogExpanded =
-            model.bakeLogExpanded || (not log.running && Maybe.withDefault 0 log.exitCode /= 0)
+        , bakeFailed = failed
+        , bakeLogExpanded = model.bakeLogExpanded || failed
     }
+
+
+{-| この 1 手で描き出しがしくじりへ落ちたか(前, 後)。Main はこれを見て一度だけ知らせを出す
+(launchJustFailed と同じ約束)。
+-}
+bakeJustFailed : Model -> Model -> Bool
+bakeJustFailed before after =
+    after.bakeFailed && not before.bakeFailed
 
 
 {-| カードのプレビュー領域に何を描くか(ready と baking から決まる規則)。

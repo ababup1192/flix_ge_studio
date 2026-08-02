@@ -89,6 +89,31 @@ server が裏で叩く engine は `EDITOR_ENGINE`。`.app` では app が同梱 
 全手順は engine の CLAUDE.md「テンプレートを足す・更新する」に集約。足したら Studio 側で
 `starter` を差して **`make swap-jar`**。
 
+### Windows 対応とタスク表 (EngineTasks)
+
+server はゲームへの仕事 (実機再生・check・test・焼き・アトリエ試作・新規ゲーム作成) を
+**make を経由せず** `java -jar <engine>/bin/flix.jar …` の直呼びで行う
+(`server/src/EngineTasks.flix` のタスク表 + `NewGame.flix`)。Windows に make/bash/perl が
+無くても全機能が動く。macOS で engine の `bin/flix.jar` が無い開発環境だけ従来の make に倒れる。
+
+- java の場所は app が **EDITOR_JAVA** で server に教える (同梱 JRE)。無ければ PATH の java。
+- ゲーム固有の仕事 (bake-server / gallery-sounds など) は project.json の **studioTasks 宣言**
+  (`"studioTasks": {"bake-server": {"entrypoint": "SfxPreview.main"}}`) で入口を教える。
+  宣言が無い対象は macOS のみ make にフォールバック。
+- ゲームの生存確認は ps/lsof でなく **起動した Process の保持 + pid の書き残し**
+  (`~/.flix_ge_studio/games.json`)。server 再起動でも生きているゲームを引き継ぐ。
+  停止は `POST /game/stop` (ミニプレイヤーの「■ 止める」)。
+- 裏の仕事の失敗はトースト + topbar の「⚠ ログ」バッジ → モーダルで全文が読める。
+  窓なしの仕事は 10 分で打ち切る見張り番つき。子プロセスの出力は UTF-8 固定 (文字化け対策)。
+
+### リリース (GitHub Actions)
+
+`.github/workflows/release.yml` — タグ `v*` の push で macOS の .app (zip) と
+Windows のポータブル zip (`ci/package-windows.ps1` が組み立て) を同じ Release に添付する。
+engine_full.fpkg は engine リポにコミットされていないので ubuntu の prepare ジョブで焼く。
+engine リポが private のままなら Secrets に `ENGINE_REPO_TOKEN` (読み取り PAT) が必要。
+Windows のランチャーログは `%LOCALAPPDATA%\FlixGEStudio\logs\`。
+
 ### テスト
 
 - **web**: `elm-test`（Elm ロジック）と `vitest`（TS）。

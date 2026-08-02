@@ -1,0 +1,159 @@
+# リリースビルド: macOS の .app (zip) と Windows のポータブル zip を作り、
+# タグ (v*) の push なら同じ Release に両方添付する。workflow_dispatch では
+# artifact を作るだけ (動作確認用)。
+#
+# devbox/nix には依存しない:
+#   - Flix コンパイラは GitHub releases の flix.jar を版で固定して取得
+#     (server/flix.toml の flix = と揃えること)
+#   - JDK は zulu 21、node は 22 を actions で入れる
+# engine リポが private の場合は、読み取り PAT を ENGINE_REPO_TOKEN として
+# リポジトリの Secrets に登録しておく (無ければ既定トークンで試す)。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  FLIX_VERSION: "0.75.1"
+
+jobs:
+  # engine_full.fpkg は engine リポにコミットされていない (gitignore)。作るには
+  # symlink + bash の make sync-engine-full が要るので、ubuntu で 1 回だけ焼いて
+  # 両 OS のジョブへ配る。
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ababup1192/flix_game_engine
+          token: ${{ secrets.ENGINE_REPO_TOKEN || github.token }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "21"
+      - name: Fetch flix.jar (bin/flix ラッパの最終フォールバック位置)
+        run: curl -fL -o bin/flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
+      - name: Build engine_full.fpkg
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make sync-engine-full
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-full-fpkg
+          path: engine_full/artifact/engine_full.fpkg
+
+  windows:
+    runs-on: windows-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ababup1192/flix_game_engine
+          token: ${{ secrets.ENGINE_REPO_TOKEN || github.token }}
+          path: engine_repo
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-full-fpkg
+          path: engine_repo/engine_full/artifact
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fetch flix.jar
+        run: curl -fL -o flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
+      - name: Build server fatjar
+        working-directory: server
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: java -jar ../flix.jar build-fatjar
+      - name: Build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Package portable zip
+        shell: pwsh
+        run: ./ci/package-windows.ps1 -EngineRepo "$PWD/engine_repo" -FlixJar "$PWD/flix.jar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: FlixGEStudio-windows-x64.zip
+
+  macos:
+    runs-on: macos-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ababup1192/flix_game_engine
+          token: ${{ secrets.ENGINE_REPO_TOKEN || github.token }}
+          path: engine_repo
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-full-fpkg
+          path: engine_repo/engine_full/artifact
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fetch flix.jar
+        run: curl -fL -o flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+      - name: make app
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          make app
+          ENGINE="$PWD/engine_repo"
+          FLIX="java -jar $PWD/flix.jar"
+          FLIX_JAR="$PWD/flix.jar"
+          JLINK="$JAVA_HOME/bin/jlink"
+          WEB_NPM=npm
+      - name: Zip .app
+        # ditto でないと symlink と署名が壊れる (普通の zip は不可)。
+        run: ditto -c -k --keepParent "app/src-tauri/target/release/bundle/macos/Flix GE Studio.app" FlixGEStudio-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-zip
+          path: FlixGEStudio-macos-arm64.zip
+
+  release:
+    needs: [windows, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            windows-zip/FlixGEStudio-windows-x64.zip
+            macos-zip/FlixGEStudio-macos-arm64.zip
+          body: |
+            ## macOS (Apple Silicon)
+            zip を展開して `Flix GE Studio.app` を Applications へ。
+            未署名のため初回は **右クリック → 開く** (または `xattr -d com.apple.quarantine`)。
+
+            ## Windows (x64)
+            zip を展開して `Flix GE Studio.exe` を実行するだけ (インストール不要)。
+            画面が出ないときは WebView2 ランタイムを導入 (同梱の README-windows.txt 参照)。
+            ログ: `%LOCALAPPDATA%\FlixGEStudio\logs\`

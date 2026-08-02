@@ -149,7 +149,10 @@ mod BakeProxy {
     /// 終わらないコマンドで、誰も読まないパイプが詰まった瞬間に相手が止まる。
     /// 書き出しはファイルへ逃がす(様子を見たい時の置き場にもなる)。
     def launch(dir: String, cmd: String): Bool \ IO =
-        try {
+        // 宣言の手はシェルの文字列 (make debug など Unix 前提)。Windows にはそのシェルも
+        // make も無いので、走らせるふりをせず false = 「起こせなかった」に倒す。
+        if (EngineTasks.isWindows()) false
+        else try {
             let args = new ArrayList();
             discard args.add("/bin/sh");
             discard args.add("-lc");

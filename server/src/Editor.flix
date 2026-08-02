@@ -63,10 +63,9 @@ mod Editor {
         let selection = Projects.makeSelection(initialDir);
         let caches = Caches.make();
         let runner = Runner.make();
-        let game = Game.make();
-        // 起動したゲームの命令口 (dir → DEBUG_HTTP_PORT) の覚え書き。自動検査の焼きを
-        // 走行中のゲームに頼むのに使う。
-        let gamePorts = Game.makePorts();
+        // ゲームまわりの器一式 (走行権・起こした Process・引き継ぎ・命令口)。命令口の
+        // 覚え書きは、自動検査の焼きを走行中のゲームに頼むのに使う。
+        let game = Game.makeRuntime();
         // 新しいゲームづくり (make new-game) 用の走行権。焼き・ゲーム起動と同時でも走れる。
         let scaffold = Runner.make();
         // 検査と基準の自動追随の記録 (見た目が変わった知らせ)。
@@ -81,7 +80,7 @@ mod Editor {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, gamePorts, scaffold, changes, bakeHost, launchGuard, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, changes, bakeHost, launchGuard, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -121,7 +120,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Runner.State, gamePorts: Game.Ports, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -131,7 +130,7 @@ mod Editor {
             case ("OPTIONS", _)        => sendPreflight(exchange)
             case ("GET", "/projects")  => handleProjects(selection, exchange)
             case ("POST", "/project")  => handleSelectProject(selection, bakeHost, readBody(exchange), exchange)
-            case ("GET", "/running-games") => handleRunningGames(exchange)
+            case ("GET", "/running-games") => sendJson(200, Game.runningGamesJson(), exchange)
             // 「新しいゲームをはじめる」の家族一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("GET", "/genesis/families") => sendJson(200, Genesis.familiesJson(), exchange)
@@ -154,7 +153,7 @@ mod Editor {
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
             case ("GET", "/resources") => withProject(selection, exchange, dir -> handleResources(dir, exchange))
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
-            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, gamePorts, readBody(exchange), exchange))
+            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, game, readBody(exchange), exchange))
             // ファイルそのものへの動詞 (新規 / 複製 / 名前を変える / 消す)。
             // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
             // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
@@ -251,11 +250,11 @@ mod Editor {
             })
             // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
             case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
-                discard Changes.pump(changes, runner, gamePorts, dir);
-                sendJson(200, Journey.stateJson(dir, Changes.unseenCount(changes, dir)), exchange)
+                discard Changes.pump(changes, runner, game, dir);
+                sendJson(200, Journey.stateJson(game, dir, Changes.unseenCount(changes, dir)), exchange)
             })
             case ("GET", "/journey/changes") => withProject(selection, exchange, dir ->
-                sendJson(200, Changes.pump(changes, runner, gamePorts, dir), exchange))
+                sendJson(200, Changes.pump(changes, runner, game, dir), exchange))
             case ("POST", "/journey/changes/seen") => withProject(selection, exchange, dir -> {
                 let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
@@ -298,12 +297,16 @@ mod Editor {
                 sendJson(status, json, exchange)
             })
             case ("GET", "/game/status") => withProject(selection, exchange, dir ->
-                sendJson(200, Game.statusJson(dir), exchange))
+                sendJson(200, Game.statusJson(game, dir), exchange))
             case ("POST", "/game/start") => withProject(selection, exchange, dir -> {
-                let (status, json) = Game.start(game, gamePorts, dir);
+                let (status, json) = Game.start(game, dir);
                 sendJson(status, json, exchange)
             })
-            case ("GET", "/game/log") => sendJson(200, Runner.logJson(game), exchange)
+            case ("POST", "/game/stop") => withProject(selection, exchange, dir -> {
+                let (status, json) = Game.stop(game, dir);
+                sendJson(status, json, exchange)
+            })
+            case ("GET", "/game/log") => sendJson(200, Runner.logJson(game#state), exchange)
             case ("GET", _)            => handleStatic(webRoot, path, exchange)
             case ("HEAD", _)           => handleStatic(webRoot, path, exchange)
             case _                     => sendJson(404, errorJson("unknown endpoint: ${methodName} ${path}"), exchange)
@@ -395,70 +398,6 @@ mod Editor {
                     })
                 }), exchange)
         }
-
-    // ── 走っているゲームの検知 ────────────────────────────
-
-    /// GET /running-games — いま走っているゲームプロセスを {pid, cwd} の列で返す。
-    /// ブラウザでも .app でも同じく動くよう、検知はサーバ側 (外部コマンド) で行う。
-    /// 目印は LWJGL/GLFW が要る起動フラグ -XstartOnFirstThread で、かつ headless でない
-    /// (このサーバ自身は headless なので除かれる)。
-    // WhyNot: 失敗を 500 にしない — 検知はバッジ表示という補助機能で、外部コマンドが
-    // 落ちてもエディタ本体は動くべきなので、取れなければ空の一覧で静かに返す (fail-open)。
-    def handleRunningGames(exchange: HttpExchange): Unit \ IO =
-        let games = try {
-            runCommand("ps" :: "-Ao" :: "pid=,command=" :: Nil)
-                |> String.lines
-                |> List.filterMap(parseGameLine)
-                |> List.map(pid -> JObject(Map#{
-                    "pid" => JNumber(JsonCodec.intToBd(pid)),
-                    "cwd" => JString(cwdOf(pid))
-                }))
-        } catch {
-            case _: Exception => Nil
-        };
-        sendJson(200, JObject(Map#{"games" => JArray(List.toVector(games))}), exchange)
-
-    /// ps の 1 行 "  1234 /usr/bin/java …" を見て、ゲームなら pid を返す。
-    /// 先頭の数字が pid、残りがコマンドライン。目印フラグを持ち headless でない行だけ拾う。
-    def parseGameLine(line: String): Option[Int32] =
-        let trimmed = String.trim(line);
-        match String.indexOfLeft(substr = " ", trimmed) {
-            case None      => None
-            case Some(pos) =>
-                let pidText = String.slice(start = 0, end = pos, trimmed);
-                let cmdline = String.slice(start = pos, end = String.length(trimmed), trimmed);
-                let isGame = String.contains(substr = "-XstartOnFirstThread", cmdline)
-                    and not String.contains(substr = "-Djava.awt.headless=true", cmdline);
-                if (isGame) Int32.fromString(pidText) else None
-        }
-
-    /// pid の作業ディレクトリ (cwd)。lsof の -Fn 出力は "n<path>" 行なので、その接頭辞を剥がす。
-    /// 取れなければ空文字 (どのプロジェクトかは分からないが、走っている事実は伝わる)。
-    def cwdOf(pid: Int32): String \ IO =
-        try {
-            runCommand("lsof" :: "-a" :: "-d" :: "cwd" :: "-p" :: "${pid}" :: "-Fn" :: Nil)
-                |> String.lines
-                |> List.filterMap(line ->
-                    if (String.startsWith(prefix = "n", line)) Some(String.dropLeft(1, line)) else None)
-                |> List.head
-                |> Option.getWithDefault("")
-        } catch {
-            case _: Exception => ""
-        }
-
-    /// 外部コマンドを 1 回走らせ、標準出力を UTF-8 文字列で返す。
-    /// この Mac の DEVELOPER_DIR/SDKROOT は nix パスが刺さっていて子プロセスを壊すので外す。
-    def runCommand(args: List[String]): String \ IO =
-        let list = new ArrayList();
-        foreach (arg <- args) discard list.add(arg);
-        let pb = new ProcessBuilder(list);
-        let env = pb.environment();
-        discard env.remove("DEVELOPER_DIR");
-        discard env.remove("SDKROOT");
-        let proc = pb.start();
-        let bytes = proc.getInputStream().readAllBytes();
-        discard proc.waitFor();
-        new JavaString(bytes, "UTF-8")
 
     // ── ファイル・プレビュー系 ────────────────────────────
 
@@ -737,7 +676,7 @@ mod Editor {
     /// 見た目に効き得る素材の保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
     /// この応答が焼きの完了を待つことはない。
-    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, gamePorts: Game.Ports, bodyText: String, exchange: HttpExchange): Unit \ IO =
+    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, game: Game.Runtime, bodyText: String, exchange: HttpExchange): Unit \ IO =
         let parsed = JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
         let fields = parsed
             |> Option.flatMap(obj -> forM (
@@ -770,7 +709,7 @@ mod Editor {
                         let baking =
                             if (Changes.kicksPumpOnSave(relPath))
                                 try {
-                                    discard Changes.pump(changes, runner, gamePorts, dir);
+                                    discard Changes.pump(changes, runner, game, dir);
                                     true
                                 } catch {
                                     case e: Exception => {
