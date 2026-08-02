@@ -8,6 +8,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# OS 標準のフォルダ選択ダイアログ (web がプロジェクト/ワークスペースを選ぶのに使う)。
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 
 # プロセス列挙は macOS の実行中ゲーム検知にだけ使う (Windows は server の書き残しが担う)。

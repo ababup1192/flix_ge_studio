@@ -130,6 +130,9 @@ mod Editor {
             case ("OPTIONS", _)        => sendPreflight(exchange)
             case ("GET", "/projects")  => handleProjects(selection, exchange)
             case ("POST", "/project")  => handleSelectProject(selection, bakeHost, readBody(exchange), exchange)
+            // ワークスペース (ゲームを集める作業フォルダ)。選択画面が読み書きする。
+            case ("GET", "/workspace") => sendJson(200, workspaceJson(), exchange)
+            case ("POST", "/workspace") => handleSetWorkspace(readBody(exchange), exchange)
             case ("GET", "/running-games") => sendJson(200, Game.runningGamesJson(), exchange)
             // 「新しいゲームをはじめる」の家族一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
@@ -335,6 +338,36 @@ mod Editor {
     /// GET /projects — 切替候補の一覧。current は選択中 (未選択は null)、recent は最近開いた順、
     /// found は探索起点 (EDITOR_SCAN_ROOTS、既定 $HOME/Desktop) の深さ 2 までで見つけた
     /// project.json 持ちディレクトリ。
+    /// GET /workspace — 覚えているワークスペース (無ければ null)。
+    def workspaceJson(): Json \ IO =
+        JObject(Map#{
+            "dir" => (Projects.workspace() |> Option.map(JString) |> Option.getWithDefault(JNull))
+        })
+
+    /// POST /workspace {dir} — ワークスペースを決める。無ければ作る (「選ぶ or 作る」の作る側)。
+    /// 作れない・ディレクトリでない、は 400 で理由を返す。
+    def handleSetWorkspace(bodyText: String, exchange: HttpExchange): Unit \ IO =
+        let dirValue = JsonCompat.parse(bodyText)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.flatMap(Map.get("dir"))
+            |> Option.flatMap(JsonCodec.expectString)
+            |> Option.map(String.trim)
+            |> Option.filter(dir -> dir != "");
+        match dirValue {
+            case None => sendJson(400, errorJson("body は {dir} の JSON で指定してください"), exchange)
+            case Some(dir) => {
+                let file = new JFile(dir);
+                discard file.mkdirs();
+                if (not file.isDirectory())
+                    sendJson(400, errorJson("フォルダを作れませんでした: ${dir}"), exchange)
+                else {
+                    let canonical = file.getCanonicalPath();
+                    Projects.saveWorkspace(canonical);
+                    sendJson(200, JObject(Map#{"ok" => JBool(true), "dir" => JString(canonical)}), exchange)
+                }
+            }
+        }
+
     def handleProjects(selection: Projects.Selection, exchange: HttpExchange): Unit \ IO =
         // current も関所つき — 消えたプロジェクトを「選択中」と見せない
         let current = Projects.currentLiveDir(selection);

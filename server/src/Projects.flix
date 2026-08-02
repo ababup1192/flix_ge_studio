@@ -54,12 +54,15 @@ mod Projects {
     // 切替候補の探索
     // ════════════════════════════════════════════════════════
 
-    /// プロジェクト探索の起点。EDITOR_SCAN_ROOTS (PATH と同じ区切り文字)、
-    /// 未設定なら $HOME/Desktop。
+    /// プロジェクト探索の起点。EDITOR_SCAN_ROOTS (PATH と同じ区切り文字) が最優先、
+    /// 無ければ覚えているワークスペース、それも無ければ $HOME/Desktop。
     pub def scanRootsFromEnv(): List[String] \ IO =
         let value = System.getenv("EDITOR_SCAN_ROOTS");
         if (Object.isNull(value) or value == "")
-            "${System.getProperty("user.home")}/Desktop" :: Nil
+            match workspace() {
+                case Some(dir) => dir :: Nil
+                case None      => "${System.getProperty("user.home")}/Desktop" :: Nil
+            }
         else
             splitRoots(separator = System.getProperty("path.separator"), value)
 
@@ -109,15 +112,48 @@ mod Projects {
             |> Option.getWithDefault(dir)
 
     // ════════════════════════════════════════════════════════
-    // 最近開いた履歴 (~/.flix_ge_editor.json)
+    // 設定 (~/.flix_ge_editor.json — 履歴とワークスペースが同居する)
     // ════════════════════════════════════════════════════════
 
     /// 履歴で覚える最大件数。
     def recentLimit(): Int32 = 10
 
-    /// 履歴ファイルの置き場所。
+    /// 設定ファイルの置き場所。
     def recentFile(): String \ IO =
         "${System.getProperty("user.home")}/.flix_ge_editor.json"
+
+    /// 設定ファイルを丸ごと読む。無い・壊れているは空の器 (どの設定も既定に倒れる)。
+    def loadSettings(): Map[String, Json] \ IO =
+        let readResult = run { Fs.ReadFile.read(recentFile()) }
+            with Fs.ReadFile.runWithFileRead
+            with Fs.FileRead.runWithIO;
+        readResult
+            |> Result.toOption
+            |> Option.flatMap(text -> JsonCompat.parse(text))
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.getWithDefault(Map#{})
+
+    /// 設定の 1 項目を書き換えて保存する。他の項目は読み込んだまま保つ —
+    /// 履歴の保存でワークスペースを消さない (逆も)。書けなくてもサーバは続行する。
+    def saveSetting(key: String, value: Json): Unit \ IO =
+        let json = JObject(Map.insert(key, value, loadSettings()));
+        let writeResult = run { Fs.WriteFile.write(str = Util.Json.toPrettyString(2, json) + "\n", recentFile()) }
+            with Fs.WriteFile.runWithFileWrite
+            with Fs.FileWrite.runWithIO;
+        writeResult |> Result.map(_ -> ()) |> Result.getWithDefault(())
+
+    // ── ワークスペース (ゲームを集める作業フォルダ) ────────
+
+    /// 覚えているワークスペース。未設定・実在しないは None (探索は既定に倒れる)。
+    pub def workspace(): Option[String] \ IO =
+        loadSettings()
+            |> Map.get("workspace")
+            |> Option.flatMap(JsonCodec.expectString)
+            |> Option.filter(dir -> new JFile(dir).isDirectory())
+
+    /// ワークスペースを覚える。
+    pub def saveWorkspace(dir: String): Unit \ IO =
+        saveSetting("workspace", JString(dir))
 
     /// dir を履歴の先頭へ積む。既にあれば重複させず先頭へ移し、最新 10 件で打ち切る (純関数)。
     pub def pushRecent(dir: String, recent: List[String]): List[String] =
@@ -130,14 +166,8 @@ mod Projects {
 
     /// 最近開いた順の履歴を読む。ファイルが無い・壊れているは空扱い (履歴が無くても本体は困らない)。
     pub def loadRecent(): List[String] \ IO =
-        let readResult = run { Fs.ReadFile.read(recentFile()) }
-            with Fs.ReadFile.runWithFileRead
-            with Fs.FileRead.runWithIO;
-        readResult
-            |> Result.toOption
-            |> Option.flatMap(text -> JsonCompat.parse(text))
-            |> Option.flatMap(JsonCodec.expectObject)
-            |> Option.flatMap(obj -> Map.get("recent", obj))
+        loadSettings()
+            |> Map.get("recent")
             |> Option.flatMap(json -> recentFromJson(json))
             |> Option.getWithDefault(Nil)
             |> List.take(recentLimit())
@@ -151,9 +181,5 @@ mod Projects {
 
     /// 履歴を書き戻す。書けなくてもサーバは続行する (履歴は補助情報で、本体の切替は済んでいる)。
     pub def saveRecent(recent: List[String]): Unit \ IO =
-        let json = JObject(Map#{"recent" => JArray(recent |> List.map(dir -> JString(dir)) |> List.toVector)});
-        let writeResult = run { Fs.WriteFile.write(str = Util.Json.toPrettyString(2, json) + "\n", recentFile()) }
-            with Fs.WriteFile.runWithFileWrite
-            with Fs.FileWrite.runWithIO;
-        writeResult |> Result.map(_ -> ()) |> Result.getWithDefault(())
+        saveSetting("recent", JArray(recent |> List.map(dir -> JString(dir)) |> List.toVector))
 }

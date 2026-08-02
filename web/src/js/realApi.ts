@@ -69,6 +69,10 @@ export function realApi(base: string): Api {
       switch (kind) {
         case "projects":
           return getJson(`${base}/projects`);
+        case "workspace":
+          return getJson(`${base}/workspace`);
+        case "workspaceSet":
+          return sendJson("POST", `${base}/workspace`, payload);
         case "selectProject": {
           // 400 でも {ok:false, error} の JSON が契約なので、投げずにそのまま Elm へ返す
           // (どの候補の失敗として出すかは Elm 側が覚えている)

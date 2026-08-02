@@ -528,6 +528,7 @@ fn main() {
     let external: tauri::Url = url.parse().expect("URL の生成に失敗");
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(ServerProc(Mutex::new(Some(child))))
         .invoke_handler(tauri::generate_handler![list_running_games])
         .setup(move |app| {

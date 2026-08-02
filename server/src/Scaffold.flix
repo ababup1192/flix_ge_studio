@@ -30,11 +30,15 @@ mod Scaffold {
     /// engine の場所 (Genesis のジャンルカードの絵も同じ解決を使う)。
     pub def engineDir(): String \ IO = EngineHome.dir()
 
-    /// 置き場所の親: body の parent か既定の $HOME/Desktop。
+    /// 置き場所の親: body の parent → 覚えているワークスペース → 既定の $HOME/Desktop。
+    /// ワークスペースを決めてあれば、新しいゲームは黙ってそこに産まれる (Godot と同じ流儀)。
     def parentOf(fields: Map[String, Json]): String \ IO =
-        Map.get("parent", fields)
-            |> Option.flatMap(JsonCodec.expectString)
-            |> Option.getWithDefault("${System.getProperty("user.home")}/Desktop")
+        match Map.get("parent", fields) |> Option.flatMap(JsonCodec.expectString) {
+            case Some(parent) => parent
+            case None         =>
+                Projects.workspace()
+                    |> Option.getWithDefault("${System.getProperty("user.home")}/Desktop")
+        }
 
     /// 応答 (status, body)。検分に全部通ったら engine の `make new-game` を裏で起こして 202。
     /// 走っている最中の重ね掛けは launchMake の走行権が 409 で断る。

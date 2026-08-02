@@ -102,6 +102,10 @@ type alias PickerState =
     { projects : Maybe Api.Projects
     , input : String
 
+    -- ゲームを集める作業フォルダ (Godot のプロジェクト一覧と同じ考え方)。
+    -- Nothing = まだ決めていない (選択画面が「選ぶ/作る」を促す)
+    , workspace : Maybe String
+
     -- POST /project 中の dir(二重送信の抑止と「開いています…」表示)
     , busy : Maybe String
     , error : Maybe String
@@ -115,7 +119,7 @@ type alias PickerState =
 
 emptyPicker : PickerState
 emptyPicker =
-    { projects = Nothing, input = "", busy = Nothing, error = Nothing, runningCwds = [] }
+    { projects = Nothing, input = "", workspace = Nothing, busy = Nothing, error = Nothing, runningCwds = [] }
 
 
 {-| 開いたファイルの隣(foo.json → foo.schema.json)を探した結果。
@@ -1027,6 +1031,8 @@ type Msg
     | PickerInput String
     | ProjectClicked String
     | OpenPathClicked
+    | PickFolderClicked
+    | WorkspacePickClicked
     | FileClicked String
     | DashboardClicked String
     | DashboardClosed
@@ -1461,7 +1467,7 @@ update msg model =
                 ( m2, c2 ) =
                     request "runningGames" (E.object []) m1
             in
-            ( m2, Effect.batch [ c1, c2 ] )
+            ( m2, Effect.batch [ c1, c2, requestInfo "workspace" ] )
 
         BackToEditingClicked ->
             -- 何も再読み込みしない — 開いていた編集へそのまま戻るだけ
@@ -1539,6 +1545,12 @@ update msg model =
 
             else
                 selectProject dir model
+
+        PickFolderClicked ->
+            ( model, requestInfo "pickProjectFolder" )
+
+        WorkspacePickClicked ->
+            ( model, requestInfo "pickWorkspaceFolder" )
 
         FileClicked path ->
             if model.dirty then
@@ -2733,6 +2745,31 @@ update msg model =
 updatePicker : (PickerState -> PickerState) -> Model -> PickerState
 updatePicker f model =
     f model.picker
+
+
+{-| フォルダ選択の応答の読み方。dialog を開けない環境 (素のブラウザ) と
+「開いたが選ばずに閉じた」を区別する。壊れた応答は開けない扱いに倒す。
+-}
+type PickResult
+    = PickUnsupported
+    | PickCanceled
+    | Picked String
+
+
+decodedPick : D.Value -> PickResult
+decodedPick body =
+    case D.decodeValue (D.map2 Tuple.pair (D.field "supported" D.bool) (D.field "dir" (D.nullable D.string))) body of
+        Ok ( False, _ ) ->
+            PickUnsupported
+
+        Ok ( True, Nothing ) ->
+            PickCanceled
+
+        Ok ( True, Just dir ) ->
+            Picked dir
+
+        Err _ ->
+            PickUnsupported
 
 
 selectProject : String -> Model -> ( Model, Effect )
@@ -5726,7 +5763,7 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "runningGames" (E.object []) m1
                     in
-                    ( m2, Effect.batch [ c1, c2 ] )
+                    ( m2, Effect.batch [ c1, c2, requestInfo "workspace" ] )
 
                 Err _ ->
                     ( { model | notice = Just "health 応答が読めませんでした" }, Effect.none )
@@ -5738,8 +5775,54 @@ handleOkByKind env model =
                     , Effect.none
                     )
 
+
                 Err _ ->
                     ( { model | notice = Just "projects 応答が読めませんでした" }, Effect.none )
+
+        "workspace" ->
+            -- 覚えているワークスペース (null = 未設定)。読めない応答は未設定に倒す
+            ( { model
+                | picker =
+                    updatePicker
+                        (\p -> { p | workspace = D.decodeValue (D.field "dir" (D.nullable D.string)) env.body |> Result.withDefault Nothing })
+                        model
+              }
+            , Effect.none
+            )
+
+        "workspaceSet" ->
+            -- 決まったので候補を探し直す (探索の起点がワークスペースに変わる)
+            let
+                dir =
+                    D.decodeValue (D.field "dir" D.string) env.body |> Result.toMaybe
+
+                ( m1, toastFx ) =
+                    showToast "ワークスペースを決めました — 新しいゲームはここに作られます"
+                        { model | picker = updatePicker (\p -> { p | workspace = dir }) model }
+            in
+            ( m1, Effect.batch [ toastFx, requestInfo "projects" ] )
+
+        "pickProjectFolder" ->
+            case decodedPick env.body of
+                PickUnsupported ->
+                    showToast "この環境ではフォルダ選択を開けません — 下の欄にパスを入力してください" model
+
+                PickCanceled ->
+                    ( model, Effect.none )
+
+                Picked dir ->
+                    selectProject dir model
+
+        "pickWorkspaceFolder" ->
+            case decodedPick env.body of
+                PickUnsupported ->
+                    showToast "この環境ではフォルダ選択を開けません — 下の欄にパスを入力してください" model
+
+                PickCanceled ->
+                    ( model, Effect.none )
+
+                Picked dir ->
+                    request "workspaceSet" (E.object [ ( "dir", E.string dir ) ]) model
 
         "runningGames" ->
             case D.decodeValue Api.runningGamesDecoder env.body of
@@ -8311,11 +8394,24 @@ viewPicker canReturn newGame picker =
                       else
                         text ""
                     ]
+              -- ワークスペース = ゲームを集める作業フォルダ (Godot のプロジェクト一覧と同じ考え方)。
+              -- 決めてあれば下の「見つかった」はこの配下、新しいゲームもここに産まれる
+              , viewWorkspaceRow picker.workspace
+
+              , div [ HA.class "picker-open-row mb-2 flex gap-2" ]
+                    [ button
+                        [ HA.class "btn inline-flex items-center gap-1.5"
+                        , HE.onClick PickFolderClicked
+                        ]
+                        [ folderIconSvg, text "フォルダを選んで開く…" ]
+                    ]
+
+              -- OS のダイアログを開けない環境 (ブラウザ開発) 用の逃げ道
               , div [ HA.class "picker-open-row mb-5 flex gap-2" ]
                     [ input
                         [ HA.class "field flex-1"
                         , HA.type_ "text"
-                        , HA.placeholder "プロジェクトのパスを直接入力"
+                        , HA.placeholder "またはパスを直接入力"
                         , HA.value picker.input
                         , HE.onInput PickerInput
                         ]
@@ -8347,6 +8443,34 @@ viewPicker canReturn newGame picker =
                         ++ section "見つかった" projects.found
             ]
         )
+
+
+{-| ワークスペースの行。未設定なら「選ぶ/作る」を促し、設定済みなら場所と変更ボタンを出す。 -}
+viewWorkspaceRow : Maybe String -> Html Msg
+viewWorkspaceRow workspace =
+    case workspace of
+        Nothing ->
+            div [ HA.class "workspace-setup mb-4 rounded border border-accent/40 bg-panel px-3 py-2.5" ]
+                [ div [ HA.class "text-xs text-ink" ] [ text "はじめに、ゲームを集めるワークスペース(作業フォルダ)を決めましょう" ]
+                , div [ HA.class "mt-0.5 text-[11px] text-ink-faint" ] [ text "新しいゲームはここに作られ、Studio はここからゲームを探します" ]
+                , button
+                    [ HA.class "btn mt-2 inline-flex items-center gap-1.5"
+                    , HE.onClick WorkspacePickClicked
+                    ]
+                    [ folderIconSvg, text "ワークスペースを選ぶ / 作る…" ]
+                ]
+
+        Just dir ->
+            div [ HA.class "workspace-row mb-3 flex items-center gap-2 text-[11px] text-ink-faint" ]
+                [ folderIconSvg
+                , span [] [ text "ワークスペース:" ]
+                , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] [ text dir ]
+                , button
+                    [ HA.class "cursor-pointer text-[11px] text-ink-faint underline hover:text-ink-soft"
+                    , HE.onClick WorkspacePickClicked
+                    ]
+                    [ text "変更…" ]
+                ]
 
 
 viewEditing : Model -> Html Msg

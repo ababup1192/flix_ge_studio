@@ -435,7 +435,7 @@ pickerBooted =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" (E.object [ ( "ok", E.bool False ), ( "error", E.string "プロジェクト未選択" ) ])
-        |> ensureKinds [ "projects", "runningGames" ]
+        |> ensureKinds [ "projects", "runningGames", "workspace" ]
         |> respondOk 2 "projects" projectsBody
 
 
@@ -1605,7 +1605,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "プロジェクト"
-                    |> ensureKinds [ "projects", "runningGames" ]
+                    |> ensureKinds [ "projects", "runningGames", "workspace" ]
                     |> ProgramTest.ensureViewHas [ class "picker" ]
                     |> ProgramTest.clickButton "← いまのゲームに戻る"
                     -- 何も再読み込みしない(封筒ゼロ)。開いていた編集がそのまま生きている

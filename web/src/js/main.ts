@@ -38,6 +38,16 @@ const PANE_KEY = "flix_ge_resource_editor.paneWidths";
 
 // 文書編集はサーバへ行かずここで解決する(封筒の流儀はサーバ往復と揃える)
 function handleLocal(kind: string, payload: any): unknown | undefined {
+  // OS 標準のフォルダ選択 (Tauri の dialog プラグイン)。ブラウザ開発では
+  // supported: false を返し、Elm 側がテキスト入力へ倒す。null はキャンセル。
+  if (kind === "pickProjectFolder" || kind === "pickWorkspaceFolder") {
+    const tauri = (window as any).__TAURI__;
+    if (!tauri?.core?.invoke) return Promise.resolve({ supported: false, dir: null });
+    const title = kind === "pickWorkspaceFolder" ? "ワークスペースにするフォルダを選ぶ" : "ゲームのフォルダを選ぶ";
+    return tauri.core
+      .invoke("plugin:dialog|open", { options: { directory: true, title } })
+      .then((dir: unknown) => ({ supported: true, dir: typeof dir === "string" ? dir : null }));
+  }
   if (kind === "copyClipboard") {
     // プロンプトのコピー。navigator.clipboard が無い環境(非 https 等)は
     // 隠しテキストエリア + execCommand に倒す
