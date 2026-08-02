@@ -1180,6 +1180,7 @@ type Msg
     | MiniSceneClicked (Maybe String)
     | MiniStartClicked
     | MiniStopClicked
+    | GameStatusPollTick
     | MiniSwapNoticeExpired
     | MiniZoomOpened String
     | MiniZoomClosed
@@ -1428,6 +1429,9 @@ update msg model =
 
                 _ ->
                     ( m1, Effect.none )
+
+        GameStatusPollTick ->
+            ( model, requestInfo "gameStatus" )
 
         MiniStopClicked ->
             -- 止めるのは server への頼み 1 本 (POST /game/stop)。結果は gameStop の応答で
@@ -6002,8 +6006,11 @@ handleOkByKind env model =
 
         "gameStart" ->
             -- 202(受理)。409(すでに起動中)も realApi が ok に均しており、
-            -- どちらも「起動処理は走っている」— ポーリングが本当の姿を教える
-            ( { model | atelier = Atelier.gameStarted model.atelier }, Effect.none )
+            -- どちらも「起動処理は走っている」— ポーリングが本当の姿を教える。
+            -- 窓が開くまでコンパイルで数分かかることがあり、黙っていると
+            -- 「押したのに何も起きない」に見えるので、待ち時間の見込みを知らせる
+            showToast "ゲームを起動しています — 初回は数分かかることがあります(窓が開くまでお待ちください)"
+                { model | atelier = Atelier.gameStarted model.atelier }
 
         "gameStop" ->
             -- 止まったはずなので状態を取り直す (バッジと「▶ 起動する」の復帰)
@@ -7715,14 +7722,7 @@ view model =
 viewShell : Model -> Html Msg -> Html Msg
 viewShell model content =
     div [ HA.class "app flex h-screen flex-col" ]
-        [ div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
-            [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
-            , viewNavTabs model.tab
-            , viewSearchButton
-            , viewFailureBadge model
-            , viewGoldenBadge model
-            , viewProjectSwitch
-            ]
+        [ viewTopbarRow model []
         , content
 
         -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
@@ -7730,6 +7730,105 @@ viewShell model content =
         , viewGoldenWindow model
         , viewFailureDialog model
         ]
+
+
+{-| 画面上部バーの並び (Unity / VSCode の流儀に合わせる):
+左 = いま開いている物 (題名・タブ)、中央 = プレイ操作、右 = 道具 (検索・ログ・見張り・プロジェクト)。
+extras はトーストなど、バーに同居する固定表示 (無ければ [])。
+-}
+viewTopbarRow : Model -> List (Html Msg) -> Html Msg
+viewTopbarRow model extras =
+    div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
+        ([ div [ HA.class "flex min-w-0 flex-1 items-center gap-3" ]
+            [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
+            , viewNavTabs model.tab
+            ]
+         , viewPlayButton model
+         , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
+            [ viewSearchButton
+            , viewFailureBadge model
+            , viewGoldenBadge model
+            , viewProjectSwitch
+            ]
+         ]
+            ++ extras
+        )
+
+
+{-| topbar のプレイ/停止 (Unity のセンター Play と同じ置き場・Godot と同じ語彙)。
+ミニプレイヤーの奥に置くだけだと気づかれないので、必ず見える位置に出す。
+実体はミニプレイヤーと同じ配線 (二度押しの守りも Atelier 側の状態がそのまま効く)。
+-}
+viewPlayButton : Model -> Html Msg
+viewPlayButton model =
+    if projectGameRunning model then
+        button
+            [ HA.class "btn btn-mini inline-flex shrink-0 items-center gap-1"
+            , HA.title "走っているゲームを止める"
+            , HE.onClick MiniStopClicked
+            ]
+            [ stopIconSvg, text "停止" ]
+
+    else
+        case model.atelier.launch of
+            Atelier.LaunchStarting _ ->
+                button [ HA.class "btn btn-mini shrink-0", HA.disabled True ] [ text "起動しています…" ]
+
+            _ ->
+                button
+                    [ HA.class "btn btn-mini inline-flex shrink-0 items-center gap-1"
+                    , HA.title "ゲームの窓を開いて、遊びながら調整する"
+                    , HE.onClick MiniStartClicked
+                    ]
+                    [ playIconSvg, text "プレイ" ]
+
+
+{-| プレイの三角 (currentColor でボタンの文字色に追従)。 -}
+playIconSvg : Html msg
+playIconSvg =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24", SA.width "11", SA.height "11", SA.fill "currentColor" ]
+        [ Svg.path [ SA.d "M8 5v14l11-7z" ] [] ]
+
+
+{-| 停止の四角。 -}
+stopIconSvg : Html msg
+stopIconSvg =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24", SA.width "11", SA.height "11", SA.fill "currentColor" ]
+        [ Svg.path [ SA.d "M6 6h12v12H6z" ] [] ]
+
+
+{-| 検索の虫眼鏡 (絵文字だと検索に見えないので線画で描く)。 -}
+searchIconSvg : Html msg
+searchIconSvg =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24"
+        , SA.width "12"
+        , SA.height "12"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "2"
+        , SA.strokeLinecap "round"
+        ]
+        [ Svg.circle [ SA.cx "11", SA.cy "11", SA.r "7" ] []
+        , Svg.path [ SA.d "M21 21l-4.5-4.5" ] []
+        ]
+
+
+{-| プロジェクトのフォルダ。 -}
+folderIconSvg : Html msg
+folderIconSvg =
+    Svg.svg
+        [ SA.viewBox "0 0 24 24"
+        , SA.width "12"
+        , SA.height "12"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.8"
+        , SA.strokeLinejoin "round"
+        ]
+        [ Svg.path [ SA.d "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" ] [] ]
 
 
 {-| 裏の仕事 (焼き・起動・新規作成) のしくじりの目印。トーストは数秒で消えるので、
@@ -7814,11 +7913,11 @@ viewGoldenBadge model =
 viewSearchButton : Html Msg
 viewSearchButton =
     button
-        [ HA.class "search-open btn btn-ghost btn-mini shrink-0"
+        [ HA.class "search-open btn btn-ghost btn-mini inline-flex shrink-0 items-center gap-1"
         , HA.title "検索 ⌘⇧F"
         , HE.onClick SearchToggled
         ]
-        [ text "🔍" ]
+        [ searchIconSvg, text "検索" ]
 
 
 viewGoldenWindow : Model -> Html Msg
@@ -7856,10 +7955,11 @@ viewSearchPanel model =
 viewProjectSwitch : Html Msg
 viewProjectSwitch =
     button
-        [ HA.class "project-switch ml-auto shrink-0 cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+        [ HA.class "project-switch inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-ink-faint hover:text-ink-soft"
+        , HA.title "プロジェクト選択に戻る"
         , HE.onClick ProjectPickerOpened
         ]
-        [ text "プロジェクトを選ぶ" ]
+        [ folderIconSvg, text "プロジェクト" ]
 
 
 viewNavTabs : Tab -> Html Msg
@@ -9774,14 +9874,8 @@ effectiveMode model =
 -}
 viewTopbar : Model -> Html Msg
 viewTopbar model =
-    div [ HA.class "topbar flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
-        [ span [ HA.class "title shrink-0 text-xs font-semibold" ] [ text model.title ]
-        , viewNavTabs model.tab
-        , viewSearchButton
-        , viewFailureBadge model
-        , viewGoldenBadge model
-        , viewProjectSwitch
-        , case model.notice of
+    viewTopbarRow model
+        [ case model.notice of
             Just message ->
                 -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔
                 div [ HA.class "pointer-events-none fixed right-3 bottom-10 z-50" ]
@@ -13734,6 +13828,13 @@ subscriptions model =
         -- ゲーム起動と同じ拍)。止まったら購読ごと消える
         , if model.screen == Picker && NewGame.isPolling model.newGame then
             Time.every 2000 (\_ -> ProjectNewPollTick)
+
+          else
+            Sub.none
+
+        -- topbar の再生/停止ボタンが実状とずれないよう、編集中は生死を緩く追う(5 秒間隔)
+        , if model.screen == Editing then
+            Time.every 5000 (\_ -> GameStatusPollTick)
 
           else
             Sub.none

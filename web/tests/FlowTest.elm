@@ -1604,7 +1604,7 @@ suite =
         , test "プロジェクトを選ぶ: 編集中から選択画面を開き、「← いまのゲームに戻る」で編集へ戻れる" <|
             \() ->
                 bootedWith resourcesBody
-                    |> ProgramTest.clickButton "プロジェクトを選ぶ"
+                    |> ProgramTest.clickButton "プロジェクト"
                     |> ensureKinds [ "projects", "runningGames" ]
                     |> ProgramTest.ensureViewHas [ class "picker" ]
                     |> ProgramTest.clickButton "← いまのゲームに戻る"
@@ -2635,16 +2635,16 @@ suite =
                         [ text "ファイル 1 件 / 中身 2 件"
                         , class "search-file"
                         ]
-        , test "横断検索: 🔍 を押しても同じパネルが開く(ショートカットを知らなくても入れる)" <|
+        , test "横断検索: 検索ボタンを押しても同じパネルが開く(ショートカットを知らなくても入れる)" <|
             \() ->
                 openedLevel
                     |> ProgramTest.ensureViewHasNot [ class "search-query" ]
-                    |> ProgramTest.clickButton "🔍"
+                    |> ProgramTest.clickButton "検索"
                     |> ProgramTest.expectViewHas [ class "search-query" ]
-        , test "横断検索: ホーム(アトリエの入口)からも 🔍 で開ける" <|
+        , test "横断検索: ホーム(アトリエの入口)からも検索ボタンで開ける" <|
             \() ->
                 landingWith resourcesBody
-                    |> ProgramTest.clickButton "🔍"
+                    |> ProgramTest.clickButton "検索"
                     |> ProgramTest.expectViewHas [ class "search-query" ]
         , test "横断検索: ファイル名の当たりを押すと、そのファイルを開く" <|
             \() ->
