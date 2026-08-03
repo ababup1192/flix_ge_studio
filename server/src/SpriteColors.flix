@@ -11,7 +11,7 @@ mod SpriteColors {
     /// 封筒の壊れだけ 400。doc 側の問題 (パース失敗等) は 200 の ok:false —
     /// 編集画面はタイピング途中の壊れた JSON を送り得るので HTTP エラーにしない。
     pub def respond(dir: String, body: String): (Int32, Json) \ IO =
-        match (JsonCompat.parse(body) |> Option.flatMap(JsonCodec.expectObject)) {
+        match (DocJson.parse(body) |> Option.flatMap(JsonCodec.expectObject)) {
             case None      => (400, errorJson("body must be a JSON object {path?, doc?}"))
             case Some(obj) => match PreviewUi.docJsonOf(dir, obj) {
                 case Err(PreviewUi.BadRequest.Envelope(message)) => (400, errorJson(message))
@@ -48,7 +48,7 @@ mod SpriteColors {
             ::: (themes |> List.filter(path -> Some(path) == sibling)))
             |> List.filterMap(path -> FileIndex.readInside(dir, path)
                 |> Result.toOption
-                |> Option.flatMap(text -> JsonCompat.parse(String.trim(text)))
+                |> Option.flatMap(text -> DocJson.parse(String.trim(text)))
                 |> Option.flatMap(JsonCodec.expectObject))
 
     /// "assets/novel.sprite.json" → "assets/novel.theme.json"。sprite Doc でないパスは None。

@@ -209,7 +209,7 @@ mod Atelier {
 
     /// project.json の editor.resources 宣言を読む (壊れ・欠けは空 = fail-open)。
     def resourceDecls(dir: String): List[ResourceDecl.Decl] \ IO =
-        JsonCompat.parse(readText("${dir}/project.json"))
+        DocJson.parse(readText("${dir}/project.json"))
             |> Option.flatMap(json -> ResourceDecl.fromProjectJson(json) |> Result.toOption)
             |> Option.map(decls -> decls#resources)
             |> Option.getWithDefault(Nil)
@@ -277,7 +277,7 @@ mod Atelier {
     /// POST /atelier/copy (body: {slot, name}) — スロットの写しを atelier/ に置く自作の出発点。
     /// note を「自作 (元: スロット)」に差し替え、entityId ほか中身はそのまま受け継ぐ。
     pub def copy(dir: String, bodyText: String): (Int32, Json) \ IO =
-        let fields = JsonCompat.parse(bodyText)
+        let fields = DocJson.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.getWithDefault(Map#{});
         match (fieldString("slot", fields), fieldString("name", fields)) {
@@ -297,7 +297,7 @@ mod Atelier {
             let target = "atelier/${copyTargetName(slotName, name)}";
             if (new JFile("${dir}/${target}").isFile())
                 (409, failJson("すでにあります: ${target}"))
-            else match JsonCompat.parse(readText("${dir}/${slot}")) |> Option.flatMap(JsonCodec.expectObject) {
+            else match DocJson.parse(readText("${dir}/${slot}")) |> Option.flatMap(JsonCodec.expectObject) {
                 case None => (400, failJson("素材スロットの JSON が読めません: ${slot}"))
                 case Some(obj) => {
                     let stamped = Map.insert("note", JString("自作 (元: ${slot})"), obj);
@@ -416,7 +416,7 @@ mod Atelier {
 
     /// JSON テキストの最上位オブジェクト (壊れていれば空 = fail-open)。
     def topFields(text: String): Map[String, Json] =
-        JsonCompat.parse(text)
+        DocJson.parse(text)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.getWithDefault(Map#{})
 
@@ -430,7 +430,7 @@ mod Atelier {
     /// 候補の中身をスロットへ書く → atelier/ 直下の候補は消す (名前ごとスロットへ移った =
     /// 採用)。アーカイブの札からの昇格 (復元) は履歴なので消さない — 何も捨てない。
     pub def promote(dir: String, bodyText: String): (Int32, Json) \ IO =
-        let fields = JsonCompat.parse(bodyText)
+        let fields = DocJson.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.getWithDefault(Map#{});
         match (fieldString("candidate", fields), fieldString("slot", fields)) {

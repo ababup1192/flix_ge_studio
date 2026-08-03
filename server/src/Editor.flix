@@ -254,7 +254,7 @@ mod Editor {
             // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
             case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
                 discard Changes.pump(changes, runner, game, dir);
-                sendJson(200, Journey.stateJson(game, dir, Changes.unseenCount(changes, dir)), exchange)
+                sendJson(200, NextStep.stateJson(game, dir, Changes.unseenCount(changes, dir)), exchange)
             })
             case ("GET", "/journey/changes") => withProject(selection, exchange, dir ->
                 sendJson(200, Changes.pump(changes, runner, game, dir), exchange))
@@ -347,7 +347,7 @@ mod Editor {
     /// POST /workspace {dir} — ワークスペースを決める。無ければ作る (「選ぶ or 作る」の作る側)。
     /// 作れない・ディレクトリでない、は 400 で理由を返す。
     def handleSetWorkspace(bodyText: String, exchange: HttpExchange): Unit \ IO =
-        let dirValue = JsonCompat.parse(bodyText)
+        let dirValue = DocJson.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(Map.get("dir"))
             |> Option.flatMap(JsonCodec.expectString)
@@ -391,7 +391,7 @@ mod Editor {
     /// 無い/読めない dir は 400 で断り、選択は変えない。成功したら履歴の先頭へ記録する。
     def handleSelectProject(selection: Projects.Selection, bakeHost: BakeHost.State,
                             bodyText: String, exchange: HttpExchange): Unit \ IO =
-        let dirOpt = JsonCompat.parse(bodyText)
+        let dirOpt = DocJson.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj -> Map.get("dir", obj))
             |> Option.flatMap(JsonCodec.expectString);
@@ -488,7 +488,7 @@ mod Editor {
     def handleResources(dir: String, exchange: HttpExchange): Unit \ IO =
         match FileIndex.readInside(dir, "project.json") {
             case Err(message) => sendJson(400, errorJson("project.json: ${message}"), exchange)
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None => sendJson(400, errorJson("project.json が JSON として読めません"), exchange)
                 case Some(json) => match ResourceDecl.fromProjectJson(json) {
                     case Err(message) => sendJson(400, errorJson(message), exchange)
@@ -623,7 +623,7 @@ mod Editor {
         };
         let fileWarns = files |> List.flatMap(path -> match FileIndex.readInside(dir, path) {
             case Err(_)   => "『${path}』が読めません" :: Nil
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None       => "『${path}』が JSON として読めません(読み込みは既定値へ倒れます)" :: Nil
                 case Some(json) => match JsonCodec.expectObject(json) {
                     case None      => "『${path}』のトップが JSON オブジェクトではありません" :: Nil
@@ -654,7 +654,7 @@ mod Editor {
     def uiFileMeta(dir: String, relPath: String): {composable = Bool, paletteFile = Option[String]} \ IO =
         match FileIndex.readInside(dir, relPath) {
             case Err(_)   => { composable = true, paletteFile = None }
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None       => { composable = true, paletteFile = None }
                 case Some(json) => { composable = not PreviewUi.containsRotation(json),
                                      paletteFile = PreviewUi.paletteRefOf(json) }
@@ -710,7 +710,7 @@ mod Editor {
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
     /// この応答が焼きの完了を待つことはない。
     def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, game: Game.Runtime, bodyText: String, exchange: HttpExchange): Unit \ IO =
-        let parsed = JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
+        let parsed = DocJson.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
         let fields = parsed
             |> Option.flatMap(obj -> forM (
                 relPath <- Map.get("path", obj) |> Option.flatMap(JsonCodec.expectString);

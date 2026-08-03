@@ -126,7 +126,7 @@ mod BakeProxy {
     def bakeCmdOf(dir: String, url: String): Option[String] \ IO =
         match FileIndex.readInside(dir, "project.json") {
             case Err(_)   => None
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None       => None
                 case Some(json) => match ResourceDecl.fromProjectJson(json) {
                     case Err(_)    => None
@@ -233,7 +233,7 @@ mod BakeProxy {
 
     /// {url, file?, path?, query?} を解く。
     def parseRequest(body: String): Option[{url = String, file = Option[String], path = String, args = String, launch = Bool}] =
-        JsonCompat.parse(body)
+        DocJson.parse(body)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj ->
                 Map.get("url", obj)

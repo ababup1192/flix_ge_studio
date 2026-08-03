@@ -43,7 +43,7 @@ mod Scaffold {
     /// 応答 (status, body)。検分に全部通ったら engine の `make new-game` を裏で起こして 202。
     /// 走っている最中の重ね掛けは launchMake の走行権が 409 で断る。
     pub def startNew(state: Runner.State, bodyText: String): (Int32, Json) \ IO =
-        match JsonCompat.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject) {
+        match DocJson.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject) {
             case None => (400, failJson("body は {name, title, w, h} の JSON で指定してください"))
             case Some(fields) =>
                 let name = Map.get("name", fields) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("");

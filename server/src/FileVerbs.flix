@@ -90,13 +90,13 @@ mod FileVerbs {
         }
 
     def oneField(name: String, body: String): Option[String] =
-        JsonCompat.parse(body)
+        DocJson.parse(body)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj -> Map.get(name, obj))
             |> Option.flatMap(JsonCodec.expectString)
 
     def twoFields(first: String, second: String, body: String): Option[(String, String)] =
-        JsonCompat.parse(body)
+        DocJson.parse(body)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(obj -> forM (
                 a <- Map.get(first, obj) |> Option.flatMap(JsonCodec.expectString);

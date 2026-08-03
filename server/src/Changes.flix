@@ -32,7 +32,7 @@ mod Changes {
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingGolden") |> List.map(fst);
         let running = Runner.runningTarget(runner) == Some("bake");
-        let stale = Journey.staleGalleryOf(dir);
+        let stale = NextStep.staleGalleryOf(dir);
         let baking =
             if (stale and not running) {
                 let (status, _) = launchBake(runner, game, dir);

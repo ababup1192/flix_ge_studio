@@ -45,7 +45,7 @@ mod Search {
     pub def declaredPaths(dir: String): List[String] \ IO =
         match FileIndex.readInside(dir, "project.json") {
             case Err(_)   => Nil
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None       => Nil
                 case Some(json) => match ResourceDecl.fromProjectJson(json) {
                     case Err(_)    => Nil
@@ -65,7 +65,7 @@ mod Search {
             Nil
         else match FileIndex.readInside(dir, path) {
             case Err(_)   => Nil
-            case Ok(text) => match JsonCompat.parse(text) {
+            case Ok(text) => match DocJson.parse(text) {
                 case None       => Nil
                 case Some(json) => walk(needle, path, Nil, json)
             }

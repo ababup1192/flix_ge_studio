@@ -58,7 +58,8 @@ all: app
 
 # --- server: Flix fatjar ---
 # build-fatjar は artifact/server.jar を吐く (名前はディレクトリ名由来)。
-# engine の 0.7.1 fpkg は server/lib/ に同梱済み (オフラインで解決できる)。
+# engine の fpkg は server/lib/ に同梱済み (オフラインで解決できる)。engine を上げたら
+# server/flix.toml の version と一緒に、取れた新しい fpkg も git に入れ直す。
 jar:
 	@echo "==> [jar] editor_server を fatjar にビルド"
 	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) build-fatjar
@@ -209,7 +210,9 @@ stage-engine:
 	cp -R $(ENGINE)/templates $(ENGINE_STAGE)/templates
 	# テンプレが抱えている lib/ は複製時に new-game が捨てて engine_full から置き直すので
 	# 運ばない。中身が fpkg だけで対の toml が無く、Tauri のリソース収集が転ぶのもある。
-	find $(ENGINE_STAGE)/templates -type d -name lib -exec rm -rf {} +
+	# build/ も運ばない。コンパイル成果物なので複製先で作り直せるが、放っておくと
+	# テンプレ 1 本で GB 級になり .app がその分ふくらむ。
+	find $(ENGINE_STAGE)/templates -type d \( -name lib -o -name build \) -exec rm -rf {} +
 	cp $(ENGINE)/engine_full/artifact/engine_full.fpkg $(ENGINE_STAGE)/engine_full/artifact/
 	# nix store から写した flix.jar は読み取り専用で来る。後段の Tauri のリソース収集が
 	# Permission denied で死ぬので、書けるようにしてから渡す (jre と同じ手当て)。

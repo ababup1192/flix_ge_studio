@@ -6,7 +6,7 @@ mod TestSpriteColors {
 
     /// 文字列をトップレベルの Map[String, Json] に解く (テスト入力用)。
     def topOf(text: String): Map[String, Json] =
-        match (JsonCompat.parse(text) |> Option.flatMap(JsonCodec.expectObject)) {
+        match (DocJson.parse(text) |> Option.flatMap(JsonCodec.expectObject)) {
             case Some(m) => m
             case None    => bug!("test json does not parse: ${text}")
         }
@@ -14,9 +14,9 @@ mod TestSpriteColors {
     /// legend の値の拾い方: 文字列だけ・重複は 1 つ。legend 欠けは空 (fail-open)。
     @Test
     def testLegendValuesOf(): Unit \ Assert =
-        let doc = JsonCompat.parse("{\"legend\": {\"a\": \"accent\", \"b\": \"accent\", \"x\": \"#102030\", \"n\": 3}}")
+        let doc = DocJson.parse("{\"legend\": {\"a\": \"accent\", \"b\": \"accent\", \"x\": \"#102030\", \"n\": 3}}")
             |> Option.getWithDefault(Json.JNull);
-        let noLegend = JsonCompat.parse("{\"sprites\": {}}") |> Option.getWithDefault(Json.JNull);
+        let noLegend = DocJson.parse("{\"sprites\": {}}") |> Option.getWithDefault(Json.JNull);
         Assert.assertEq(
             expected = (List.sort("accent" :: "#102030" :: Nil), (Nil: List[String])),
             (SpriteColors.legendValuesOf(doc) |> List.sort, SpriteColors.legendValuesOf(noLegend)))

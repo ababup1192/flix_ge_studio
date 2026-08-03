@@ -80,7 +80,7 @@ mod EngineTasks {
     ///   "studioTasks": { "bake-server": { "entrypoint": "SfxPreview.main" } }
     /// 形が違う・無い、は None (宣言なし)。
     pub def entryFromProjectJson(taskName: String, text: String): Option[String] =
-        JsonCompat.parse(text)
+        DocJson.parse(text)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(Map.get("studioTasks"))
             |> Option.flatMap(JsonCodec.expectObject)

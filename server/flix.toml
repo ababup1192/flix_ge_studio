@@ -8,9 +8,8 @@ authors     = ["ababup1192 <ababup1192@gmail.com>"]
 # ブラウザの UI エディタ画面から叩く常駐 HTTP サーバ。対象ゲームプロジェクト
 # (EDITOR_DIR) の project.json / *.ui.json / hitbox.json を読み書きする。
 # GL ウィンドウは開かない (headless)。プレビュー描画は engine_tools の
-# ソフトラスタライザを使う予定のため依存に含めている。
+# ソフトラスタライザを使うため依存に含めている。
+# engine は 3 分割ではなく全部入りの 1 本を取る (分割リポは公開されていない)。
 
 [dependencies]
-"github:ababup1192/flix_engine_core" = { version = "0.7.1", security = "unrestricted" }
-"github:ababup1192/flix_engine_world" = { version = "0.7.1", security = "unrestricted" }
-"github:ababup1192/flix_engine_tools" = { version = "0.7.1", security = "unrestricted" }
+"github:ababup1192/flix_game_engine" = { version = "0.18.0", security = "unrestricted" }

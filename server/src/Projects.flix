@@ -129,7 +129,7 @@ mod Projects {
             with Fs.FileRead.runWithIO;
         readResult
             |> Result.toOption
-            |> Option.flatMap(text -> JsonCompat.parse(text))
+            |> Option.flatMap(text -> DocJson.parse(text))
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.getWithDefault(Map#{})
 

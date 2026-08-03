@@ -229,7 +229,7 @@ mod Game {
             with Fs.FileRead.runWithIO;
         readResult
             |> Result.toOption
-            |> Option.flatMap(JsonCompat.parse)
+            |> Option.flatMap(DocJson.parse)
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.flatMap(Map.get("games"))
             |> Option.flatMap(json -> JsonCodec.decodeList(entryFromJson, json))

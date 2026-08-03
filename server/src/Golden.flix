@@ -42,7 +42,7 @@ mod Golden {
 
     /// POST /golden/bless {name} — 今の焼き上がりを新しい正にする。
     pub def bless(dir: String, body: String): (Int32, Json) \ IO =
-        match (JsonCompat.parse(body)
+        match (DocJson.parse(body)
                 |> Option.flatMap(JsonCodec.expectObject)
                 |> Option.flatMap(obj -> Map.get("name", obj))
                 |> Option.flatMap(JsonCodec.expectString)) {
@@ -159,7 +159,7 @@ mod Golden {
     def readRecord(dir: String): Map[String, Int32] \ IO =
         match FileIndex.readInside(dir, recordPath()) {
             case Err(_)   => Map#{}
-            case Ok(text) => match (JsonCompat.parse(text) |> Option.flatMap(JsonCodec.expectObject)) {
+            case Ok(text) => match (DocJson.parse(text) |> Option.flatMap(JsonCodec.expectObject)) {
                 case None      => Map#{}
                 case Some(obj) => obj |> Map.mapWithKey((_, value) ->
                         JsonCodec.expectInt(value) |> Option.getWithDefault(0))

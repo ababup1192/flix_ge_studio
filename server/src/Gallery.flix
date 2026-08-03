@@ -131,7 +131,7 @@ mod Gallery {
                 (name, diffStatus(inGallery, inGolden, sameBytes))
             })
 
-    /// ディスク上の gallery/ golden/ を見比べる。Changes の自動追随と Journey が使う。
+    /// ディスク上の gallery/ golden/ を見比べる。Changes の自動追随と NextStep が使う。
     pub def diffItemsOf(dir: String): List[(String, String)] \ IO =
         let galleryNames = listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#name);
         let goldenNames = listNamed(suffix = ".png", dir, "golden") |> List.map(entry -> entry#name);
@@ -144,7 +144,7 @@ mod Gallery {
             case _                  => false
         }
 
-    /// gallery/ の PNG の mtime 一覧 (Journey の鮮度判定に使う)。
+    /// gallery/ の PNG の mtime 一覧 (NextStep の鮮度判定に使う)。
     pub def galleryMtimes(dir: String): List[Int64] \ IO =
         listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#mtime)
 }
