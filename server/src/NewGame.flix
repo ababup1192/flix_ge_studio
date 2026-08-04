@@ -189,7 +189,8 @@ mod NewGame {
         };
         if (not ok) Runner.logLine(state, "[new-game] git が見つからないので git init は飛ばしました (無くても遊べます)") else ()
 
-    /// AGENTS.md の生成と skills の配布 (make の sync-agents と同じ結果)。
+    /// AGENTS の配布一式 (make の sync-agents と同じ結果):
+    /// AGENTS.md の生成・CLAUDE.md (@AGENTS.md の 1 行)・skills・rules・lint 4 本。
     def syncAgents(state: Runner.State, request: Request): Unit \ IO =
         try {
             let engineVersion = versionFromToml(readText("${request#engine}/flix.toml")) |> Option.getWithDefault("?");
@@ -197,6 +198,7 @@ mod NewGame {
             let localPath = "${request#gameDir}/AGENTS.local.md";
             let localPart = if (new JFile(localPath).isFile()) Some(readText(localPath)) else None;
             writeText("${request#gameDir}/AGENTS.md", agentsText(engineVersion, core, localPart));
+            writeText("${request#gameDir}/CLAUDE.md", "@AGENTS.md\n");
             let skillEntries = new JFile("${request#engine}/agents-pack/skills").listFiles();
             if (Object.isNull(skillEntries)) ()
             else Array.toList(skillEntries)
@@ -209,7 +211,17 @@ mod NewGame {
                     else Array.toList(files)
                         |> List.filter(file -> file.isFile())
                         |> List.forEach(file -> copyFile(file.getPath(), "${target}/${file.getName()}"))
-                })
+                });
+            let rulesTarget = "${request#gameDir}/.claude/rules";
+            discard new JFile(rulesTarget).mkdirs();
+            let ruleEntries = new JFile("${request#engine}/agents-pack/rules").listFiles();
+            if (Object.isNull(ruleEntries)) ()
+            else Array.toList(ruleEntries)
+                |> List.filter(file -> file.isFile())
+                |> List.forEach(file -> copyFile(file.getPath(), "${rulesTarget}/${file.getName()}"));
+            discard new JFile("${request#gameDir}/bin").mkdirs();
+            foreach (lint <- "lint-view.py" :: "lint-palette.py" :: "lint-sprite.py" :: "lint-anim.py" :: Nil)
+                copyFile("${request#engine}/bin/${lint}", "${request#gameDir}/bin/${lint}")
         } catch {
             case _: Exception =>
                 Runner.logLine(state, "[new-game] AGENTS の配布に失敗しました (ゲーム自体は使えます)")
