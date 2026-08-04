@@ -67,10 +67,14 @@ mod EngineTasks {
     /// 起動に失敗する) なので、macOS のときだけ付ける。
     /// 出力の文字コードは UTF-8 に固定する — Windows の JVM は放っておくと土地の文字コード
     /// (CP932 など) で喋り、読み手 (UTF-8 固定) の側で文字化けするため。
+    /// -Xss16m は削らない。Flix の型検査は式の深さぶん再帰するので、スレッドの既定スタックが
+    /// 1MB の Windows では少し大きいゲームで StackOverflowError になる
+    /// (macOS/arm64 は既定 2MB なので手元では気づけない)。
     pub def argv(exec: Exec, isMacHost: Bool, task: Task): List[String] =
         (exec#javaExe :: Nil)
             ::: (if (isMacHost) "-XstartOnFirstThread" :: Nil else Nil)
             ::: (if (isHeadless(task)) "-Djava.awt.headless=true" :: Nil else Nil)
+            ::: ("-Xss16m" :: Nil)
             ::: ("-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil)
             ::: ("-jar" :: exec#flixJar :: Nil)
             ::: flixArgs(task)

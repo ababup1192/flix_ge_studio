@@ -105,6 +105,10 @@ server はゲームへの仕事 (実機再生・check・test・焼き・アト�
   停止は `POST /game/stop` (ミニプレイヤーの「■ 止める」)。
 - 裏の仕事の失敗はトースト + topbar の「⚠ ログ」バッジ → モーダルで全文が読める。
   窓なしの仕事は 10 分で打ち切る見張り番つき。子プロセスの出力は UTF-8 固定 (文字化け対策)。
+- **flix を呼ぶときは必ず `-Xss16m`**（タスク表の argv と CI の両方）。Flix の型検査は式の
+  深さぶん再帰するので、スレッドの既定スタックが 1MB の Windows では少し大きいコードで
+  `StackOverflowError` になる。macOS/arm64 は既定 2MB なので手元では気づけない
+  （手元で再現するなら `java -Xss1m -jar …/flix.jar check`）。
 
 ### リリース (GitHub Actions)
 
