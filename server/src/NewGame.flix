@@ -163,7 +163,9 @@ mod NewGame {
             }
         }
 
-    /// engine 手元の lib/cache・lib/external があれば写す (Maven 依存の初回ダウンロード回避)。
+    /// engine の lib/cache・lib/external があれば写す (Maven 依存の初回ダウンロード回避)。
+    /// 種が無いときに黙って続けないのは、そのときだけ初回ビルドが Maven へ出て、
+    /// 回線が細い所や proxy の内側では何分も無言で止まって見えるため。
     def seedLibDirs(state: Runner.State, request: Request): Unit \ IO =
         foreach (sub <- "cache" :: "external" :: Nil) {
             let src = "${request#engine}/lib/${sub}";
@@ -171,7 +173,10 @@ mod NewGame {
                 copyTree(skipTopLevel = Set#{}, src, "${request#gameDir}/lib/${sub}")
             else ()
         };
-        Runner.logLine(state, "[new-game] lib/ を種付けしました (engine 手元に無い Maven 依存は初回ビルドで自動ダウンロードされます)")
+        if (new JFile("${request#engine}/lib/cache").isDirectory())
+            Runner.logLine(state, "[new-game] lib/ を種付けしました (初回ビルドは Maven に出ずに済みます)")
+        else
+            Runner.logLine(state, "[new-game] Maven の種が同梱されていません — 初回ビルドで lwjgl を取り寄せます (回線によっては数分かかります)")
 
     /// git init を試す。git が無い環境 (Windows のポータブル配布など) では
     /// 1 行残して続行 — 産むのに git は必須ではない。
