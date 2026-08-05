@@ -335,6 +335,11 @@ export function realApi(base: string): Api {
           return sendJson("POST", `${base}/game/stop`, {});
         case "gameLog":
           return getJson(`${base}/game/log`);
+        case "cleanLocks":
+          // こまったときの掃除: 中断が lib/cache に残した *.lock を消す
+          return sendJson("POST", `${base}/maintenance/clean-locks`, {});
+        case "clearFontCache":
+          return sendJson("POST", `${base}/maintenance/clear-font-cache`, {});
         case "previewItems":
           return sendJson("POST", `${base}/preview/items`, payload);
         case "previewUi":

@@ -1177,6 +1177,8 @@ type Msg
     | ChangesModalClosed
     | ScenesOpened
     | ScenesClosed
+    | CleanLocksClicked
+    | ClearFontCacheClicked
     | AtelierMsg Atelier.Msg
     | AtelierOverlayTick
     | AtelierBakePollTick
@@ -1304,6 +1306,12 @@ update msg model =
 
         ScenesClosed ->
             ( { model | scenes = Nothing }, Effect.none )
+
+        CleanLocksClicked ->
+            request "cleanLocks" (E.object []) model
+
+        ClearFontCacheClicked ->
+            request "clearFontCache" (E.object []) model
 
         AtelierMsg amsg ->
             let
@@ -6099,6 +6107,24 @@ handleOkByKind env model =
             -- 止まったはずなので状態を取り直す (バッジと「▶ 起動する」の復帰)
             ( model, requestInfo "gameStatus" )
 
+        "cleanLocks" ->
+            -- 消えた数を告げる。0 件は「詰まりは無かった」の便り(押し損ではない)
+            let
+                removed =
+                    Result.withDefault 0 (D.decodeValue (D.field "removed" D.int) env.body)
+            in
+            showToast
+                (if removed == 0 then
+                    "ビルドの詰まりは見つかりませんでした(lock は残っていません)"
+
+                 else
+                    "掃除しました — 残っていた lock を " ++ String.fromInt removed ++ " 件消しました"
+                )
+                model
+
+        "clearFontCache" ->
+            showToast "フォントの焼き置きを捨てました — 次の起動は焼き直しで少し待ちます" model
+
         "gameLog" ->
             case D.decodeValue Atelier.gameLogDecoder env.body of
                 Ok log ->
@@ -8116,7 +8142,7 @@ viewHome model =
         [ Html.map JourneyMsg (Journey.view model.journey)
         , viewLaunchLine model
         , viewDrawingLine model
-        , div [ HA.class "mt-auto flex justify-center pt-10" ]
+        , div [ HA.class "mt-auto flex flex-wrap items-center justify-center gap-5 pt-10" ]
             [ button
                 [ HA.class "all-scenes-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
                 , HE.onClick ScenesOpened
@@ -8129,6 +8155,20 @@ viewHome model =
                         "全場面を見る"
                     )
                 ]
+
+            -- こまったときの掃除。静かな一言に留める(健康なときは目に入らなくてよい)
+            , button
+                [ HA.class "clean-locks-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HA.title "ビルドが固まる・始まらないときに。中断が残した lock ファイルを消します"
+                , HE.onClick CleanLocksClicked
+                ]
+                [ text "ビルドの詰まりを掃除" ]
+            , button
+                [ HA.class "clear-font-cache-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HA.title "字が乱れるときに。フォントの焼き置きを捨てます(次の起動は焼き直しで少し遅くなります)"
+                , HE.onClick ClearFontCacheClicked
+                ]
+                [ text "フォントの焼き置きを捨てる" ]
             ]
         , viewChangesModal model
         , viewScenesModal model

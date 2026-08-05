@@ -310,6 +310,16 @@ mod Editor {
                 sendJson(status, json, exchange)
             })
             case ("GET", "/game/log") => sendJson(200, Runner.logJson(game#state), exchange)
+            // こまったときの掃除。lock はプロジェクトの持ち物、フォントの焼き置きは
+            // 全ゲーム共有 (どのプロジェクトから捨てても同じ 1 か所)。
+            case ("POST", "/maintenance/clean-locks") => withProject(selection, exchange, dir -> {
+                let (status, json) = Maintenance.cleanLocks(dir);
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/maintenance/clear-font-cache") => {
+                let (status, json) = Maintenance.clearFontCache();
+                sendJson(status, json, exchange)
+            }
             case ("GET", _)            => handleStatic(webRoot, path, exchange)
             case ("HEAD", _)           => handleStatic(webRoot, path, exchange)
             case _                     => sendJson(404, errorJson("unknown endpoint: ${methodName} ${path}"), exchange)
