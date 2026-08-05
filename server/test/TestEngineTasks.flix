@@ -3,7 +3,8 @@
 //
 // 期待する引数列は engine の bin/flix ラッパが展開していたコマンドと同じ形 + UTF-8 固定:
 //   java [-XstartOnFirstThread(mac)] [-Djava.awt.headless=true(窓なし)]
-//        -Xss16m -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar flix.jar <flix引数>
+//        -Xss16m -XX:MaxRAMPercentage=50 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8
+//        -jar flix.jar <flix引数>
 
 mod TestEngineTasks {
     use EngineTasks.Task
@@ -15,7 +16,7 @@ mod TestEngineTasks {
     @Test
     def testArgv(): Unit \ Assert =
         let exec = {javaExe = "/jre/bin/java", flixJar = "/engine/bin/flix.jar"};
-        let always = "-Xss16m" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
+        let always = "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
         Assert.assertEq(
             expected = (
                 ("/jre/bin/java" :: "-XstartOnFirstThread" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
@@ -32,7 +33,7 @@ mod TestEngineTasks {
     def testArgvKeepsSpaces(): Unit \ Assert =
         let exec = {javaExe = "C:\\Program Files\\Studio\\jre\\bin\\java.exe", flixJar = "C:\\Program Files\\Studio\\engine\\bin\\flix.jar"};
         Assert.assertEq(
-            expected = "C:\\Program Files\\Studio\\jre\\bin\\java.exe" :: "-Djava.awt.headless=true" :: "-Xss16m" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: "-jar" :: "C:\\Program Files\\Studio\\engine\\bin\\flix.jar" :: "check" :: Nil,
+            expected = "C:\\Program Files\\Studio\\jre\\bin\\java.exe" :: "-Djava.awt.headless=true" :: "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: "-jar" :: "C:\\Program Files\\Studio\\engine\\bin\\flix.jar" :: "check" :: Nil,
             EngineTasks.argv(exec, false, Task.Check))
 
     /// flix コンパイラへの引数: 標準の仕事は決まった形、EntryPoint は指名した入口で走る。

@@ -70,11 +70,15 @@ mod EngineTasks {
     /// -Xss16m は削らない。Flix の型検査は式の深さぶん再帰するので、スレッドの既定スタックが
     /// 1MB の Windows では少し大きいゲームで StackOverflowError になる
     /// (macOS/arm64 は既定 2MB なので手元では気づけない)。
+    /// -XX:MaxRAMPercentage=50 も削らない。flix run はコンパイラとゲームが 1 つの JVM を
+    /// 分け合い、コンパイラの残した山がヒープに居座ったままゲームが走る。既定の上限
+    /// (物理メモリの 25%) だとメモリ 8GB の機械で 2GB しか無く、遊んでいる間 GC が頻発して
+    /// カクつく。50% なら Studio 本体と同居しても押し出し合わない。
     pub def argv(exec: Exec, isMacHost: Bool, task: Task): List[String] =
         (exec#javaExe :: Nil)
             ::: (if (isMacHost) "-XstartOnFirstThread" :: Nil else Nil)
             ::: (if (isHeadless(task)) "-Djava.awt.headless=true" :: Nil else Nil)
-            ::: ("-Xss16m" :: Nil)
+            ::: ("-Xss16m" :: "-XX:MaxRAMPercentage=50" :: Nil)
             ::: ("-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil)
             ::: ("-jar" :: exec#flixJar :: Nil)
             ::: flixArgs(task)
