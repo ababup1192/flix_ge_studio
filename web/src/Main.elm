@@ -474,6 +474,11 @@ type alias Model =
     -- 「全場面を見る」モーダル(Nothing = 閉じている)
     , scenes : Maybe Scenes
 
+    -- 「ゲームのログ」モーダル(Nothing = 閉じている、Just = 表示中の行)。
+    -- ターミナルを開けない人(特に Windows)が、遊んでいる間のログを画面だけで
+    -- 見られるようにする口
+    , gameLogView : Maybe (List String)
+
     -- アトリエの「候補選び」(swap)。調整(Doc エディタ)は従来どおり Main が持つ
     , atelier : Atelier.Model
 
@@ -882,6 +887,7 @@ init _ =
         , changesAvailable = True
         , changesModal = Nothing
         , scenes = Nothing
+        , gameLogView = Nothing
         , atelier = Atelier.init
         , miniPlayerOpen = False
         , miniPin = Nothing
@@ -1177,6 +1183,9 @@ type Msg
     | ChangesModalClosed
     | ScenesOpened
     | ScenesClosed
+    | GameLogViewOpened
+    | GameLogViewClosed
+    | GameLogViewRefreshClicked
     | CleanLocksClicked
     | ClearFontCacheClicked
     | AtelierMsg Atelier.Msg
@@ -1306,6 +1315,15 @@ update msg model =
 
         ScenesClosed ->
             ( { model | scenes = Nothing }, Effect.none )
+
+        GameLogViewOpened ->
+            ( { model | gameLogView = Just [] }, requestInfo "gameLogView" )
+
+        GameLogViewClosed ->
+            ( { model | gameLogView = Nothing }, Effect.none )
+
+        GameLogViewRefreshClicked ->
+            ( model, requestInfo "gameLogView" )
 
         CleanLocksClicked ->
             request "cleanLocks" (E.object []) model
@@ -6107,6 +6125,21 @@ handleOkByKind env model =
             -- 止まったはずなので状態を取り直す (バッジと「▶ 起動する」の復帰)
             ( model, requestInfo "gameStatus" )
 
+        "gameLogView" ->
+            -- 閉じた後に届いた応答は捨てる(閉じたモーダルを開き直さない)
+            case model.gameLogView of
+                Nothing ->
+                    ( model, Effect.none )
+
+                Just _ ->
+                    let
+                        log =
+                            D.decodeValue Atelier.gameLogDecoder env.body
+                                |> Result.map .lines
+                                |> Result.withDefault []
+                    in
+                    ( { model | gameLogView = Just log }, Effect.none )
+
         "cleanLocks" ->
             -- 消えた数を告げる。0 件は「詰まりは無かった」の便り(押し損ではない)
             let
@@ -8156,6 +8189,14 @@ viewHome model =
                     )
                 ]
 
+            -- ターミナル無しでログを見る口(起動後のログは実況行から消えるため)
+            , button
+                [ HA.class "game-log-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                , HA.title "ゲームの起動コマンドと実行中の出力を見ます(ターミナル不要)"
+                , HE.onClick GameLogViewOpened
+                ]
+                [ text "ゲームのログ" ]
+
             -- こまったときの掃除。静かな一言に留める(健康なときは目に入らなくてよい)
             , button
                 [ HA.class "clean-locks-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
@@ -8172,6 +8213,7 @@ viewHome model =
             ]
         , viewChangesModal model
         , viewScenesModal model
+        , viewGameLogModal model
         ]
 
 
@@ -8294,6 +8336,43 @@ changePane label url =
         [ div [ HA.class "mb-1 text-[11px] font-semibold text-ink-faint" ] [ text label ]
         , img [ HA.class "scene-shot w-full rounded border border-edge bg-well", HA.src url, HA.alt label ] []
         ]
+
+
+{-| 「ゲームのログ」モーダル。実機再生の起動コマンドと出力の尻尾(500 行)を出す。
+自動では追わない — 「更新」で取り直す(遊んでいる裏で毎秒引っ張らない)。
+-}
+viewGameLogModal : Model -> Html Msg
+viewGameLogModal model =
+    case model.gameLogView of
+        Nothing ->
+            text ""
+
+        Just lines ->
+            Html.node "sl-dialog"
+                [ HA.class "game-log-dialog"
+                , HE.on "sl-request-close" (D.succeed GameLogViewClosed)
+                , HA.attribute "label" "ゲームのログ"
+                , HA.attribute "open" ""
+                , HA.attribute "style" "--width: 48rem"
+                ]
+                [ if List.isEmpty lines then
+                    div [ HA.class "text-xs text-ink-soft" ]
+                        [ text "まだログがありません。ゲームを起動すると、起動コマンドと出力がここに残ります。" ]
+
+                  else
+                    div [ HA.class "max-h-[60vh] overflow-y-auto rounded border border-edge bg-well p-2" ]
+                        (lines
+                            |> List.map
+                                (\line ->
+                                    div [ HA.class "whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-ink-soft" ]
+                                        [ text line ]
+                                )
+                        )
+                , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
+                    [ button [ HA.class "btn", HE.onClick GameLogViewRefreshClicked ] [ text "更新" ]
+                    , button [ HA.class "btn", HE.onClick GameLogViewClosed ] [ text "閉じる" ]
+                    ]
+                ]
 
 
 {-| 全場面モーダル。gallery/ の絵を格子で眺めるだけ(操作は無い)。 -}
