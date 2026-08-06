@@ -652,8 +652,8 @@ viewConfirm family model =
         div [ HA.class "text-[11px] leading-relaxed text-ink-soft" ]
             [ span [ HA.class "font-semibold text-ink" ] [ text family.name ]
             , text
-                (if family.id == "action" then
-                    " — テンプレートは、いちばん小さいアクション「ブロック崩し」から。名前を決めるだけで生まれます。"
+                (if family.id == "blank" then
+                    " — いちばん小さい骨組み(主人公を動かせるだけ)の複製から。名前を決めるだけで生まれます。"
 
                  else
                     " — 公式テンプレートつき。名前を決めるだけで生まれます。"

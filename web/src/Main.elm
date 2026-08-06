@@ -64,6 +64,7 @@ import Sources
 import Time
 import Table
 import Url
+import Widgets.KeyCapture as KeyCapture
 import Widgets.Weights as Weights
 import Wizard
 
@@ -819,6 +820,9 @@ type alias Model =
     -- weights の行追加入力(Nothing = 閉じている)
     , weightsAdd : Maybe WeightsAddState
 
+    -- キー割り当て欄(widget "key")の聞き取り(Nothing = 聞いていない)
+    , keyCapture : Maybe KeyCaptureState
+
     -- 横断辞書: どのファイル向けに(crossFor)何を読み込んだか。ref の参照先が
     -- 別ファイルに住む時のフォーム候補・lint・逆参照・改名の素
     , crossFor : Maybe String
@@ -859,6 +863,17 @@ type alias WeightsAddState =
     { path : List Seg
     , text : String
     , error : Maybe String
+    }
+
+
+{-| キー割り当て欄の聞き取り。開始時の列と選択肢を抱えて、次の 1 打で
+列を丸ごと書き戻す。index は差し替える行(Nothing = 末尾へ追加)。
+-}
+type alias KeyCaptureState =
+    { path : List Seg
+    , index : Maybe Int
+    , items : List String
+    , choices : List String
     }
 
 
@@ -1010,6 +1025,7 @@ init _ =
         , textures = []
         , texturesReq = Nothing
         , weightsAdd = Nothing
+        , keyCapture = Nothing
         , crossFor = Nothing
         , crossSlots = []
         , portraits = Dict.empty
@@ -1134,6 +1150,9 @@ type Msg
     | WeightsAddTyped String
     | WeightsAddCommitted
     | WeightsAddCancelled
+    | KeyCaptureStarted KeyCaptureState
+    | KeyCaptureKeyed String
+    | KeyCaptureCancelled
     | UsagesToggled String
     | UsageJumped { sectionKey : String, entry : Maybe EntrySel }
     | RenameStarted { sectionKey : String, oldId : String }
@@ -2320,6 +2339,31 @@ update msg model =
 
         WeightsAddCancelled ->
             ( { model | weightsAdd = Nothing }, Effect.none )
+
+        KeyCaptureStarted state ->
+            ( { model | keyCapture = Just state }, Effect.none )
+
+        KeyCaptureKeyed code ->
+            case model.keyCapture of
+                Nothing ->
+                    ( model, Effect.none )
+
+                Just cap ->
+                    case KeyCapture.decide { choices = cap.choices, items = cap.items, index = cap.index } code of
+                        KeyCapture.Pending ->
+                            ( model, Effect.none )
+
+                        KeyCapture.Dismissed ->
+                            ( { model | keyCapture = Nothing }, Effect.none )
+
+                        KeyCapture.Rejected reason ->
+                            showToast reason { model | keyCapture = Nothing }
+
+                        KeyCapture.Assigned items ->
+                            queueEdit (listTextPayload cap.path items) { model | keyCapture = Nothing }
+
+        KeyCaptureCancelled ->
+            ( { model | keyCapture = Nothing }, Effect.none )
 
         UsagesToggled key ->
             ( { model
@@ -6359,6 +6403,7 @@ handleOkByKind env model =
                                     , sounds = []
                                     , texturesReq = Nothing
                                     , weightsAdd = Nothing
+                                    , keyCapture = Nothing
                                     , crossFor = Nothing
                                     , crossSlots = []
                                     , portraits = Dict.empty
@@ -12510,6 +12555,9 @@ viewControl model path control =
         SchemaForm.ListTextControl items ->
             viewListText model path items
 
+        SchemaForm.KeyListControl keys ->
+            viewKeyList model path keys
+
         SchemaForm.WeightsControl w ->
             viewWeights model path w
 
@@ -13042,15 +13090,6 @@ viewListTextRow model path items index value =
             , kind = ListTextDraft { fieldPath = path, index = index, items = items }
             , original = value
             }
-
-        listButton label title_ enabled edit =
-            button
-                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
-                , HA.title title_
-                , HA.disabled (not enabled)
-                , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit edit items)))
-                ]
-                [ text label ]
     in
     div [ HA.class "listtext-row mb-1 flex items-center gap-1" ]
         [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
@@ -13065,8 +13104,8 @@ viewListTextRow model path items index value =
             , onDraftKeys seed False
             ]
             []
-        , listButton "↑" "1 つ上へ" (index > 0) (SchemaForm.MoveLine index -1)
-        , listButton "↓" "1 つ下へ" (index < List.length items - 1) (SchemaForm.MoveLine index 1)
+        , listEditButton path items "↑" "1 つ上へ" (index > 0) (SchemaForm.MoveLine index -1)
+        , listEditButton path items "↓" "1 つ下へ" (index < List.length items - 1) (SchemaForm.MoveLine index 1)
         , button
             [ HA.class "listtext-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
             , HA.title "この行を削除"
@@ -13074,6 +13113,160 @@ viewListTextRow model path items index value =
             ]
             [ text "✕" ]
         ]
+
+
+{-| 文字列の列の行操作(↑↓)の小ボタン。どの操作も「新しい列を丸ごと書く」
+1 本の編集に落ちる(listtext と keylist で同じ)。
+-}
+listEditButton : List Seg -> List String -> String -> String -> Bool -> SchemaForm.ListEdit -> Html Msg
+listEditButton path items label title_ enabled edit =
+    button
+        [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+        , HA.title title_
+        , HA.disabled (not enabled)
+        , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit edit items)))
+        ]
+        [ text label ]
+
+
+{-| キー割り当ての列(widget "key")。1 行 1 キーで縦に並べ、行を押すと
+聞き取り(次の 1 打で差し替え)に入る。「＋ キーを足す」も同じ聞き取りで
+末尾に足す。上の行ほど強い(同時押しは表の順で先勝ち)ので ↑↓ で並びも変える。
+聞き取りで拾えないキー(Esc)や押しにくいキーのために一覧の select を添える。
+-}
+viewKeyList : Model -> List Seg -> { choices : List String, keys : List String } -> Html Msg
+viewKeyList model path keylist =
+    let
+        capturing =
+            model.keyCapture
+                |> Maybe.andThen
+                    (\cap ->
+                        if cap.path == path then
+                            Just cap
+
+                        else
+                            Nothing
+                    )
+
+        capturingNew =
+            (capturing |> Maybe.map .index) == Just Nothing
+
+        startAt index =
+            KeyCaptureStarted { path = path, index = index, items = keylist.keys, choices = keylist.choices }
+    in
+    div [ HA.class "control-keylist w-full rounded border border-edge bg-well/40 p-1.5" ]
+        ((if List.isEmpty keylist.keys && not capturingNew then
+            [ div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "(まだ 1 つも無い)" ] ]
+
+          else
+            keylist.keys |> List.indexedMap (viewKeyRow capturing path keylist startAt)
+         )
+            ++ (if capturingNew then
+                    [ viewKeyListening (List.length keylist.keys) ]
+
+                else
+                    []
+               )
+            ++ [ div [ HA.class "keylist-foot mt-0.5 flex items-center gap-1.5" ]
+                    -- 聞き取り中も「＋」は隠さず disabled で残す — 隠すと footer の
+                    -- DOM が動いて、閉じる再描画が開きかけの select まで巻き添えにする
+                    [ button
+                        [ HA.class "keylist-add btn btn-ghost btn-mini"
+                        , HA.disabled capturingNew
+                        , HE.onClick (startAt Nothing)
+                        ]
+                        [ text "＋ キーを足す" ]
+                    , viewKeyFallback path keylist
+                    ]
+               ]
+            ++ (if capturing /= Nothing then
+                    [ div [ HA.class "keylist-hint mt-1 text-[11px] text-ink-faint" ]
+                        [ text "キーを押すと割り当て・Esc でやめる(Esc 自体は一覧から)" ]
+                    ]
+
+                else
+                    []
+               )
+        )
+
+
+viewKeyRow : Maybe KeyCaptureState -> List Seg -> { choices : List String, keys : List String } -> (Maybe Int -> Msg) -> Int -> String -> Html Msg
+viewKeyRow capturing path keylist startAt index key =
+    if (capturing |> Maybe.map .index) == Just (Just index) then
+        viewKeyListening index
+
+    else
+        div [ HA.class "keylist-row mb-1 flex items-center gap-1" ]
+            [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
+                [ text (String.fromInt (index + 1)) ]
+            , button
+                [ HA.class "keylist-key field flex-1 cursor-pointer text-left font-mono hover:border-accent"
+                , HA.title "押して割り当て直す"
+                , HE.onClick (startAt (Just index))
+                ]
+                [ text key ]
+            , listEditButton path keylist.keys "↑" "1 つ上へ(上の行ほど強い)" (index > 0) (SchemaForm.MoveLine index -1)
+            , listEditButton path keylist.keys "↓" "1 つ下へ" (index < List.length keylist.keys - 1) (SchemaForm.MoveLine index 1)
+            , button
+                [ HA.class "keylist-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                , HA.title "この割り当てを消す"
+                , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit (SchemaForm.RemoveLine index) keylist.keys)))
+                ]
+                [ text "✕" ]
+            ]
+
+
+viewKeyListening : Int -> Html Msg
+viewKeyListening index =
+    div [ HA.class "keylist-row mb-1 flex items-center gap-1" ]
+        [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
+            [ text (String.fromInt (index + 1)) ]
+        , div [ HA.class "keylist-listening field flex flex-1 animate-pulse items-center border-accent font-mono text-accent" ]
+            [ text "キーを押す…" ]
+        , button
+            [ HA.class "keylist-cancel btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+            , HA.title "聞き取りをやめる"
+            , HE.onClick KeyCaptureCancelled
+            ]
+            [ text "✕" ]
+        ]
+
+
+{-| 一覧からの追加。既に居るキーは選べなくする(押しても増やさず戻すより、
+最初から灰色の方が「なぜ入らないか」を説明せずに済む)。
+-}
+viewKeyFallback : List Seg -> { choices : List String, keys : List String } -> Html Msg
+viewKeyFallback path keylist =
+    let
+        onChange =
+            HE.on "change"
+                (HE.targetValue
+                    |> D.andThen
+                        (\choice ->
+                            if List.member choice keylist.choices && not (List.member choice keylist.keys) then
+                                D.succeed (FieldEdited (listTextPayload path (keylist.keys ++ [ choice ])))
+
+                            else
+                                D.fail "選択肢に無い・重複は足さない"
+                        )
+                )
+    in
+    select
+        [ HA.class "keylist-fallback field w-auto text-ink-faint"
+        , onChange
+
+        -- 足した後も「(一覧から)」に戻す — この select は入口であって値の置き場ではない
+        , HA.property "value" (E.string "")
+        ]
+        (option [ HA.value "" ] [ text "(一覧から)" ]
+            :: (keylist.choices
+                    |> List.map
+                        (\choice ->
+                            option [ HA.value choice, HA.disabled (List.member choice keylist.keys) ]
+                                [ text choice ]
+                        )
+               )
+        )
 
 
 matching : List Seg -> WeightsAddState -> Maybe WeightsAddState
@@ -13813,6 +14006,36 @@ historyKeyDecoder =
             )
 
 
+{-| キー割り当ての聞き取り中の 1 打。⌘ / Ctrl / Alt 付き(修飾キー自身の打鍵は
+除く)は素通し — ショートカット(⌘Z 等)の巻き添えで割り当てない。入力欄に
+focus が居たら(Tab で移った後など)閉じる — 打った文字が割り当てに化ける
+方が怖い。
+-}
+keyCaptureKeyDecoder : D.Decoder Msg
+keyCaptureKeyDecoder =
+    D.map5 (\code meta ctrl alt tag -> { code = code, meta = meta, ctrl = ctrl, alt = alt, tag = tag })
+        (D.field "code" D.string)
+        (D.field "metaKey" D.bool)
+        (D.field "ctrlKey" D.bool)
+        (D.field "altKey" D.bool)
+        (D.oneOf [ D.at [ "target", "tagName" ] D.string, D.succeed "" ])
+        |> D.andThen
+            (\k ->
+                if isTypingTag k.tag then
+                    D.succeed KeyCaptureCancelled
+
+                else if
+                    (k.meta && not (String.startsWith "Meta" k.code))
+                        || (k.ctrl && not (String.startsWith "Control" k.code))
+                        || (k.alt && not (String.startsWith "Alt" k.code))
+                then
+                    D.fail "ショートカットは素通し"
+
+                else
+                    D.succeed (KeyCaptureKeyed k.code)
+            )
+
+
 {-| 文字を打つ場所か(素の欄と、Shoelace の欄部品)。 -}
 isTypingTag : String -> Bool
 isTypingTag tag =
@@ -13951,6 +14174,30 @@ subscriptions model =
             _ ->
                 Sub.none
 
+        -- キー割り当ての聞き取り中だけ、次の 1 打を拾う。よそのクリックでも閉じる —
+        -- 開いたまま他の欄に文字を打つと、その打鍵まで割り当てに化けるため。
+        -- ただし聞き取り行の上の mousedown では閉じない: click より先に閉じて
+        -- 行が普通の姿へ戻ると、同じ DOM ノードが click の瞬間には別のボタン
+        -- (↑ など)になっていて、押していない操作が走る
+        , if model.keyCapture /= Nothing then
+            Sub.batch
+                [ Browser.Events.onKeyDown keyCaptureKeyDecoder
+                , Browser.Events.onMouseDown
+                    (D.oneOf [ D.at [ "target", "className" ] D.string, D.succeed "" ]
+                        |> D.andThen
+                            (\cls ->
+                                if String.contains "keylist-listening" cls || String.contains "keylist-cancel" cls then
+                                    D.fail "聞き取り行の上は ✕ 自身の onClick に任せる"
+
+                                else
+                                    D.succeed KeyCaptureCancelled
+                            )
+                    )
+                ]
+
+          else
+            Sub.none
+
         -- 右クリックメニューが開いている間だけ Esc で閉じる(外側クリックは受け皿の仕事)
         , if model.fileMenu /= Nothing then
             Browser.Events.onKeyDown
@@ -13969,16 +14216,18 @@ subscriptions model =
             Sub.none
 
         -- ⌘⇧F で横断検索を開く / 閉じる。編集画面に居る間だけ(欄の中でも効く —
-        -- 探すのは文字を打つ場所からでも呼びたい操作なので、⌘Z と扱いを分ける)
-        , if model.screen == Editing then
+        -- 探すのは文字を打つ場所からでも呼びたい操作なので、⌘Z と扱いを分ける)。
+        -- キーの聞き取り中は止める — 検索を開いた後の打鍵が割り当てに化ける
+        , if model.screen == Editing && model.keyCapture == Nothing then
             Browser.Events.onKeyDown (searchKeyDecoder (SearchView.isOpen model.search))
 
           else
             Sub.none
 
         -- ⌘Z / ⇧⌘Z(戻す・やり直す)。編集画面で、前面の編集器が自前の undo を
-        -- 持っていない間だけ生かす — 盤面・ドット絵の ⌘Z はそちらの持ち場
-        , if model.screen == Editing && model.current /= Nothing && not (ownUndoFront model) then
+        -- 持っていない間だけ生かす — 盤面・ドット絵の ⌘Z はそちらの持ち場。
+        -- キーの聞き取り中も止める — 1 打が undo と聞き取りの両方に届く
+        , if model.screen == Editing && model.current /= Nothing && not (ownUndoFront model) && model.keyCapture == Nothing then
             Browser.Events.onKeyDown historyKeyDecoder
 
           else

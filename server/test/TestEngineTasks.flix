@@ -28,6 +28,17 @@ mod TestEngineTasks {
              EngineTasks.argv(exec, false, Task.Bake),
              EngineTasks.argv(exec, false, Task.Debug)))
 
+    /// java の選び方: EDITOR_JAVA が最優先・無ければ自分の JVM・どちらも無ければ
+    /// PATH の java。空白だけの EDITOR_JAVA は「教わっていない」扱い。
+    @Test
+    def testResolveJava(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("/jre/bin/java", "/own/bin/java", "/own/bin/java", "java"),
+            (EngineTasks.resolveJava(Some("/jre/bin/java"), Some("/own/bin/java")),
+             EngineTasks.resolveJava(None, Some("/own/bin/java")),
+             EngineTasks.resolveJava(Some("  "), Some("/own/bin/java")),
+             EngineTasks.resolveJava(None, None)))
+
     /// 引数列に空白入りのパスが来てもそのまま 1 語で残る (リスト渡しなのでクォート不要)。
     @Test
     def testArgvKeepsSpaces(): Unit \ Assert =

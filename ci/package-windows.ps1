@@ -43,6 +43,8 @@ Copy-Item -Recurse $jreDir "$resources/jre"
 $engineStage = "$resources/engine"
 New-Item -ItemType Directory -Force -Path "$engineStage/bin" | Out-Null
 Copy-Item $FlixJar "$engineStage/bin/flix.jar"
+# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
+Copy-Item "$EngineRepo/bin/lint-*.py" "$engineStage/bin/"
 Copy-Item "$EngineRepo/flix.toml" "$engineStage/flix.toml"
 New-Item -ItemType Directory -Force -Path "$engineStage/engine_full/artifact" | Out-Null
 Copy-Item "$EngineRepo/engine_full/flix.toml" "$engineStage/engine_full/flix.toml"

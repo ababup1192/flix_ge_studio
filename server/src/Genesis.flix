@@ -25,10 +25,17 @@ mod Genesis {
         starter = String
     }
 
-    /// 9 枚の札。並びは人気順 (この順が仕様 — client は並べ替えない)。
+    /// 10 枚の札。並びは仕様 (client は並べ替えない) — 先頭は blank(まっさらの
+    /// 入口)、以降はジャンルの人気順、末尾は free(言葉からの受け皿)。
     /// 説明に実在のゲーム名は使わない (借り物なしで通じる言葉だけ)。
     pub def families(): List[Family] =
-          { id = "action",  name = "アクション",
+          { id = "blank",   name = "空のプロジェクト",
+            verb = "まっさらから育てる",
+            includes = "最小の骨組みだけ(主人公が歩くだけ)",
+            controls = "←→↑↓",
+            skeleton = "主人公(ドット絵)を ←→↑↓ で動かせるだけの骨組み。Doc(テーマ・ドット絵)の配線と check / test / bake が通る状態から、自分のゲームを育てる",
+            starter = "templates/game-starter" }
+       :: { id = "action",  name = "アクション",
             verb = "走って、跳んで、壊す",
             includes = "横スクロールジャンプ・ブロック崩し・ステージ攻略",
             controls = "←→ + スペース + B ダッシュ",

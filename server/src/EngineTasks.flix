@@ -115,11 +115,28 @@ mod EngineTasks {
 
     // ── 実行環境の解決 ────────────────────────────────────
 
-    /// ゲームを走らせる java の実体。app が同梱 JRE を EDITOR_JAVA で教えてくる。
-    /// 教わっていなければ PATH の java に賭ける (手元開発)。
+    /// java の選び方 (純粋)。app が教えた EDITOR_JAVA が最優先。無ければ server
+    /// 自身を動かしている JVM — .app やポータブル zip は PATH に本物の java が
+    /// 居ない (macOS は Apple のスタブが「Unable to locate a Java Runtime」を
+    /// 返す) ので、PATH の java は最後の手にする。
+    pub def resolveJava(given: Option[String], own: Option[String]): String =
+        match given {
+            case Some(value) if String.trim(value) != "" => value
+            case _ => own |> Option.getWithDefault("java")
+        }
+
+    /// ゲームを走らせる java の実体。EDITOR_JAVA > 自分の JVM (java.home) > PATH。
     pub def javaExe(): String \ IO =
-        let value = System.getenv("EDITOR_JAVA");
-        if (Object.isNull(value) or String.trim(value) == "") "java" else value
+        let given = System.getenv("EDITOR_JAVA");
+        let home = System.getProperty("java.home");
+        let exe = if (isWindows()) "java.exe" else "java";
+        let own =
+            if (Object.isNull(home)) None
+            else {
+                let file = new JFile("${home}/bin/${exe}");
+                if (file.isFile()) Some(file.getAbsolutePath()) else None
+            };
+        resolveJava(if (Object.isNull(given)) None else Some(given), own)
 
     /// engine の flix コンパイラ jar。無ければ None = タスク表では走らせられない
     /// (macOS なら従来の make に倒れる)。

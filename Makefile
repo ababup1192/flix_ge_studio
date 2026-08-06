@@ -204,6 +204,8 @@ stage-engine:
 	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
 	cp $(ROOT)/app/engine/flix $(ENGINE_STAGE)/bin/flix
 	chmod +x $(ENGINE_STAGE)/bin/flix
+	# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
+	cp $(ENGINE)/bin/lint-*.py $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
 	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
 	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml

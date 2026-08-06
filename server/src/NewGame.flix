@@ -225,8 +225,12 @@ mod NewGame {
                 |> List.filter(file -> file.isFile())
                 |> List.forEach(file -> copyFile(file.getPath(), "${rulesTarget}/${file.getName()}"));
             discard new JFile("${request#gameDir}/bin").mkdirs();
+            // lint は在る物だけ配る — 同梱 engine が lint を持たない古い配布でも、
+            // ここで転んで AGENTS 一式まるごと配り損ねる形にしない
             foreach (lint <- "lint-view.py" :: "lint-palette.py" :: "lint-sprite.py" :: "lint-anim.py" :: Nil)
-                copyFile("${request#engine}/bin/${lint}", "${request#gameDir}/bin/${lint}")
+                if (new JFile("${request#engine}/bin/${lint}").isFile())
+                    copyFile("${request#engine}/bin/${lint}", "${request#gameDir}/bin/${lint}")
+                else ()
         } catch {
             case _: Exception =>
                 Runner.logLine(state, "[new-game] AGENTS の配布に失敗しました (ゲーム自体は使えます)")
