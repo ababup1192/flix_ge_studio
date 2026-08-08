@@ -71,7 +71,10 @@ jobs:
         working-directory: server
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: java -jar ../flix.jar build-fatjar
+        # -Xss16m を外すと Windows で落ちる。Flix の型検査は式の深さぶん再帰するので、
+        # スレッドの既定スタックが 1MB の Windows では server の規模で溢れる
+        # (macOS/arm64 は既定 2MB なので気づけない)。
+        run: java -Xss16m -jar ../flix.jar build-fatjar
       - name: Build web
         working-directory: web
         run: |
@@ -123,7 +126,7 @@ jobs:
         run: >
           make app
           ENGINE="$PWD/engine_repo"
-          FLIX="java -jar $PWD/flix.jar"
+          FLIX="java -Xss16m -jar $PWD/flix.jar"
           FLIX_JAR="$PWD/flix.jar"
           JLINK="$JAVA_HOME/bin/jlink"
           WEB_NPM=npm

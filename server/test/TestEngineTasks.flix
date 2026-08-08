@@ -3,35 +3,48 @@
 //
 // 期待する引数列は engine の bin/flix ラッパが展開していたコマンドと同じ形 + UTF-8 固定:
 //   java [-XstartOnFirstThread(mac)] [-Djava.awt.headless=true(窓なし)]
-//        -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar flix.jar <flix引数>
+//        -Xss16m -XX:MaxRAMPercentage=50 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8
+//        -jar flix.jar <flix引数>
 
 mod TestEngineTasks {
     use EngineTasks.Task
 
     /// argv の全体形: macOS の実機再生は窓の旗だけ・焼きは窓の旗 + headless。
     /// macOS 以外は窓の旗が消える (他の OS の JVM はこの旗で起動に失敗するため)。
-    /// 出力の UTF-8 固定はどの OS のどの仕事にも必ず付く (Windows の文字化け対策)。
+    /// 出力の UTF-8 固定と積むスタックの広げ (-Xss16m) はどの OS のどの仕事にも必ず付く
+    /// (Windows の文字化け対策と、型検査の深い再帰でスタックが溢れるのを防ぐため)。
     @Test
     def testArgv(): Unit \ Assert =
         let exec = {javaExe = "/jre/bin/java", flixJar = "/engine/bin/flix.jar"};
-        let utf8 = "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
+        let always = "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
         Assert.assertEq(
             expected = (
-                ("/jre/bin/java" :: "-XstartOnFirstThread" :: utf8) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
-                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: utf8) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
-                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: utf8) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
-                ("/jre/bin/java" :: utf8) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil)),
+                ("/jre/bin/java" :: "-XstartOnFirstThread" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
+                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
+                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
+                ("/jre/bin/java" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil)),
             (EngineTasks.argv(exec, true, Task.Debug),
              EngineTasks.argv(exec, true, Task.Bake),
              EngineTasks.argv(exec, false, Task.Bake),
              EngineTasks.argv(exec, false, Task.Debug)))
+
+    /// java の選び方: EDITOR_JAVA が最優先・無ければ自分の JVM・どちらも無ければ
+    /// PATH の java。空白だけの EDITOR_JAVA は「教わっていない」扱い。
+    @Test
+    def testResolveJava(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("/jre/bin/java", "/own/bin/java", "/own/bin/java", "java"),
+            (EngineTasks.resolveJava(Some("/jre/bin/java"), Some("/own/bin/java")),
+             EngineTasks.resolveJava(None, Some("/own/bin/java")),
+             EngineTasks.resolveJava(Some("  "), Some("/own/bin/java")),
+             EngineTasks.resolveJava(None, None)))
 
     /// 引数列に空白入りのパスが来てもそのまま 1 語で残る (リスト渡しなのでクォート不要)。
     @Test
     def testArgvKeepsSpaces(): Unit \ Assert =
         let exec = {javaExe = "C:\\Program Files\\Studio\\jre\\bin\\java.exe", flixJar = "C:\\Program Files\\Studio\\engine\\bin\\flix.jar"};
         Assert.assertEq(
-            expected = "C:\\Program Files\\Studio\\jre\\bin\\java.exe" :: "-Djava.awt.headless=true" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: "-jar" :: "C:\\Program Files\\Studio\\engine\\bin\\flix.jar" :: "check" :: Nil,
+            expected = "C:\\Program Files\\Studio\\jre\\bin\\java.exe" :: "-Djava.awt.headless=true" :: "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: "-jar" :: "C:\\Program Files\\Studio\\engine\\bin\\flix.jar" :: "check" :: Nil,
             EngineTasks.argv(exec, false, Task.Check))
 
     /// flix コンパイラへの引数: 標準の仕事は決まった形、EntryPoint は指名した入口で走る。

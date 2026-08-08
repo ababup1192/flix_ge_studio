@@ -421,6 +421,42 @@ suite =
                         , Just [ ListTextControl [] ]
                         , Just [ RawJsonControl "[1,2]" ]
                         )
+        , test "type list(enum) + widget key — キー割り当て UI。widget 無し・文字列でない列は生 JSON へ" <|
+            \_ ->
+                let
+                    controlsWith schemaJson entry =
+                        (schemaJson
+                            |> Schema.decodeString
+                            |> Result.toMaybe
+                            |> Maybe.andThen (\s -> s.sections |> List.head |> Maybe.map Tuple.second)
+                        )
+                            |> Maybe.map
+                                (\sec ->
+                                    SchemaForm.rows { doc = E.null, textures = [], others = [] } sec entry
+                                        |> List.map .control
+                                )
+
+                    keySchema =
+                        """{"sections": {"keys": {"kind": "record", "fields": {"jump": {"type": {"list": {"enum": ["Z", "Space"]}}, "widget": "key"}}}}}"""
+
+                    plainSchema =
+                        """{"sections": {"keys": {"kind": "record", "fields": {"jump": {"type": {"list": {"enum": ["Z", "Space"]}}}}}}}"""
+                in
+                ( ( controlsWith keySchema (E.object [ ( "jump", E.list E.string [ "Space" ] ) ])
+                  , controlsWith keySchema (E.object [])
+                  )
+                , ( controlsWith keySchema (E.object [ ( "jump", E.list E.int [ 1 ] ) ])
+                  , controlsWith plainSchema (E.object [ ( "jump", E.list E.string [ "Space" ] ) ])
+                  )
+                )
+                    |> Expect.equal
+                        ( ( Just [ KeyListControl { choices = [ "Z", "Space" ], keys = [ "Space" ] } ]
+                          , Just [ KeyListControl { choices = [ "Z", "Space" ], keys = [] } ]
+                          )
+                        , ( Just [ RawJsonControl "[1]" ]
+                          , Just [ RawJsonControl "[\"Space\"]" ]
+                          )
+                        )
         , test "文字列の列の 1 操作 — 差し替え・追加・削除・入れ替え(空行は間引かない・範囲外は何もしない)" <|
             \_ ->
                 let

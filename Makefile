@@ -193,6 +193,7 @@ app: jar web jre
 #   templates/    … その複製元。ジャンル札のサムネ (golden/title.png) もここから読む
 #   engine_full/  … 生まれたゲームの lib/ に置かれる engine の fpkg と toml
 #   agents-pack/  … 生まれたゲームに配る AGENTS.md と skills の元
+#   lib/          … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す
 .PHONY: stage-engine
 stage-engine:
 	@echo "==> [engine] 同梱 engine をステージ"
@@ -203,6 +204,8 @@ stage-engine:
 	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
 	cp $(ROOT)/app/engine/flix $(ENGINE_STAGE)/bin/flix
 	chmod +x $(ENGINE_STAGE)/bin/flix
+	# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
+	cp $(ENGINE)/bin/lint-*.py $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
 	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
 	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml
@@ -214,6 +217,18 @@ stage-engine:
 	# テンプレ 1 本で GB 級になり .app がその分ふくらむ。
 	find $(ENGINE_STAGE)/templates -type d \( -name lib -o -name build \) -exec rm -rf {} +
 	cp $(ENGINE)/engine_full/artifact/engine_full.fpkg $(ENGINE_STAGE)/engine_full/artifact/
+	# 種の出どころに $(ENGINE)/lib を使わないのは、engine リポの lib/ が生成物 (gitignore) で
+	# 空のことがあるから。server 自身のビルドで必ず落ちる同じ lwjgl を使い回す。
+	# これが無いと、生まれたゲームの初回ビルドが Maven へ取りに行き、回線が細い所や
+	# 会社の proxy の内側では黙って何分も止まる (見張り番の打ち切りに当たる)。
+	@if [ -d "$(ROOT)/server/lib/cache" -a -d "$(ROOT)/server/lib/external" ]; then \
+	  mkdir -p $(ENGINE_STAGE)/lib; \
+	  cp -R $(ROOT)/server/lib/cache $(ENGINE_STAGE)/lib/cache; \
+	  cp -R $(ROOT)/server/lib/external $(ENGINE_STAGE)/lib/external; \
+	  echo "==> [engine] Maven の種を同梱 ($$(du -sh $(ENGINE_STAGE)/lib | cut -f1))"; \
+	else \
+	  echo "!! [engine] server/lib が無いので Maven の種を同梱できません (make jar の後にどうぞ)"; \
+	fi
 	# nix store から写した flix.jar は読み取り専用で来る。後段の Tauri のリソース収集が
 	# Permission denied で死ぬので、書けるようにしてから渡す (jre と同じ手当て)。
 	chmod -R u+w $(ENGINE_STAGE)

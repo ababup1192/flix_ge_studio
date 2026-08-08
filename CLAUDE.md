@@ -48,8 +48,12 @@ engine の 0.7.1 fpkg は `server/lib/` に同梱済み（オフラインでビ�
 ### .app は engine を自分の中に持つ（スタンドアロン）
 
 `.app` は `Contents/Resources/engine/` に「ゲームを走らせる手」一式（Flix コンパイラ本体・
-engine の Makefile と templates・`engine_full` の fpkg・`agents-pack`）を同梱する。だから
+engine の Makefile と templates・`engine_full` の fpkg・`agents-pack`・**lwjgl の取り寄せ済みの
+種 `lib/cache` + `lib/external`**）を同梱する。だから
 **手元に engine リポが無くても、実機再生・焼き・新しいゲーム作りが全部できる**。
+種は `server/lib/` から運ぶ（engine リポの `lib/` は生成物で空のことがある）。これを外すと
+新しいゲームの初回ビルドが Maven へ取りに行き、回線が細い所では黙って何分も止まって見える
+（見張り番が 10 分の無出力で打ち切る）。約 10MB なので惜しまず同梱する。
 app が `EDITOR_ENGINE` でその場所を server に教え、server（`EngineHome`）が
 ゲームの make に `ENGINE=` として渡す。
 
@@ -105,6 +109,10 @@ server はゲームへの仕事 (実機再生・check・test・焼き・アト�
   停止は `POST /game/stop` (ミニプレイヤーの「■ 止める」)。
 - 裏の仕事の失敗はトースト + topbar の「⚠ ログ」バッジ → モーダルで全文が読める。
   窓なしの仕事は 10 分で打ち切る見張り番つき。子プロセスの出力は UTF-8 固定 (文字化け対策)。
+- **flix を呼ぶときは必ず `-Xss16m`**（タスク表の argv と CI の両方）。Flix の型検査は式の
+  深さぶん再帰するので、スレッドの既定スタックが 1MB の Windows では少し大きいコードで
+  `StackOverflowError` になる。macOS/arm64 は既定 2MB なので手元では気づけない
+  （手元で再現するなら `java -Xss1m -jar …/flix.jar check`）。
 
 ### リリース (GitHub Actions)
 

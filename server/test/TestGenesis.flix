@@ -6,12 +6,12 @@ mod TestGenesis {
     def ids(): List[String] =
         Genesis.families() |> List.map(f -> f#id)
 
-    /// 札は 9 枚で、先頭は action(いちばん人気 = 通し体験の入口)、
-    /// 末尾は free(家族に当てはまらない受け皿)。並び = 人気順は仕様。
+    /// 札は 10 枚で、先頭は blank(まっさらの入口 = 左上)、
+    /// 末尾は free(家族に当てはまらない受け皿)。並びは仕様。
     @Test
     def testFamiliesShape(): Unit \ Assert =
         Assert.assertEq(
-            expected = (9, Some("action"), Some("free")),
+            expected = (10, Some("blank"), Some("free")),
             (List.length(ids()), List.head(ids()), List.last(ids())))
 
     /// family は必須・未知の家族は断る。free は direction が必須。
@@ -25,15 +25,17 @@ mod TestGenesis {
              status(Map#{"family" => "free"}),
              status(Map#{"family" => "free", "direction" => "猫が魚を集める"})))
 
-    /// 公式テンプレートの登録: action / novel / rpg / puzzle は starter 持ち、free は持たない。
+    /// 公式テンプレートの登録: action / novel / rpg / puzzle / blank は starter 持ち、
+    /// free は持たない。
     @Test
     def testStarters(): Unit \ Assert =
         let starterOf = id -> Genesis.families()
             |> List.filter(f -> f#id == id) |> List.head
             |> Option.map(f -> f#starter != "");
         Assert.assertEq(
-            expected = (Some(true), Some(true), Some(true), Some(true), Some(false)),
-            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("puzzle"), starterOf("free")))
+            expected = (Some(true), Some(true), Some(true), Some(true), Some(true), Some(false)),
+            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("puzzle"),
+             starterOf("blank"), starterOf("free")))
 
     /// 複製元の白名簿: 登録済みテンプレートだけ通す(空・未知・似た経路は弾く)。
     @Test

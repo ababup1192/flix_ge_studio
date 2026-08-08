@@ -335,6 +335,15 @@ export function realApi(base: string): Api {
           return sendJson("POST", `${base}/game/stop`, {});
         case "gameLog":
           return getJson(`${base}/game/log`);
+        case "gameLogView":
+          // 「ゲームのログ」モーダル用。起動実況(gameLog)と同じ口だが、応答の
+          // 行き先が違うので名前を分ける(実況のポーリングと混ざらないように)
+          return getJson(`${base}/game/log`);
+        case "cleanLocks":
+          // こまったときの掃除: 中断が lib/cache に残した *.lock を消す
+          return sendJson("POST", `${base}/maintenance/clean-locks`, {});
+        case "clearFontCache":
+          return sendJson("POST", `${base}/maintenance/clear-font-cache`, {});
         case "previewItems":
           return sendJson("POST", `${base}/preview/items`, payload);
         case "previewUi":

@@ -43,12 +43,21 @@ Copy-Item -Recurse $jreDir "$resources/jre"
 $engineStage = "$resources/engine"
 New-Item -ItemType Directory -Force -Path "$engineStage/bin" | Out-Null
 Copy-Item $FlixJar "$engineStage/bin/flix.jar"
+# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
+Copy-Item "$EngineRepo/bin/lint-*.py" "$engineStage/bin/"
 Copy-Item "$EngineRepo/flix.toml" "$engineStage/flix.toml"
 New-Item -ItemType Directory -Force -Path "$engineStage/engine_full/artifact" | Out-Null
 Copy-Item "$EngineRepo/engine_full/flix.toml" "$engineStage/engine_full/flix.toml"
 Copy-Item "$EngineRepo/engine_full/artifact/engine_full.fpkg" "$engineStage/engine_full/artifact/engine_full.fpkg"
 Copy-Item -Recurse "$EngineRepo/agents-pack" "$engineStage/agents-pack"
 Copy-Item -Recurse "$EngineRepo/templates" "$engineStage/templates"
+# lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す。
+# 出どころに $EngineRepo/lib を使わないのは、engine リポの lib/ が生成物で空だから。
+# これが無いと、生まれたゲームの初回ビルドが Maven へ取りに行き、回線が細い所や
+# 会社の proxy の内側では黙って何分も止まる (見張り番の打ち切りに当たる)。
+New-Item -ItemType Directory -Force -Path "$engineStage/lib" | Out-Null
+Copy-Item -Recurse "$root/server/lib/cache" "$engineStage/lib/cache"
+Copy-Item -Recurse "$root/server/lib/external" "$engineStage/lib/external"
 # テンプレ内のビルド成果物 (lib) は同梱しない — new-game が engine_full を種付けする。
 Get-ChildItem -Path "$engineStage/templates" -Directory -Recurse -Filter "lib" |
     ForEach-Object { Remove-Item -Recurse -Force $_.FullName }

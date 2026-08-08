@@ -67,10 +67,18 @@ mod EngineTasks {
     /// 起動に失敗する) なので、macOS のときだけ付ける。
     /// 出力の文字コードは UTF-8 に固定する — Windows の JVM は放っておくと土地の文字コード
     /// (CP932 など) で喋り、読み手 (UTF-8 固定) の側で文字化けするため。
+    /// -Xss16m は削らない。Flix の型検査は式の深さぶん再帰するので、スレッドの既定スタックが
+    /// 1MB の Windows では少し大きいゲームで StackOverflowError になる
+    /// (macOS/arm64 は既定 2MB なので手元では気づけない)。
+    /// -XX:MaxRAMPercentage=50 も削らない。flix run はコンパイラとゲームが 1 つの JVM を
+    /// 分け合い、コンパイラの残した山がヒープに居座ったままゲームが走る。既定の上限
+    /// (物理メモリの 25%) だとメモリ 8GB の機械で 2GB しか無く、遊んでいる間 GC が頻発して
+    /// カクつく。50% なら Studio 本体と同居しても押し出し合わない。
     pub def argv(exec: Exec, isMacHost: Bool, task: Task): List[String] =
         (exec#javaExe :: Nil)
             ::: (if (isMacHost) "-XstartOnFirstThread" :: Nil else Nil)
             ::: (if (isHeadless(task)) "-Djava.awt.headless=true" :: Nil else Nil)
+            ::: ("-Xss16m" :: "-XX:MaxRAMPercentage=50" :: Nil)
             ::: ("-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil)
             ::: ("-jar" :: exec#flixJar :: Nil)
             ::: flixArgs(task)
@@ -107,11 +115,28 @@ mod EngineTasks {
 
     // ── 実行環境の解決 ────────────────────────────────────
 
-    /// ゲームを走らせる java の実体。app が同梱 JRE を EDITOR_JAVA で教えてくる。
-    /// 教わっていなければ PATH の java に賭ける (手元開発)。
+    /// java の選び方 (純粋)。app が教えた EDITOR_JAVA が最優先。無ければ server
+    /// 自身を動かしている JVM — .app やポータブル zip は PATH に本物の java が
+    /// 居ない (macOS は Apple のスタブが「Unable to locate a Java Runtime」を
+    /// 返す) ので、PATH の java は最後の手にする。
+    pub def resolveJava(given: Option[String], own: Option[String]): String =
+        match given {
+            case Some(value) if String.trim(value) != "" => value
+            case _ => own |> Option.getWithDefault("java")
+        }
+
+    /// ゲームを走らせる java の実体。EDITOR_JAVA > 自分の JVM (java.home) > PATH。
     pub def javaExe(): String \ IO =
-        let value = System.getenv("EDITOR_JAVA");
-        if (Object.isNull(value) or String.trim(value) == "") "java" else value
+        let given = System.getenv("EDITOR_JAVA");
+        let home = System.getProperty("java.home");
+        let exe = if (isWindows()) "java.exe" else "java";
+        let own =
+            if (Object.isNull(home)) None
+            else {
+                let file = new JFile("${home}/bin/${exe}");
+                if (file.isFile()) Some(file.getAbsolutePath()) else None
+            };
+        resolveJava(if (Object.isNull(given)) None else Some(given), own)
 
     /// engine の flix コンパイラ jar。無ければ None = タスク表では走らせられない
     /// (macOS なら従来の make に倒れる)。

@@ -73,6 +73,9 @@ type Control
     | WeightsControl { config : Weights.Config, entries : List ( String, Float ) }
       -- 文字列の列(type {"list":"text"} — 台詞など)。1 行 1 欄で並べる
     | ListTextControl (List String)
+      -- キー割り当ての列(type {"list":{"enum":[…]}} + widget "key")。
+      -- 1 行 1 キーで並べ、行を押すとキーの聞き取りに入る
+    | KeyListControl { choices : List String, keys : List String }
       -- 対応の形でない値({hsv} の色等)は壊さず見せるだけ(v1 は変換を持たない)
     | ReadOnlyControl String
       -- 未対応 type(list / record / custom)や対応外の値の形の生 JSON 1 行
@@ -324,6 +327,26 @@ control ctx entry name field =
 
                 Nothing ->
                     ListTextControl []
+
+        TList (TEnum choices) ->
+            -- widget "key" のときだけキー割り当ての専用 UI。widget 無しの
+            -- list(enum) は生 JSON のまま — 聞き取り UI はキーの語彙が前提で、
+            -- 任意の enum 列に出すと「押して割り当て」が意味を持たない
+            if Schema.widgetIs "key" field.widget then
+                case currentOr D.value of
+                    Just raw ->
+                        case D.decodeValue (D.list D.string) raw of
+                            Ok items ->
+                                KeyListControl { choices = choices, keys = items }
+
+                            Err _ ->
+                                rawJson (Just raw)
+
+                    Nothing ->
+                        KeyListControl { choices = choices, keys = [] }
+
+            else
+                rawJson (currentOr D.value)
 
         TCustom "weights" ->
             case ( Weights.configFrom field.widget, currentOr D.value ) of

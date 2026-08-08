@@ -177,7 +177,9 @@ mod NewGame {
             }
         }
 
-    /// engine 手元の lib/cache・lib/external があれば写す (Maven 依存の初回ダウンロード回避)。
+    /// engine の lib/cache・lib/external があれば写す (Maven 依存の初回ダウンロード回避)。
+    /// 種が無いときに黙って続けないのは、そのときだけ初回ビルドが Maven へ出て、
+    /// 回線が細い所や proxy の内側では何分も無言で止まって見えるため。
     def seedLibDirs(state: Runner.State, request: Request): Unit \ IO =
         foreach (sub <- "cache" :: "external" :: Nil) {
             let src = "${request#engine}/lib/${sub}";
@@ -185,7 +187,10 @@ mod NewGame {
                 copyTree(skipTopLevel = Set#{}, src, "${request#gameDir}/lib/${sub}")
             else ()
         };
-        Runner.logLine(state, "[new-game] lib/ を種付けしました (engine 手元に無い Maven 依存は初回ビルドで自動ダウンロードされます)")
+        if (new JFile("${request#engine}/lib/cache").isDirectory())
+            Runner.logLine(state, "[new-game] lib/ を種付けしました (初回ビルドは Maven に出ずに済みます)")
+        else
+            Runner.logLine(state, "[new-game] Maven の種が同梱されていません — 初回ビルドで lwjgl を取り寄せます (回線によっては数分かかります)")
 
     /// git init を試す。git が無い環境 (Windows のポータブル配布など) では
     /// 1 行残して続行 — 産むのに git は必須ではない。
@@ -234,8 +239,12 @@ mod NewGame {
                 |> List.filter(file -> file.isFile())
                 |> List.forEach(file -> copyFile(file.getPath(), "${rulesTarget}/${file.getName()}"));
             discard new JFile("${request#gameDir}/bin").mkdirs();
+            // lint は在る物だけ配る — 同梱 engine が lint を持たない古い配布でも、
+            // ここで転んで AGENTS 一式まるごと配り損ねる形にしない
             foreach (lint <- "lint-view.py" :: "lint-palette.py" :: "lint-sprite.py" :: "lint-anim.py" :: Nil)
-                copyFile("${request#engine}/bin/${lint}", "${request#gameDir}/bin/${lint}")
+                if (new JFile("${request#engine}/bin/${lint}").isFile())
+                    copyFile("${request#engine}/bin/${lint}", "${request#gameDir}/bin/${lint}")
+                else ()
         } catch {
             case _: Exception =>
                 Runner.logLine(state, "[new-game] AGENTS の配布に失敗しました (ゲーム自体は使えます)")
