@@ -18,14 +18,16 @@ mod TestNewGame {
             NewGame.applyTokens(request(),
                 "name=__NAME__ title=__TITLE__ w=__W__ h=__H__ win=__WW__x__WH__ engine=__ENGINE__"))
 
-    /// Makefile の `ENGINE ?=` 行は札ではなく行ごと engine の現在地に書き換わる。
-    /// 行の途中や似た行 (ENGINE_FULL など) は触らない。最後の改行も保たれる。
+    /// local.mk の本文: engine の場所は必ず書き、java は教わったときだけ書く。
+    /// Windows のパス (\ 区切り) は / に直って入る (make/sh が読める形)。
     @Test
-    def testApplyTokensEngineLine(): Unit \ Assert =
+    def testLocalMkText(): Unit \ Assert =
         Assert.assertEq(
-            expected = "ENGINE ?= /engines/e\nENGINE_FULL ?= keep\n  ENGINE ?= keep\n",
-            NewGame.applyTokens(request(),
-                "ENGINE ?= /old/place\nENGINE_FULL ?= keep\n  ENGINE ?= keep\n"))
+            expected = (
+                "# このマシンの実行環境 (git には入れない — .gitignore 済み)。Studio が生成。\nENGINE ?= /engines/e\n",
+                "# このマシンの実行環境 (git には入れない — .gitignore 済み)。Studio が生成。\nENGINE ?= C:/Studio/resources/engine\nJAVA ?= C:/Studio/resources/jre/bin/java.exe\n"),
+            (NewGame.localMkText("/engines/e", None),
+             NewGame.localMkText("C:\\Studio\\resources\\engine", Some("C:\\Studio\\resources\\jre\\bin\\java.exe"))))
 
     /// 書き換え対象は文字ファイル (.flix/.json/.toml/.md/Makefile) だけ。絵や音は写すだけ。
     @Test

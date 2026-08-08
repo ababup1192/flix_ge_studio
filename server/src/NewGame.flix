@@ -7,6 +7,7 @@
 mod NewGame {
     import java.lang.Exception
     import java.lang.ProcessBuilder
+    import java.lang.System
     import java.lang.{String => JavaString}
     import java.io.{File => JFile}
     import java.io.FileOutputStream
@@ -26,27 +27,32 @@ mod NewGame {
 
     // ── 純粋なルール (ここだけテストする) ──────────────────
 
-    /// テンプレート本文の置き換え。__NAME__ などの札を実際の値に差し替え、
-    /// Makefile の `ENGINE ?=` 行は engine の現在地で上書きする (テンプレは実パスを
-    /// 持っているので、札ではなく行ごと書き換える)。
+    /// テンプレート本文の置き換え。__NAME__ などの札を実際の値に差し替える。
     /// __WW__/__WH__ は窓の大きさ (設計解像度の 2 倍)。
+    /// engine の現在地は Makefile に書かない — git に入れない local.mk へ書く
+    /// (localMkText)。Makefile はマシンをまたいで共有できる形のまま。
     pub def applyTokens(request: Request, text: String): String =
-        let replaced = text
+        text
             |> String.replace(src = "__NAME__", dst = request#name)
             |> String.replace(src = "__TITLE__", dst = request#title)
             |> String.replace(src = "__WW__", dst = "${request#w * 2}")
             |> String.replace(src = "__WH__", dst = "${request#h * 2}")
             |> String.replace(src = "__W__", dst = "${request#w}")
             |> String.replace(src = "__H__", dst = "${request#h}")
+            // 古い engine のテンプレ (ENGINE ?= __ENGINE__) との互換のためだけに残す札。
+            // いまのテンプレの Makefile は engine の場所を持たない (local.mk が教える)。
             |> String.replace(src = "__ENGINE__", dst = request#engine)
-            |> String.lines
-            |> List.map(line ->
-                if (String.startsWith(prefix = "ENGINE ?= ", line)) "ENGINE ?= ${request#engine}" else line)
-            |> List.join("\n");
-        // String.lines は最後の改行を落とすので、元にあったなら返す (make 版との差を作らない)。
-        if (String.endsWith(suffix = "\n", text) and not String.endsWith(suffix = "\n", replaced))
-            replaced + "\n"
-        else replaced
+
+    /// local.mk の本文。このマシンでの engine の場所と、(教わっていれば) java の場所。
+    /// Windows のパスは \ を / に直して書く — make の wildcard や sh のクォートは
+    /// バックスラッシュと相性が悪く、java は / のパスをそのまま受け付けるため。
+    /// ?= なのは、Studio が環境変数 ENGINE で渡してくる場所 (EngineHome) を勝たせるため —
+    /// 優先順は コマンドライン > 環境変数 > local.mk > Makefile の既定。
+    pub def localMkText(engine: String, java: Option[String]): String =
+        let line = path -> String.replace(src = "\\", dst = "/", path);
+        "# このマシンの実行環境 (git には入れない — .gitignore 済み)。Studio が生成。\n"
+            + "ENGINE ?= ${line(engine)}\n"
+            + (java |> Option.map(exe -> "JAVA ?= ${line(exe)}\n") |> Option.getWithDefault(""))
 
     /// 札の書き換え対象か。テンプレの文字ファイルだけ (絵や音はそのまま写す)。
     pub def isTokenTarget(fileName: String): Bool =
@@ -93,6 +99,7 @@ mod NewGame {
                 discard new JFile("${request#gameDir}/${sub}").mkdirs();
             renameAssets(request);
             rewriteTokens(request);
+            writeLocalMk(request);
             seedEngineFull(state, request);
             seedLibDirs(state, request);
             gitInit(state, request#gameDir);
@@ -147,6 +154,13 @@ mod NewGame {
                 if (isTokenTarget(file.getName()))
                     writeText(file.getPath(), applyTokens(request, readText(file.getPath())))
                 else ())
+
+    /// このマシンでの engine / java の場所を local.mk へ書く (Makefile はマシン共有のまま)。
+    /// java は app が同梱 JRE を EDITOR_JAVA で教えてきたときだけ書く (手元開発では PATH の java)。
+    def writeLocalMk(request: Request): Unit \ IO =
+        let javaValue = System.getenv("EDITOR_JAVA");
+        let java = if (Object.isNull(javaValue) or String.trim(javaValue) == "") None else Some(javaValue);
+        writeText("${request#gameDir}/local.mk", localMkText(request#engine, java))
 
     /// engine_full の fpkg と flix.toml を、ゲームの lib/github/… に版名で置く
     /// (初回ビルドでのダウンロードを不要にする)。版が読めなければ飛ばす —
