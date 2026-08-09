@@ -239,7 +239,11 @@ stage-engine:
 	# 運ばない。中身が fpkg だけで対の toml が無く、Tauri のリソース収集が転ぶのもある。
 	# build/ も運ばない。コンパイル成果物なので複製先で作り直せるが、放っておくと
 	# テンプレ 1 本で GB 級になり .app がその分ふくらむ。
-	find $(ENGINE_STAGE)/templates -type d \( -name lib -o -name build \) -exec rm -rf {} +
+	# .devbox/ も運ばない。中身が nix store を指す symlink で、そのマシンにしか無い先を
+	# 指す。運ぶと codesign --verify が "invalid destination for symbolic link" で転ぶ
+	# (Tauri のリソース収集は symlink を落とすので make app では出ず、swap-engine の
+	# cp -R だけで出る — 気づきにくい)。
+	find $(ENGINE_STAGE)/templates -type d \( -name lib -o -name build -o -name .devbox \) -exec rm -rf {} +
 	cp $(ENGINE)/engine_full/artifact/engine_full.fpkg $(ENGINE_STAGE)/engine_full/artifact/
 	# 種の出どころに $(ENGINE)/lib を使わないのは、engine リポの lib/ が生成物 (gitignore) で
 	# 空のことがあるから。server 自身のビルドで必ず落ちる同じ lwjgl を使い回す。
