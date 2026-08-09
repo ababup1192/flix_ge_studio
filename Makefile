@@ -194,11 +194,35 @@ app: jar web jre
 #   engine_full/  … 生まれたゲームの lib/ に置かれる engine の fpkg と toml
 #   agents-pack/  … 生まれたゲームに配る AGENTS.md と skills の元
 #   lib/          … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す
+# .app に焼き固める engine_full.fpkg がソースより古くないか見る。
+# WhyNot: これは engine 側の生成物なので「在れば良い」で通してしまいがちだが、.app は
+# 配る物で、ここで固めた fpkg が新しいゲームの lib/ にそのまま座る。版名は bump で進む
+# ので中身が古くても新しい版に見え、Flix は「版名が同じなら取り直さない」から、
+# 使う人の側では engine にも Release にも在る def が「Undefined name」になって終わる。
+# engine のソースが手元に無いとき (CI の一部) は judge できないので黙って通す。
+ENGINE_FULL_FPKG := $(ENGINE)/engine_full/artifact/engine_full.fpkg
+ENGINE_SRC_PKGS  := engine render_gl engine_world engine_tools
+.PHONY: check-engine-full
+check-engine-full:
+	@test -f "$(ENGINE_FULL_FPKG)" \
+	  || (echo "!! engine_full.fpkg がありません: $(ENGINE_FULL_FPKG) (engine で make sync-engine-full)" && exit 1)
+	@dirs=""; for p in $(ENGINE_SRC_PKGS); do [ -d "$(ENGINE)/$$p/src" ] && dirs="$$dirs $(ENGINE)/$$p/src"; done; \
+	 if [ -z "$$dirs" ]; then \
+	   echo "==> [engine] engine のソースが無いので鮮度は見ません"; \
+	 else \
+	   newer=$$(find $$dirs -name '*.flix' -newer "$(ENGINE_FULL_FPKG)" 2>/dev/null | head -5); \
+	   if [ -n "$$newer" ]; then \
+	     echo "!! engine_full.fpkg が engine のソースより古いです。engine で make sync-engine-full してください"; \
+	     echo "$$newer" | sed 's/^/  新しい: /'; exit 1; \
+	   fi; \
+	 fi
+
 .PHONY: stage-engine
 stage-engine:
 	@echo "==> [engine] 同梱 engine をステージ"
 	@test -n "$(FLIX_JAR)" -a -f "$(FLIX_JAR)" \
 	  || (echo "!! flix.jar が見つかりません (FLIX_JAR= で場所を指定してください)" && exit 1)
+	@$(MAKE) --no-print-directory check-engine-full
 	rm -rf $(ENGINE_STAGE)
 	mkdir -p $(ENGINE_STAGE)/bin $(ENGINE_STAGE)/engine_full/artifact
 	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
