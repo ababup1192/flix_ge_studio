@@ -65,6 +65,7 @@ module Atelier exposing
     , showExtend
     , showLanding
     , showPicks
+    , sketchResizeActive
     , sketchSaveFailed
     , sketchSaved
     , sketchStrokeActive
@@ -1396,6 +1397,12 @@ sketchSaveFailed reason model =
 sketchStrokeActive : Model -> Bool
 sketchStrokeActive model =
     SketchPad.strokeActive model.sketch
+
+
+{-| ラフのグリッドつまみをドラッグ中か(Main がこの間だけグローバル mousemove/up を購読する)。 -}
+sketchResizeActive : Model -> Bool
+sketchResizeActive model =
+    SketchPad.resizeActive model.sketch
 
 
 {-| コピーする本文 — 下書きに「あなたの言葉」を続ける(空なら下書きだけ)。 -}

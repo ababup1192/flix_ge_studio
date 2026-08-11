@@ -10,6 +10,34 @@ import SketchPad
 import Test exposing (Test, describe, test)
 
 
+{-| 6x4 の左上に W・右下に F を塗った模型(リサイズの検査用)。
+
+    W . . . . .
+    . . . . . .
+    . . . . . .
+    . . . . . F
+
+-}
+cornerModel : SketchPad.Model
+cornerModel =
+    { paintedModel
+        | size = { w = 6, h = 4 }
+        , rows = [ "W.....", "......", "......", ".....F" ]
+    }
+
+
+{-| 角のつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
+dragCorner : ( Float, Float ) -> SketchPad.Model -> SketchPad.Model
+dragCorner ( dx, dy ) model =
+    stepAll
+        [ SketchPad.ResizeStarted SketchPad.CornerEdge { x = 100, y = 100 }
+        , SketchPad.ResizeMoved { x = 100 + dx, y = 100 + dy }
+        , SketchPad.ResizeEnded
+        ]
+        model
+        |> Tuple.first
+
+
 {-| 2x2 を 1 マスだけ塗った最小の模型。
 
     W .        W = 壁(ひとこと付き)
@@ -83,7 +111,7 @@ suite =
                         |> Expect.equal
                             (Just
                                 (String.join "\n"
-                                    [ "## 画面のラフ（2x2、1文字=1マス。塗りから自動生成）"
+                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、1文字=1マス。塗りから自動生成）"
                                     , "凡例: W=壁（崩れかけた石壁）  .=空き"
                                     , "W."
                                     , ".."
@@ -142,6 +170,170 @@ suite =
                     in
                     ( afterUndo.rows, List.length afterUndo.undo )
                         |> Expect.equal ( [ "..", ".." ], 0 )
+            ]
+        , describe "リサイズ(はみ出した塗りの保持と復元)"
+            [ test "角を左上へ 2 マスぶん引くと 4x3 になり、右下の F は見えなくなる" <|
+                \_ ->
+                    let
+                        shrunk =
+                            dragCorner ( -40, -20 ) cornerModel
+                    in
+                    ( shrunk.size, shrunk.rows )
+                        |> Expect.equal ( { w = 4, h = 3 }, [ "W...", "....", "...." ] )
+            , test "縮めた後の保存 JSON と依頼文は、見えている範囲だけを載せる" <|
+                \_ ->
+                    let
+                        shrunk =
+                            dragCorner ( -40, -20 ) cornerModel
+
+                        section =
+                            SketchPad.promptSection shrunk |> Maybe.withDefault ""
+                    in
+                    ( String.contains ".....F" (SketchPad.encode shrunk)
+                    , String.contains "F=床" section
+                    , String.contains "4x3" section
+                    )
+                        |> Expect.equal ( False, False, True )
+            , test "縮めてから同じぶん広げ直すと F が戻る" <|
+                \_ ->
+                    let
+                        restored =
+                            cornerModel
+                                |> dragCorner ( -40, -20 )
+                                |> dragCorner ( 40, 20 )
+                    in
+                    ( restored.size, restored.rows )
+                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+            , test "縮めた後にプリセットを替えると、退避していた塗りも捨てられ、広げても蘇らない" <|
+                \_ ->
+                    let
+                        after =
+                            cornerModel
+                                |> dragCorner ( -40, -20 )
+                                |> stepAll [ SketchPad.PresetPicked "map" ]
+                                |> Tuple.first
+                                |> dragCorner ( 40, 20 )
+                    in
+                    (after.rows ++ after.hidden)
+                        |> List.any (\row -> String.contains "F" row || String.contains "W" row)
+                        |> Expect.equal False
+            , test "縮める→戻す→消す→縮める→広げる、で消した塗りは退避から戻らない" <|
+                \_ ->
+                    let
+                        after =
+                            cornerModel
+                                |> dragCorner ( -40, -20 )
+                                |> stepAll [ SketchPad.UndoClicked ]
+                                |> Tuple.first
+                                |> stepAll
+                                    [ SketchPad.ToolPicked SketchPad.Eraser
+                                    , SketchPad.CellDown ( 5, 3 )
+                                    , SketchPad.StrokeEnded
+                                    ]
+                                |> Tuple.first
+                                |> dragCorner ( -40, -20 )
+                                |> dragCorner ( 40, 20 )
+                    in
+                    ( after.rows |> List.any (String.contains "F")
+                    , after.rows |> List.head |> Maybe.map (String.startsWith "W")
+                    )
+                        |> Expect.equal ( False, Just True )
+            ]
+        , describe "リサイズ(スナップと軸の独立)"
+            [ test "右のつまみを +45px 引くと round で 2 列増え、行は変わらない" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ResizeStarted SketchPad.RightEdge { x = 100, y = 100 }
+                                , SketchPad.ResizeMoved { x = 145, y = 999 }
+                                , SketchPad.ResizeEnded
+                                ]
+                                cornerModel
+                    in
+                    after.size |> Expect.equal { w = 8, h = 4 }
+            , test "下のつまみを +45px 引くと 2 行増え、列は変わらない" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ResizeStarted SketchPad.BottomEdge { x = 100, y = 100 }
+                                , SketchPad.ResizeMoved { x = 999, y = 145 }
+                                , SketchPad.ResizeEnded
+                                ]
+                                cornerModel
+                    in
+                    after.size |> Expect.equal { w = 6, h = 6 }
+            ]
+        , describe "リサイズ(上限・下限)"
+            [ test "どれだけ引いても 48x32 で止まる" <|
+                \_ ->
+                    (dragCorner ( 10000, 10000 ) cornerModel).size
+                        |> Expect.equal { w = 48, h = 32 }
+            , test "どれだけ縮めても 4x3 で止まる" <|
+                \_ ->
+                    (dragCorner ( -10000, -10000 ) cornerModel).size
+                        |> Expect.equal { w = 4, h = 3 }
+            ]
+        , describe "リサイズ(undo)"
+            [ test "1 ドラッグで undo は 1 本" <|
+                \_ ->
+                    dragCorner ( -40, -20 ) cornerModel
+                        |> .undo
+                        |> List.length
+                        |> Expect.equal 1
+            , test "戻すとサイズと塗りが対で元に戻る" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            dragCorner ( -40, -20 ) cornerModel
+                                |> stepAll [ SketchPad.UndoClicked ]
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal ( cornerModel.size, cornerModel.rows )
+            ]
+        , describe "カメラ(保存と読み戻し)"
+            [ test "encode → decode でカメラが保たれる" <|
+                \_ ->
+                    SketchPad.decode (SketchPad.encode { paintedModel | camera = SketchPad.SideView })
+                        |> Maybe.map .camera
+                        |> Expect.equal (Just SketchPad.SideView)
+            , test "camera の欄が無い旧 JSON はプリセットの初期カメラに倒す" <|
+                \_ ->
+                    SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"legend":[],"rows":["..",".."],"note":""}"""
+                        |> Maybe.map .camera
+                        |> Expect.equal (Just SketchPad.TopDown)
+            , test "知らないカメラ名も読める(fail-open で初期カメラに倒す)" <|
+                \_ ->
+                    SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"fisheye","legend":[],"rows":["..",".."],"note":""}"""
+                        |> Maybe.map .camera
+                        |> Expect.equal (Just SketchPad.TopDown)
+            ]
+        , describe "カメラ(プリセット連動と選び直し)"
+            [ test "風景プリセットを選ぶとサイドビューで始まる" <|
+                \_ ->
+                    stepAll [ SketchPad.PresetPicked "scenery" ] SketchPad.init
+                        |> Tuple.first
+                        |> .camera
+                        |> Expect.equal SketchPad.SideView
+            , test "プリセットの初期カメラは後から選び直せる" <|
+                \_ ->
+                    stepAll
+                        [ SketchPad.PresetPicked "scenery"
+                        , SketchPad.CameraPicked SketchPad.FirstPerson
+                        ]
+                        SketchPad.init
+                        |> Tuple.first
+                        |> .camera
+                        |> Expect.equal SketchPad.FirstPerson
+            ]
+        , describe "カメラ(依頼文への反映)"
+            [ test "見出しにカメラとサイズが出る" <|
+                \_ ->
+                    SketchPad.promptSection { paintedModel | camera = SketchPad.SideView }
+                        |> Maybe.withDefault ""
+                        |> String.contains "カメラ: サイドビュー、2x2"
+                        |> Expect.equal True
             ]
         ]
 

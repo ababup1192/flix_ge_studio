@@ -1,15 +1,19 @@
 module SketchPad exposing
-    ( Entry
+    ( Camera(..)
+    , Edge(..)
+    , Entry
     , Model
     , Msg(..)
     , Out(..)
     , Tool(..)
+    , cameraLabel
     , decode
     , encode
     , init
     , nextChar
     , presets
     , promptSection
+    , resizeActive
     , saveFailed
     , saved
     , sketchPath
@@ -17,6 +21,7 @@ module SketchPad exposing
     , strokeActive
     , update
     , view
+    , viewInline
     )
 
 {-| 画面のラフ塗り。「大体ここ壁・ここに人」をマス目に雑に塗って、
@@ -62,6 +67,24 @@ type Tool
     | Eraser
 
 
+{-| カメラアングル。グリッドの見た目は変えず、AI への意図伝えにだけ使う
+(編集面まで傾けると塗る操作が難しくなるだけで得が無い)。
+-}
+type Camera
+    = TopDown
+    | SideView
+    | Quarter
+    | Behind
+    | FirstPerson
+
+
+{-| リサイズのつまみ。右端=列、下端=行、角=両方。 -}
+type Edge
+    = RightEdge
+    | BottomEdge
+    | CornerEdge
+
+
 {-| 保存の進み。失敗はサーバの理由をそのまま出す。 -}
 type SaveState
     = SaveIdle
@@ -91,9 +114,27 @@ type alias Model =
     -- 一筆(mousedown〜up)の途中か。親はこの間だけグローバル mouseup を購読する
     , stroke : Bool
 
-    -- 戻す用のスナップショット(一筆 1 本・直近 20 筆まで)
-    , undo : List (List String)
+    -- 戻す用のスナップショット(一筆・1 リサイズで 1 本・直近 20 本まで)。
+    -- rows だけ戻すとサイズと食い違うので、必ず対で戻す
+    , undo : List { size : { w : Int, h : Int }, rows : List String }
     , save : SaveState
+    , camera : Camera
+
+    -- カメラの絵柄一覧を開いているか(普段はチップ 1 枚に畳む)
+    , cameraOpen : Bool
+
+    -- 縮めて見えなくなった塗りの退避(これまで塗った全域)。
+    -- 保存には含めない — 保存物 = 見えている絵、という約束を守るため
+    , hidden : List String
+
+    -- グリッドのつまみをドラッグ中だけ Just。親はこの間だけグローバル mousemove/up を購読する
+    , resize :
+        Maybe
+            { edge : Edge
+            , start : { x : Float, y : Float }
+            , startSize : { w : Int, h : Int }
+            , startRows : List String
+            }
     }
 
 
@@ -117,6 +158,11 @@ type Msg
     | CellDown ( Int, Int )
     | CellEntered ( Int, Int )
     | StrokeEnded
+    | ResizeStarted Edge { x : Float, y : Float }
+    | ResizeMoved { x : Float, y : Float }
+    | ResizeEnded
+    | CameraToggled
+    | CameraPicked Camera
     | UndoClicked
     | NoteEdited String
     | NameEdited String
@@ -127,6 +173,24 @@ type Msg
 emptyChar : Char
 emptyChar =
     '.'
+
+
+{-| これ以上小さいと絵にならない下限。 -}
+minSize : { w : Int, h : Int }
+minSize =
+    { w = 4, h = 3 }
+
+
+{-| 依頼文に貼って読める上限(これ以上は文字グリッドが長すぎて AI が迷う)。 -}
+maxSize : { w : Int, h : Int }
+maxSize =
+    { w = 48, h = 32 }
+
+
+{-| 1 マスの画面上の大きさ(px)。viewCell の h-5 w-5 と対。 -}
+cellPx : Int
+cellPx =
+    20
 
 
 init : Model
@@ -157,6 +221,10 @@ fromPreset presetId =
     , stroke = False
     , undo = []
     , save = SaveIdle
+    , camera = preset.camera
+    , cameraOpen = False
+    , hidden = []
+    , resize = Nothing
     }
 
 
@@ -167,11 +235,12 @@ fromPreset presetId =
 {-| 塗り始めの品揃え。あくまで初期値 — ラベルは後からいくらでも
 変えられる・増やせるので、ここを変えても保存済みファイルは壊れない。
 -}
-presets : List { id : String, label : String, size : { w : Int, h : Int }, legend : List Entry }
+presets : List { id : String, label : String, size : { w : Int, h : Int }, camera : Camera, legend : List Entry }
 presets =
     [ { id = "map"
       , label = "マップ"
       , size = { w = 16, h = 10 }
+      , camera = TopDown
       , legend =
             [ { char = 'W', name = "壁", fill = "#8a6d3b", desc = "" }
             , { char = 'F', name = "床", fill = "#d9cfb8", desc = "" }
@@ -185,6 +254,7 @@ presets =
     , { id = "ui"
       , label = "UI"
       , size = { w = 12, h = 8 }
+      , camera = TopDown
       , legend =
             [ { char = 'H', name = "見出し", fill = "#7c5cd6", desc = "" }
             , { char = 'B', name = "ボタン", fill = "#4f6df5", desc = "" }
@@ -196,6 +266,7 @@ presets =
     , { id = "scenery"
       , label = "風景"
       , size = { w = 12, h = 8 }
+      , camera = SideView
       , legend =
             [ { char = 'S', name = "空", fill = "#7ec8e3", desc = "" }
             , { char = 'G', name = "地面", fill = "#8a6d3b", desc = "" }
@@ -207,9 +278,71 @@ presets =
     ]
 
 
-fallbackPreset : { id : String, label : String, size : { w : Int, h : Int }, legend : List Entry }
+fallbackPreset : { id : String, label : String, size : { w : Int, h : Int }, camera : Camera, legend : List Entry }
 fallbackPreset =
-    { id = "map", label = "マップ", size = { w = 16, h = 10 }, legend = [] }
+    { id = "map", label = "マップ", size = { w = 16, h = 10 }, camera = TopDown, legend = [] }
+
+
+{-| カメラの日本語名(チップ・ボタン・依頼文で共用)。 -}
+cameraLabel : Camera -> String
+cameraLabel camera =
+    case camera of
+        TopDown ->
+            "見下ろし"
+
+        SideView ->
+            "サイドビュー"
+
+        Quarter ->
+            "クォーター"
+
+        Behind ->
+            "背後から"
+
+        FirstPerson ->
+            "一人称"
+
+
+{-| 保存 JSON に書く英語 id(日本語をファイルに書かない)。 -}
+cameraId : Camera -> String
+cameraId camera =
+    case camera of
+        TopDown ->
+            "top-down"
+
+        SideView ->
+            "side"
+
+        Quarter ->
+            "quarter"
+
+        Behind ->
+            "behind"
+
+        FirstPerson ->
+            "first-person"
+
+
+cameraFromId : String -> Maybe Camera
+cameraFromId id =
+    case id of
+        "top-down" ->
+            Just TopDown
+
+        "side" ->
+            Just SideView
+
+        "quarter" ->
+            Just Quarter
+
+        "behind" ->
+            Just Behind
+
+        "first-person" ->
+            Just FirstPerson
+
+        _ ->
+            Nothing
 
 
 
@@ -236,6 +369,7 @@ encode model =
             , ( "kind", E.string "sketch" )
             , ( "preset", E.string model.preset )
             , ( "size", E.object [ ( "w", E.int model.size.w ), ( "h", E.int model.size.h ) ] )
+            , ( "camera", E.string (cameraId model.camera) )
             , ( "legend", E.list encodeEntry model.legend )
             , ( "rows", E.list E.string model.rows )
             , ( "note", E.string model.note )
@@ -269,14 +403,18 @@ decode text =
 
 sketchDecoder : D.Decoder Model
 sketchDecoder =
-    D.map5
-        (\preset size legend rows note ->
+    D.map6
+        (\preset size cameraText legend rows note ->
             let
                 base =
                     fromPreset preset
             in
             { base
                 | size = size
+
+                -- カメラの欄が無い・知らない値でも読める(fail-open)。
+                -- 読めない Doc で全体を止めないため、プリセットの初期カメラに倒す
+                , camera = cameraFromId cameraText |> Maybe.withDefault base.camera
                 , legend = legend
                 , rows = rows
                 , note = note
@@ -285,6 +423,7 @@ sketchDecoder =
         )
         (D.field "preset" D.string)
         (D.field "size" (D.map2 (\w h -> { w = w, h = h }) (D.field "w" D.int) (D.field "h" D.int)))
+        (D.oneOf [ D.field "camera" D.string, D.succeed "" ])
         (D.field "legend" (D.list entryDecoder))
         (D.field "rows" (D.list D.string))
         (D.field "note" D.string)
@@ -369,7 +508,7 @@ promptSection model =
         Just
             (String.join "\n"
                 (List.concat
-                    [ [ "## 画面のラフ（" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、1文字=1マス。塗りから自動生成）"
+                    [ [ "## 画面のラフ（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、1文字=1マス。塗りから自動生成）"
                       , "凡例: " ++ legendLine
                       ]
                     , model.rows
@@ -485,7 +624,7 @@ update msg model =
             ( { model
                 | rows = next
                 , stroke = model.tool /= Bucket
-                , undo = model.rows :: List.take 19 model.undo
+                , undo = { size = model.size, rows = model.rows } :: List.take 19 model.undo
                 , save = SaveIdle
               }
             , OutNone
@@ -501,10 +640,78 @@ update msg model =
         StrokeEnded ->
             ( { model | stroke = False }, OutNone )
 
+        ResizeStarted edge point ->
+            ( { model
+                | resize =
+                    Just
+                        { edge = edge
+                        , start = point
+                        , startSize = model.size
+                        , startRows = model.rows
+                        }
+              }
+            , OutNone
+            )
+
+        ResizeMoved point ->
+            case model.resize of
+                Nothing ->
+                    ( model, OutNone )
+
+                Just going ->
+                    let
+                        snap from delta =
+                            from + round (delta / toFloat cellPx)
+
+                        newSize =
+                            { w =
+                                if going.edge == BottomEdge then
+                                    going.startSize.w
+
+                                else
+                                    clamp minSize.w maxSize.w (snap going.startSize.w (point.x - going.start.x))
+                            , h =
+                                if going.edge == RightEdge then
+                                    going.startSize.h
+
+                                else
+                                    clamp minSize.h maxSize.h (snap going.startSize.h (point.y - going.start.y))
+                            }
+                    in
+                    if newSize == model.size then
+                        ( model, OutNone )
+
+                    else
+                        ( applySize newSize model, OutNone )
+
+        ResizeEnded ->
+            case model.resize of
+                Nothing ->
+                    ( model, OutNone )
+
+                Just going ->
+                    if going.startSize == model.size then
+                        ( { model | resize = Nothing }, OutNone )
+
+                    else
+                        ( { model
+                            | resize = Nothing
+                            , undo = { size = going.startSize, rows = going.startRows } :: List.take 19 model.undo
+                            , save = SaveIdle
+                          }
+                        , OutNone
+                        )
+
+        CameraToggled ->
+            ( { model | cameraOpen = not model.cameraOpen }, OutNone )
+
+        CameraPicked camera ->
+            ( { model | camera = camera, cameraOpen = False, save = SaveIdle }, OutNone )
+
         UndoClicked ->
             case model.undo of
                 previous :: rest ->
-                    ( { model | rows = previous, undo = rest, save = SaveIdle }, OutNone )
+                    ( { model | size = previous.size, rows = previous.rows, undo = rest, save = SaveIdle }, OutNone )
 
                 [] ->
                     ( model, OutNone )
@@ -519,6 +726,57 @@ update msg model =
             ( { model | save = SaveFlying }
             , OutSave { path = sketchPath model, content = encode model }
             )
+
+
+{-| グリッドの寸法替え。縮めて消えた塗りは hidden に取っておき、広げたら戻す。
+重なる範囲は rows が勝つ — 見えている所で消した「.」は人の意思なので、
+hidden の古い塗りで勝手に復活させない。
+-}
+applySize : { w : Int, h : Int } -> Model -> Model
+applySize newSize model =
+    let
+        fullW =
+            max model.size.w
+                (model.hidden |> List.map String.length |> List.maximum |> Maybe.withDefault 0)
+
+        fullH =
+            max model.size.h (List.length model.hidden)
+
+        pad width row =
+            String.padRight width emptyChar row
+
+        rowAt y rows =
+            rows |> List.drop y |> List.head
+
+        merged =
+            List.range 0 (fullH - 1)
+                |> List.map
+                    (\y ->
+                        let
+                            behind =
+                                pad fullW (rowAt y model.hidden |> Maybe.withDefault "")
+                        in
+                        case rowAt y model.rows of
+                            Just visible ->
+                                pad model.size.w visible
+                                    |> String.left model.size.w
+                                    |> (\front -> front ++ String.dropLeft model.size.w behind)
+
+                            Nothing ->
+                                behind
+                    )
+
+        cut =
+            List.range 0 (newSize.h - 1)
+                |> List.map
+                    (\y ->
+                        rowAt y merged
+                            |> Maybe.withDefault ""
+                            |> pad newSize.w
+                            |> String.left newSize.w
+                    )
+    in
+    { model | size = newSize, rows = cut, hidden = merged }
 
 
 {-| ラベルを選んだら消しゴムからはペンに戻す(選んだ色で塗れない、を防ぐ)。 -}
@@ -575,6 +833,12 @@ strokeActive model =
     model.stroke
 
 
+{-| グリッドのつまみをドラッグ中か(親がグローバル mousemove/up を購読する間だけ True)。 -}
+resizeActive : Model -> Bool
+resizeActive model =
+    model.resize /= Nothing
+
+
 {-| 保存成功。 -}
 saved : Model -> Model
 saved model =
@@ -625,18 +889,30 @@ viewHeader model =
 viewBody : Model -> Html Msg
 viewBody model =
     div [ HA.class "px-3 pb-3" ]
-        (List.concat
-            [ [ viewPresets model
-              , viewChips model
-              ]
-            , viewChipEditor model
-            , [ viewTools model
-              , viewGrid model
-              , viewNote model
-              , viewSaveRow model
-              ]
-            ]
-        )
+        (inlineParts model ++ [ viewSaveRow model ])
+
+
+{-| ヘッダも保存行も持たない埋め込み用の姿。保存先(プロジェクト)がまだ無い
+場所(新しいゲームのラフ札)に置くための形 — 保存は親の仕事になる。
+-}
+viewInline : Model -> Html Msg
+viewInline model =
+    div [ HA.class "px-3 pb-3" ] (inlineParts model)
+
+
+inlineParts : Model -> List (Html Msg)
+inlineParts model =
+    List.concat
+        [ [ viewPresets model
+          , viewCamera model
+          , viewChips model
+          ]
+        , viewChipEditor model
+        , [ viewTools model
+          , viewGridBlock model
+          , viewNote model
+          ]
+        ]
 
 
 viewPresets : Model -> Html Msg
@@ -769,6 +1045,183 @@ viewTools model =
         ]
 
 
+{-| カメラ選び。普段はチップ 1 枚に畳む — 一覧を常に開くと
+塗り場より先に絵柄ボタンが場所を取ってしまうため。
+-}
+viewCamera : Model -> Html Msg
+viewCamera model =
+    div [ HA.class "mb-2" ]
+        (button
+            [ HA.class "sketch-camera-toggle cursor-pointer rounded-full border border-edge px-2.5 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
+            , HE.onClick CameraToggled
+            ]
+            [ text "📷 カメラ: "
+            , span [ HA.class "text-accent" ] [ text (cameraLabel model.camera) ]
+            , text
+                (if model.cameraOpen then
+                    " ▴"
+
+                 else
+                    " ▾"
+                )
+            ]
+            :: (if model.cameraOpen then
+                    [ div [ HA.class "sketch-camera-list mt-1.5 flex flex-wrap gap-1.5 rounded border border-edge bg-black/20 p-2" ]
+                        ([ TopDown, SideView, Quarter, Behind, FirstPerson ]
+                            |> List.map (viewCameraOption model.camera)
+                        )
+                    ]
+
+                else
+                    []
+               )
+        )
+
+
+viewCameraOption : Camera -> Camera -> Html Msg
+viewCameraOption chosen camera =
+    button
+        [ HA.class
+            (if chosen == camera then
+                "sketch-camera-option flex cursor-pointer flex-col items-center gap-0.5 rounded border border-accent bg-accent/10 px-2 py-1.5"
+
+             else
+                "sketch-camera-option flex cursor-pointer flex-col items-center gap-0.5 rounded border border-edge px-2 py-1.5 hover:border-ink-faint"
+            )
+        , HE.onClick (CameraPicked camera)
+        ]
+        [ cameraGlyph camera
+        , span [ HA.class "text-[11px] text-ink" ] [ text (cameraLabel camera) ]
+        , span [ HA.class "text-[9px] text-ink-faint" ] [ text (cameraHint camera) ]
+        ]
+
+
+cameraHint : Camera -> String
+cameraHint camera =
+    case camera of
+        TopDown ->
+            "真上から"
+
+        SideView ->
+            "真横から"
+
+        Quarter ->
+            "ななめ上から"
+
+        Behind ->
+            "主人公の後ろ"
+
+        FirstPerson ->
+            "主人公の目"
+
+
+{-| カメラの絵柄。言葉だけだと「クォーター」等が伝わらないので、
+傾けたミニグリッド等の図で見せる(画像を持たないのは、色テーマに
+CSS だけで追随させるため)。
+-}
+cameraGlyph : Camera -> Html msg
+cameraGlyph camera =
+    div [ HA.class "flex h-9 w-11 items-center justify-center" ]
+        [ case camera of
+            TopDown ->
+                miniGrid []
+
+            SideView ->
+                div [ HA.class "relative h-6 w-8" ]
+                    [ div [ HA.class "absolute bottom-0 left-0 right-0 h-2 bg-ok/60" ] []
+                    , div [ HA.class "absolute bottom-2 left-1 h-2.5 w-1.5 bg-warn" ] []
+                    ]
+
+            Quarter ->
+                miniGrid [ HA.style "transform" "rotateX(56deg) rotateZ(45deg)" ]
+
+            Behind ->
+                div [ HA.class "relative flex items-center justify-center" ]
+                    [ miniGrid [ HA.style "transform" "rotateX(55deg)" ]
+                    , div [ HA.class "absolute bottom-0 left-1/2 -ml-0.5 h-2 w-1.5 bg-warn" ] []
+                    ]
+
+            FirstPerson ->
+                div [ HA.class "relative h-6 w-8 overflow-hidden rounded-[2px] border border-ink-soft/40" ]
+                    [ div [ HA.class "absolute bottom-0 left-0 right-0 h-3 bg-ok/25" ] []
+                    , div [ HA.class "absolute left-0 right-0 top-3 h-px bg-ink-soft/40" ] []
+                    , div [ HA.class "absolute inset-0 flex items-center justify-center text-[10px] text-warn" ] [ text "+" ]
+                    ]
+        ]
+
+
+miniGrid : List (Html.Attribute msg) -> Html msg
+miniGrid attrs =
+    div (HA.class "grid grid-cols-3 gap-px" :: attrs)
+        (List.repeat 9 (div [ HA.class "h-1.5 w-1.5 rounded-[1px] bg-ink-soft/50" ] []))
+
+
+{-| サイズバッジ + グリッド + つまみ 3 つ。つまみはグリッドの外周に
+重ねる(マスの中に置くと塗りの mousedown と取り合いになる)。
+-}
+viewGridBlock : Model -> Html Msg
+viewGridBlock model =
+    div []
+        [ div [ HA.class "mb-1" ]
+            [ span
+                [ HA.class
+                    (if model.resize /= Nothing then
+                        "sketch-size text-[10px] text-accent"
+
+                     else
+                        "sketch-size text-[10px] text-ink-faint"
+                    )
+                ]
+                [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h ++ " — 端をつまんで広げる・縮める") ]
+            ]
+        , div [ HA.class "relative inline-block pb-2 pr-2" ]
+            [ viewGrid model
+            , viewHandle model RightEdge
+            , viewHandle model BottomEdge
+            , viewHandle model CornerEdge
+            ]
+        ]
+
+
+viewHandle : Model -> Edge -> Html Msg
+viewHandle model edge =
+    let
+        dragging =
+            model.resize |> Maybe.map (\going -> going.edge == edge) |> Maybe.withDefault False
+
+        ( marker, place ) =
+            case edge of
+                RightEdge ->
+                    ( "sketch-resize-right", "absolute top-0 right-0 bottom-2 w-2 cursor-ew-resize rounded" )
+
+                BottomEdge ->
+                    ( "sketch-resize-bottom", "absolute bottom-0 left-0 right-2 h-2 cursor-ns-resize rounded" )
+
+                CornerEdge ->
+                    ( "sketch-resize-corner", "absolute bottom-0 right-0 h-2 w-2 cursor-nwse-resize rounded" )
+
+        tone =
+            if dragging then
+                " bg-accent/40"
+
+            else if edge == CornerEdge then
+                " bg-white/10 hover:bg-accent/40"
+
+            else
+                " bg-white/5 hover:bg-accent/40"
+    in
+    div
+        [ HA.class (marker ++ " " ++ place ++ tone)
+        , HE.custom "mousedown"
+            (D.map2
+                (\x y -> { message = ResizeStarted edge { x = x, y = y }, stopPropagation = True, preventDefault = True })
+                (D.field "clientX" D.float)
+                (D.field "clientY" D.float)
+            )
+        ]
+        []
+
+
 viewGrid : Model -> Html Msg
 viewGrid model =
     let
@@ -813,11 +1266,10 @@ viewCell colorOf x y char =
 viewNote : Model -> Html Msg
 viewNote model =
     div [ HA.class "mt-2" ]
-        [ div [ HA.class "text-[10px] text-ink-faint" ] [ text "全体の補足(ことば)" ]
+        [ div [ HA.class "text-[10px] text-ink-faint" ] [ text "ラフに対する補足" ]
         , Html.textarea
             [ HA.class "field mt-1 h-auto min-h-[2.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
             , HA.rows 2
-            , HA.placeholder "例: 左下からスタートして、右上の宝を目指す"
             , HA.value model.note
             , HE.onInput NoteEdited
             ]
