@@ -10,6 +10,7 @@ module AtelierFlowTest exposing (suite)
 import Atelier
 import Expect
 import Json.Decode as D
+import SketchPad
 import Test exposing (Test, describe, test)
 
 
@@ -630,4 +631,72 @@ suite =
                     D.decodeString Atelier.statusDecoder "{}"
                         |> Expect.equal (Ok False)
             ]
+        , describe "広げるのラフ塗り(SketchPad)"
+            [ test "塗ってからコピーすると、依頼文の【やること】より前にラフの一節が挟まる" <|
+                \_ ->
+                    let
+                        ( _, out ) =
+                            begin withExtendDraft
+                                |> step (Atelier.SketchMsg (SketchPad.CellDown ( 0, 0 )))
+                                |> step (Atelier.SketchMsg SketchPad.StrokeEnded)
+                                |> step Atelier.CopyExtendPromptClicked
+                    in
+                    case out of
+                        Atelier.OutCopyPrompt text ->
+                            ( String.contains "## 画面のラフ" text
+                            , maybeLess (String.indexes "## 画面のラフ" text) (String.indexes "【やること】" text)
+                            )
+                                |> Expect.equal ( True, True )
+
+                        _ ->
+                            Expect.fail "コピーの注文が出ていない"
+            , test "何も塗らないコピーは今まで通り(ラフの一節は入らない)" <|
+                \_ ->
+                    let
+                        ( _, out ) =
+                            begin withExtendDraft
+                                |> step Atelier.CopyExtendPromptClicked
+                    in
+                    case out of
+                        Atelier.OutCopyPrompt text ->
+                            String.contains "## 画面のラフ" text |> Expect.equal False
+
+                        _ ->
+                            Expect.fail "コピーの注文が出ていない"
+            , test "保存を押すと draft/sketch/ への putFile の注文が出る" <|
+                \_ ->
+                    let
+                        ( _, out ) =
+                            begin withExtendDraft
+                                |> step (Atelier.SketchMsg (SketchPad.NameEdited "stage2"))
+                                |> step (Atelier.SketchMsg SketchPad.SaveClicked)
+                    in
+                    case out of
+                        Atelier.OutSaveSketch info ->
+                            info.path |> Expect.equal "draft/sketch/stage2.sketch.json"
+
+                        _ ->
+                            Expect.fail "保存の注文が出ていない"
+            ]
         ]
+
+
+{-| 「広げる」の下書きが届いた状態(サーバの固定構造どおり【やること】を含む)。 -}
+withExtendDraft : Atelier.Model
+withExtendDraft =
+    Atelier.init
+        |> Atelier.gotExtendPrompt
+            { title = "場面を足す"
+            , prompt = "あなたはこのゲームを広げる係です。\n対象プロジェクト: demo\n\n【やること】\n1. 場面を足す"
+            }
+
+
+{-| 先頭同士を比べて「前に出てくるか」。どちらか欠けたら False。 -}
+maybeLess : List Int -> List Int -> Bool
+maybeLess xs ys =
+    case ( xs, ys ) of
+        ( x :: _, y :: _ ) ->
+            x < y
+
+        _ ->
+            False

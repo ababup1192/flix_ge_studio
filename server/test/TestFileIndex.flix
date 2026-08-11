@@ -28,6 +28,20 @@ mod TestFileIndex {
             expected = "assets/Hud.ui.json" :: "assets/hitbox.json" :: "assets/nested/Deep.ui.json" :: "top.ui.json" :: Nil,
             FileIndex.walkJson(fakeChildren, "") |> List.sort)
 
+    // ══ 書き込み時の親ディレクトリ作成の許可 ═════════════════
+
+    /// 親を作ってよいのは draft/ 配下だけ。区切りが "\" でも同じに扱い、
+    /// 名前の頭が draft なだけ (draftx/ 等) では許さない。
+    @Test
+    def testAllowsParentCreationOnlyUnderDraft(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, true, false, false, false),
+            (FileIndex.allowsParentCreation("draft/sketch/title.sketch.json"),
+             FileIndex.allowsParentCreation("draft\\sketch\\title.sketch.json"),
+             FileIndex.allowsParentCreation("assets/theme.kind.json"),
+             FileIndex.allowsParentCreation("draftx/sketch.json"),
+             FileIndex.allowsParentCreation("")))
+
     // ══ /changes の token ═════════════════════════════════
 
     /// token は「同じ一覧なら同じ・mtime が 1 つ変わる/件数が変わると別」の集計値。

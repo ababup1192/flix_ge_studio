@@ -105,12 +105,27 @@ mod FileIndex {
                 readResult |> Result.mapErr(ioError -> "read failed: ${ioError}")
         }
 
+    /// 書き込み時に親ディレクトリを Studio が作ってよい相対パスか。下書き置き場
+    /// (draft/ 配下) だけ真。
+    // WhyNot: 全パスで親を作らない — 置き場所の打ち間違いが静かにディレクトリを
+    // 増やすのを防ぐ既定は保ち、ゲームの動きに関わらない draft/ だけ例外にする。
+    pub def allowsParentCreation(relPath: String): Bool =
+        String.replace(src = "\\", dst = "/", relPath)
+            |> String.splitOn(substr = "/")
+            |> List.head
+            |> Option.map(segment -> segment == "draft")
+            |> Option.getWithDefault(false)
+
     /// dir 相対パスへ文字列を書き込む。プロジェクト外・親ディレクトリ不在は Err(理由)。
+    /// draft/ 配下だけは親ディレクトリが無ければ作ってから書く。
     pub def writeInside(str: {str = String}, dir: String, relPath: String): Result[String, Unit] \ IO =
         match resolveInside(dir, relPath) {
             case None => Err("path is outside the project: ${relPath}")
             case Some(fullPath) =>
                 let parent = new JFile(fullPath).getParentFile();
+                if (allowsParentCreation(relPath) and not Object.isNull(parent))
+                    discard parent.mkdirs()
+                else ();
                 // 新しいディレクトリは作らない: 置き場所の打ち間違いが静かにディレクトリを増やすのを防ぐ。
                 if (Object.isNull(parent) or not parent.isDirectory())
                     Err("parent directory does not exist: ${relPath}")

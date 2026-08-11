@@ -35,6 +35,7 @@ import Html.Events as HE
 import Html.Keyed
 import FormHelp
 import Html.Lazy as HL
+import SketchPad
 import Svg
 import Svg.Attributes as SA
 import Journey
@@ -555,6 +556,10 @@ type alias Model =
     , loadReq : Maybe Int
     , putReq : Maybe Int
 
+    -- アトリエのラフ塗り(SketchPad)の保存 putFile の id。本文の保存(putReq)と
+    -- 応答の行き先が違うので別に控える
+    , sketchSaveReq : Maybe Int
+
     -- 保存ボタンを押した瞬間の本文(往復中に編集が進んでも、送るのはこれ)
     , savingText : Maybe String
 
@@ -936,6 +941,7 @@ init _ =
         , mtime = Nothing
         , loadReq = Nothing
         , putReq = Nothing
+        , sketchSaveReq = Nothing
         , savingText = Nothing
         , conflict = Nothing
         , staleMtime = Nothing
@@ -1413,6 +1419,16 @@ update msg model =
                     request "atelierRestore"
                         (E.object [ ( "file", E.string file ) ])
                         m1
+
+                Atelier.OutSaveSketch info ->
+                    -- ラフ塗りの保存。下書きなので ifMtime は付けない(最後の書き手勝ち)
+                    let
+                        ( m2, fx ) =
+                            request "putFile"
+                                (E.object [ ( "path", E.string info.path ), ( "content", E.string info.content ) ])
+                                m1
+                    in
+                    ( { m2 | sketchSaveReq = Just m2.reqCounter }, fx )
 
                 Atelier.OutClosed ->
                     -- 採用の祝いを閉じた。世界が変わったので候補と提案を取り直す。
@@ -6969,7 +6985,13 @@ handleOkByKind env model =
             )
 
         "putFile" ->
-            if Just env.id == model.putReq then
+            if Just env.id == model.sketchSaveReq then
+                -- アトリエのラフ塗りの保存。本文の保存(下の分岐)とは別の道
+                ( { model | sketchSaveReq = Nothing, atelier = Atelier.sketchSaved model.atelier }
+                , Effect.none
+                )
+
+            else if Just env.id == model.putReq then
                 case D.decodeValue Api.putFileResultDecoder env.body of
                     Ok (Api.PutOk result) ->
                         let
@@ -7448,9 +7470,16 @@ handleErrByKind env message model =
                 ( model, Effect.none )
 
         "putFile" ->
-            ( { model | putReq = Nothing, savingText = Nothing, notice = Just ("保存に失敗: " ++ message) }
-            , Effect.none
-            )
+            if Just env.id == model.sketchSaveReq then
+                -- ラフ塗りの保存失敗。理由は塗りパネルの保存ボタンの脇に出す
+                ( { model | sketchSaveReq = Nothing, atelier = Atelier.sketchSaveFailed message model.atelier }
+                , Effect.none
+                )
+
+            else
+                ( { model | putReq = Nothing, savingText = Nothing, notice = Just ("保存に失敗: " ++ message) }
+                , Effect.none
+                )
 
         "applyDocEdit" ->
             ( { model | editReq = Nothing, pendingEdits = [], notice = Just ("編集を反映できません: " ++ message) }
@@ -14086,6 +14115,13 @@ subscriptions model =
         -- マップの一筆も同じ(グリッドの外で離しても確定させる)
         , if MapEditor.strokeActive model.mapEd then
             Browser.Events.onMouseUp (D.succeed (MapMsg MapEditor.StrokeEnded))
+
+          else
+            Sub.none
+
+        -- アトリエのラフ塗りの一筆も同じ
+        , if Atelier.sketchStrokeActive model.atelier then
+            Browser.Events.onMouseUp (D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.StrokeEnded)))
 
           else
             Sub.none

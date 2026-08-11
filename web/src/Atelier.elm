@@ -65,6 +65,9 @@ module Atelier exposing
     , showExtend
     , showLanding
     , showPicks
+    , sketchSaveFailed
+    , sketchSaved
+    , sketchStrokeActive
     , slotCandidateCount
     , slotVersion
     , slotsFailed
@@ -103,6 +106,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import Progress
+import SketchPad
 import Url
 
 
@@ -358,6 +362,9 @@ type alias Model =
     , extendWords : String
     , extendCopied : Bool
 
+    -- 「広げる」の先頭に置く画面のラフ塗り(依頼文に文字グリッドとして挟まる)
+    , sketch : SketchPad.Model
+
     -- アーカイブの中身(GET /atelier/archive)
     , archive : ArchiveData
 
@@ -409,6 +416,7 @@ init =
     , extendPrompt = ExtendIdle
     , extendWords = ""
     , extendCopied = False
+    , sketch = SketchPad.init
     , archive = ArchiveLoading
     , archivePending = Nothing
     , restorePending = Nothing
@@ -469,6 +477,7 @@ type Msg
     | CopyResetTick
     | EditCandidateClicked String
     | CopyCurrentClicked String
+    | SketchMsg SketchPad.Msg
     | NoOp
 
 
@@ -489,6 +498,7 @@ type Out
     | OutEditFile String
     | OutArchive String
     | OutRestore String
+    | OutSaveSketch { path : String, content : String }
 
 
 update : Msg -> Model -> ( Model, Out )
@@ -634,11 +644,29 @@ update msg model =
             case model.extendPrompt of
                 ExtendReady draft ->
                     ( { model | extendCopied = True }
-                    , OutCopyPrompt (extendClipboard draft.prompt model.extendWords)
+                    , OutCopyPrompt (extendClipboard (sketchedPrompt model draft.prompt) model.extendWords)
                     )
 
                 _ ->
                     ( model, OutNone )
+
+        SketchMsg sketchMsg ->
+            let
+                ( sketch, out ) =
+                    SketchPad.update sketchMsg model.sketch
+
+                next =
+                    { model | sketch = sketch }
+            in
+            case out of
+                SketchPad.OutNone ->
+                    ( next, OutNone )
+
+                SketchPad.OutToast message ->
+                    ( next, OutToast message )
+
+                SketchPad.OutSave info ->
+                    ( next, OutSaveSketch info )
 
         ComboTrialClicked ->
             ( model, OutToast "これから: 複数の候補を、何も書き換えずに組み合わせて走らせて比べられるようになります" )
@@ -1339,6 +1367,37 @@ extendPromptFailed message model =
     { model | extendPrompt = ExtendFailed (cleanReason message) }
 
 
+{-| 下書きにラフ塗りの一節を挟んだ、画面とコピーで見せる本文。
+描いていなければ素通し。保存した文字列ではなく毎回導出する —
+描き直せば依頼文も追随し、失効の管理が要らない。
+-}
+sketchedPrompt : Model -> String -> String
+sketchedPrompt model draft =
+    case SketchPad.promptSection model.sketch of
+        Nothing ->
+            draft
+
+        Just section ->
+            SketchPad.spliceInto section draft
+
+
+{-| putFile(ラフの保存)の応答。成功・失敗の印は塗りパネルの保存ボタンの脇に出す。 -}
+sketchSaved : Model -> Model
+sketchSaved model =
+    { model | sketch = SketchPad.saved model.sketch }
+
+
+sketchSaveFailed : String -> Model -> Model
+sketchSaveFailed reason model =
+    { model | sketch = SketchPad.saveFailed (cleanReason reason) model.sketch }
+
+
+{-| ラフの一筆の途中か(Main がこの間だけグローバル mouseup を購読する)。 -}
+sketchStrokeActive : Model -> Bool
+sketchStrokeActive model =
+    SketchPad.strokeActive model.sketch
+
+
 {-| コピーする本文 — 下書きに「あなたの言葉」を続ける(空なら下書きだけ)。 -}
 extendClipboard : String -> String -> String
 extendClipboard draft words =
@@ -1871,6 +1930,7 @@ viewExtend model =
                 [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🧩 ゲームを広げる" ]
                   , div [ HA.class "mb-4 text-[11px] leading-relaxed text-ink-soft" ]
                         [ text "足したいものを選ぶと、AI に渡す依頼文の下書きができます。あなたの言葉を足して仕上げてください。" ]
+                  , Html.map SketchMsg (SketchPad.view model.sketch)
                   , div [ HA.class "flex flex-col gap-3 sm:flex-row" ]
                         (List.map (viewExtendKind model.extendPrompt) extendKinds)
                   ]
@@ -1946,7 +2006,7 @@ viewExtendPromptBox model =
                 , Html.textarea
                     [ HA.class "atelier-extend-prompt mt-2 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
                     , HA.readonly True
-                    , HA.value draft.prompt
+                    , HA.value (sketchedPrompt model draft.prompt)
                     ]
                     []
                 , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "あなたの言葉" ]
