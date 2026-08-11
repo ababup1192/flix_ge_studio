@@ -231,6 +231,15 @@ stage-engine:
 	# 生まれたゲームへ配る道具 (new-game の sync-agents が bin/ と .claude/hooks/ から写す物。
 	# 一覧は engine の Makefile sync-agents の cp と対 — あちらだけ増えると同梱 new-game が転ぶ)
 	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
+	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/golden-bless.sh \
+	   $(ENGINE)/bin/golden-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
+	# ゲームの make api / status / スキルの参照先 (docs)。同梱漏れは末尾の check-refs が止める
+	mkdir -p $(ENGINE_STAGE)/docs/api-digest
+	cp $(ENGINE)/docs/api-digest.md $(ENGINE)/docs/module-index.md \
+	   $(ENGINE)/docs/engine-module-index.md $(ENGINE)/docs/doc-conventions.md \
+	   $(ENGINE)/docs/glossary.md $(ENGINE)/docs/shader-doc.md $(ENGINE)/docs/checkd.md \
+	   $(ENGINE_STAGE)/docs/
+	cp $(ENGINE)/docs/api-digest/*.md $(ENGINE_STAGE)/docs/api-digest/
 	mkdir -p $(ENGINE_STAGE)/.claude/hooks
 	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/session-diet.py $(ENGINE_STAGE)/.claude/hooks/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
@@ -263,6 +272,8 @@ stage-engine:
 	# nix store から写した flix.jar は読み取り専用で来る。後段の Tauri のリソース収集が
 	# Permission denied で死ぬので、書けるようにしてから渡す (jre と同じ手当て)。
 	chmod -R u+w $(ENGINE_STAGE)
+	# 同梱の必須一覧 (BUNDLE_REQUIRED) と照合。どちらかの cp リストが痩せたらここで止まる
+	python3 $(ENGINE)/bin/check-refs.py --bundle $(ENGINE_STAGE)
 	@echo "==> [engine] OK: $(ENGINE_STAGE) ($$(du -sh $(ENGINE_STAGE) | cut -f1))"
 
 # --- dev: 開発起動 ---
