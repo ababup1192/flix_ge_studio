@@ -45,7 +45,7 @@ Doc の決まりごと（外形6点・命名・スキーマ）は engine 側の
 - 対応 OS: いまは **macOS** 前提（起動中ゲーム検知に `ps`/`lsof`、Tauri の後始末に
   POSIX シグナルを使う）。Linux はほぼそのまま動く見込み・Windows は要追加対応。
 
-engine の fpkg（0.7.1）は `server/lib/` に同梱済みなので、**clone 直後でもオフラインで
+engine の fpkg（0.20.0）は `server/lib/` に同梱済みなので、**clone 直後でもオフラインで
 ビルドできる**。
 
 ## 使い方

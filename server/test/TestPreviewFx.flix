@@ -15,6 +15,8 @@ mod TestPreviewFx {
           dir = { base = 0.0, spread = 360.0, mode = FxDoc.DirMode.Random },
           turn = { base = 0.0, spread = 0.0, spin = 0.0, spinSpread = 0.0 },
           spawnArea = { w = 0.0, h = 0.0 }, accel = { x = 0.0, y = 0.0 }, seed = 0,
+          wobble = { amp = { x = 0.0, y = 0.0 }, freq = { x = 0.0, y = 0.0 }, vary = 0.0 },
+          stretch = 0.0,
           sizeOver = sizeOver, alphaOver = FxDoc.CurveSpec.Constant,
           blend = DrawCmd.BlendMode.Normal, zIndex = 0 }
 

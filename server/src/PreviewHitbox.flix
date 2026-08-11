@@ -189,23 +189,23 @@ mod PreviewHitbox {
     /// 原点 (エンティティ中心) を示す薄い十字。形が dx/dy でどれだけずれているかの物差しになる。
     def crossItems(center: Vec2.Vec2, side: Float64): List[Render.PlacedItem] =
         let arm = side * 0.35;
-        (Render.lineSeg({ x = center#x - arm, y = center#y },
+        (RawDraw.lineSeg({ x = center#x - arm, y = center#y },
                         { x = center#x + arm, y = center#y }, 1.0, crossColor(), zCross())
-            :: Render.lineSeg({ x = center#x, y = center#y - arm },
+            :: RawDraw.lineSeg({ x = center#x, y = center#y - arm },
                               { x = center#x, y = center#y + arm }, 1.0, crossColor(), zCross())
             :: Nil)
-            |> List.map(seg -> { item = Render.fade(0.25f32, seg#item) | seg })
+            |> List.map(seg -> { item = Render.fade(0.25, seg#item) | seg })
 
     /// 形 1 個の絵。塗りは薄く、箱には枠線をつけて重なった箱どうしの輪郭を読めるようにする。
     def shapeItems(pos: Vec2.Vec2, shape: HitShape): List[Render.PlacedItem] =
         match shape {
             case HitShape.CircleH(c) =>
-                let fill = Render.circleAt(Vec2.add(pos, { x = c#dx, y = c#dy }), c#r, hitColor(), zShape());
-                ({ item = Render.fade(0.35f32, fill#item) | fill }) :: Nil
+                let fill = RawDraw.circleAt(Vec2.add(pos, { x = c#dx, y = c#dy }), c#r, hitColor(), zShape());
+                ({ item = Render.fade(0.35, fill#item) | fill }) :: Nil
             case HitShape.BoxH(b) =>
-                let fill = Render.boxAt(Vec2.add(pos, { x = b#dx, y = b#dy }),
+                let fill = RawDraw.boxAt(Vec2.add(pos, { x = b#dx, y = b#dy }),
                                         { x = b#w, y = b#h }, hitColor(), zShape());
-                ({ item = fill#item |> Render.fade(0.35f32) |> Render.outline(hitColor(), 1.0) | fill }) :: Nil
+                ({ item = fill#item |> Render.fade(0.35) |> Render.outline(hitColor(), 1.0) | fill }) :: Nil
         }
 
     /// セル左上のエンティティ名ラベル。

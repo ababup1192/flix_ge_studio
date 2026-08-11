@@ -73,8 +73,9 @@ mod PreviewFx {
             case FxDoc.CurveSpec.EaseIn(e)  => powerIntegral(e#power)
             case FxDoc.CurveSpec.EaseOut(e) => powerIntegral(e#power)
             case FxDoc.CurveSpec.Peak(_)    => 0.5
-            // flicker は速度カーブとしてパースが弾くが、値 ≤ 1 なので積分 ≤ 1 を上限に使う。
+            // flicker / pulse は速度カーブとしてパースが弾くが、値 ≤ 1 なので積分 ≤ 1 を上限に使う。
             case FxDoc.CurveSpec.Flicker(_) => 1.0
+            case FxDoc.CurveSpec.Pulse(_)   => 1.0
         }
 
     /// u^p (easeIn) と (1-u)^p (easeOut) の ∫₀¹ = 1/(p+1)。

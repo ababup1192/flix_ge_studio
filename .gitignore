@@ -5,9 +5,9 @@
 server/build/
 server/artifact/
 
-# lib = fpkg 依存の置き場。engine リポ (core/world/tools 0.7.1) は現在 fetch できない
-# (GitHub 404) ので、その fpkg 群だけは git 追跡して同梱する (clone→make jar がオフラインで
-# 即通る)。一方 lib 内の maven cache 等は再取得できるので除外する。
+# lib = fpkg 依存の置き場。engine の fpkg (flix_game_engine、今は 0.20.0) だけは
+# git 追跡して同梱する (clone→make jar がオフラインで即通る)。
+# 一方 lib 内の maven cache 等は再取得できるので除外する。
 server/lib/*
 !server/lib/github/
 server/lib/cache/

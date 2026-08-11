@@ -272,8 +272,8 @@ dev: web
 	  EDITOR_PORT=$(PORT) EDITOR_WEB="$(WEB_DIST)" $(FLIX) run
 
 clean:
-	# server/lib は engine 0.7.1 fpkg の同梱先。今 engine リポは fetch できない
-	# (404) ので消すと再取得できずビルドが止まる。よって lib は消さない。
+	# server/lib は engine fpkg (今は 0.20.0) の同梱先。消すとオフライン環境で
+	# 再取得できずビルドが止まるので、lib は消さない。
 	rm -rf server/build server/artifact
 	rm -rf web/node_modules web/dist web/elm-stuff web/.devbox
 	rm -rf app/runtime app/src-tauri/resources app/src-tauri/target app/src-tauri/gen
