@@ -6,6 +6,7 @@ module NewGame exposing
     , Out(..)
     , Phase(..)
     , accepted
+    , buildSketchPrompt
     , createFailed
     , familiesDecoder
     , familiesUnavailable
@@ -20,6 +21,9 @@ module NewGame exposing
     , selectedFamily
     , shownError
     , shownGenesisPrompt
+    , sketchFamilyId
+    , sketchResizeActive
+    , sketchStrokeActive
     , unavailable
     , update
     , view
@@ -55,12 +59,19 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import Progress
+import SketchPad
 
 
-{-| つくりの進み。Creating の間だけ Main がログのポーリングを回す。 -}
+{-| つくりの進み。Creating の間だけ Main がログのポーリングを回す。
+
+sketch(ラフ発かどうか)は送信の瞬間に焼き込む — 誕生の知らせが届いた時の
+選択中の札(family)で判定すると、待っている間に他の札へ移っただけで
+誕生の扱いを取り違えるため。
+
+-}
 type Phase
     = Idle
-    | Creating { lines : List String }
+    | Creating { lines : List String, sketch : Bool }
     | Failed { lines : List String }
 
 
@@ -126,6 +137,19 @@ type alias Model =
     -- starter 無しのジャンルに差し出す公式プロンプト(編集可)
     , genesisPrompt : GenesisPrompt
     , genesisCopied : Bool
+
+    -- ラフ札(画面のラフから)の塗り。ゲームの Doc ではないのでここが正本
+    , sketch : SketchPad.Model
+
+    -- ラフ札の「伝えたいこと(任意)」。絵にできない事(雰囲気・ルールの種)を
+    -- 言葉で添える口。空なら依頼文に節ごと出さない
+    , sketchNote : String
+
+    -- ラフ札の誕生情報(作られた先と合成済みの依頼文)。genesisPrompt とは別に
+    -- 持つ — 誕生後に他の札を見て回ると genesisPrompt はその札の下書きに
+    -- 変わるので、そこに合成文を置くと行き来しただけで失われるため。
+    -- prompt が空 = 公式文もラフの節も無いまま産まれた(取り直し待ち)
+    , born : Maybe { dir : Maybe String, prompt : String }
     }
 
 
@@ -145,7 +169,24 @@ init =
     , freeDirection = ""
     , genesisPrompt = GenesisIdle
     , genesisCopied = False
+    , sketch = SketchPad.init
+    , sketchNote = ""
+    , born = Nothing
     }
+
+
+{-| ラフ札のローカル id。サーバの families には無い名前を使う
+(サーバ側の札と取り違えない)。
+-}
+sketchFamilyId : String
+sketchFamilyId =
+    "sketch"
+
+
+{-| ラフ札の複製元。blank と同じ、いちばん小さい骨組み。 -}
+sketchStarter : String
+sketchStarter =
+    "templates/game-starter"
 
 
 type Msg
@@ -162,6 +203,12 @@ type Msg
     | FreePromptRequested
     | GenesisPromptEdited String
     | CopyGenesisPromptClicked
+    | SketchMsg SketchPad.Msg
+    | SketchNoteEdited String
+    | OpenBornClicked
+    | BornPromptEdited String
+    | BornRetryClicked
+    | SketchRestartClicked
 
 
 {-| サーバへ送りたい事(封筒の発行は Main)。 -}
@@ -171,6 +218,8 @@ type Out
     | OutFetchFamilies
     | OutFetchGenesisPrompt { family : String, direction : String }
     | OutCopyPrompt String
+    | OutToast String
+    | OutCopyPromptAndOpen { dir : String, prompt : String, sketchFile : { path : String, content : String } }
 
 
 update : Msg -> Model -> ( Model, Out )
@@ -185,10 +234,33 @@ update msg model =
                 ( { model | open = not model.open }, OutNone )
 
         FamilyChosen id ->
+            if isPolling model then
+                -- つくっている最中の札替えは受けない — 押した札を誕生の扱いに
+                -- 混ぜてしまう事故(ラフ発なのに自動で飛ぶ等)を入口で断つ
+                ( model, OutNone )
+
+            else
             let
+                -- born(誕生情報)はここで消さない — 他の札を見て回って戻った時に
+                -- 合成依頼文ごと失われ、作り直し(同名 409)へ誘い込むため
                 m1 =
                     { model | family = Just id, error = Nothing, genesisCopied = False }
             in
+            if id == sketchFamilyId then
+                case model.born of
+                    Just _ ->
+                        -- 誕生済みなら誕生画面へ戻すだけ。blank を取り直すと
+                        -- 合成前の土台で画面が巻き戻ってしまう
+                        ( m1, OutNone )
+
+                    Nothing ->
+                        -- 依頼文の土台(blank の公式文)は選んだ足で裏に取り寄せておく
+                        -- (誕生の後に取りに行くと、そこで人を待たせてしまう)
+                        ( { m1 | genesisPrompt = GenesisLoading }
+                        , OutFetchGenesisPrompt { family = "blank", direction = "" }
+                        )
+
+            else
             case selectedFamily { m1 | family = Just id } of
                 Just family ->
                     if family.starter /= "" || family.id == "free" then
@@ -239,6 +311,35 @@ update msg model =
                 _ ->
                     ( model, OutNone )
 
+        BornPromptEdited text_ ->
+            case model.born of
+                Just born ->
+                    ( { model | born = Just { born | prompt = text_ } }, OutNone )
+
+                Nothing ->
+                    ( model, OutNone )
+
+        BornRetryClicked ->
+            -- 空の依頼文で産まれた時の取り直し。届いたら gotGenesisPrompt が
+            -- ラフと合成し直して born.prompt を埋める
+            ( { model | genesisPrompt = GenesisLoading }
+            , OutFetchGenesisPrompt { family = "blank", direction = "" }
+            )
+
+        SketchRestartClicked ->
+            -- ここでだけ誕生状態を捨てる — 札の行き来では消さない約束の唯一の例外。
+            -- 「新しいラフでもう一度」は人の明示の意思なので、塗りごと白紙に戻す
+            ( { model
+                | sketch = SketchPad.init
+                , sketchNote = ""
+                , born = Nothing
+                , dir = Nothing
+                , genesisCopied = False
+                , genesisPrompt = GenesisLoading
+              }
+            , OutFetchGenesisPrompt { family = "blank", direction = "" }
+            )
+
         NameEdited text_ ->
             -- 打ち直しで古いサーバの理由は畳む(生きた検証は nameError が担う)
             ( { model | name = text_, error = Nothing }, OutNone )
@@ -267,6 +368,57 @@ update msg model =
         LogToggled ->
             ( { model | logExpanded = not model.logExpanded }, OutNone )
 
+        SketchMsg sketchMsg ->
+            let
+                ( sketch, out ) =
+                    SketchPad.update sketchMsg model.sketch
+
+                next =
+                    { model | sketch = sketch }
+            in
+            case out of
+                SketchPad.OutToast message ->
+                    ( next, OutToast message )
+
+                _ ->
+                    -- OutSave は来ない(保存行を出さない埋め込みの姿だけ使う)
+                    ( next, OutNone )
+
+        SketchNoteEdited text_ ->
+            ( { model | sketchNote = text_ }, OutNone )
+
+        OpenBornClicked ->
+            case model.born of
+                Just born ->
+                    case ( born.dir, born.prompt ) of
+                        ( Just dir, prompt ) ->
+                            if prompt == "" then
+                                -- 空の依頼文をコピーさせない(取り直しの導線が出ている)
+                                ( model, OutNone )
+
+                            else
+                                ( { model | genesisCopied = True }
+                                , OutCopyPromptAndOpen
+                                    { dir = dir
+                                    , prompt = prompt
+                                    , sketchFile =
+                                        { path = SketchPad.sketchPath model.sketch
+                                        , content = SketchPad.encode model.sketch
+                                        }
+                                    }
+                                )
+
+                        ( Nothing, prompt ) ->
+                            -- dir を教えない旧サーバでは開けない。コピーだけ(fail-open)
+                            if prompt == "" then
+                                ( model, OutNone )
+
+                            else
+                                ( { model | genesisCopied = True }, OutCopyPrompt prompt )
+
+                Nothing ->
+                    ( model, OutNone )
+
 
 {-| 送信前の関所。名前・サイズが規則に合わない限り封筒は飛ばない。 -}
 submit : Model -> ( Model, Out )
@@ -275,16 +427,24 @@ submit model =
         name =
             String.trim model.name
 
-        size =
-            Maybe.map2 Tuple.pair (String.toInt model.w) (String.toInt model.h)
-                |> Maybe.andThen
-                    (\( w, h ) ->
-                        if w > 0 && h > 0 then
-                            Just ( w, h )
+        sketchMode =
+            model.family == Just sketchFamilyId
 
-                        else
-                            Nothing
-                    )
+        size =
+            if sketchMode then
+                -- サイズはテンプレートが決める(w/h の欄は見せてもいない)ので送らない
+                Nothing
+
+            else
+                Maybe.map2 Tuple.pair (String.toInt model.w) (String.toInt model.h)
+                    |> Maybe.andThen
+                        (\( w, h ) ->
+                            if w > 0 && h > 0 then
+                                Just ( w, h )
+
+                            else
+                                Nothing
+                        )
     in
     if name == "" then
         ( { model | error = Just "なまえを入れてください(半角の小文字)" }, OutNone )
@@ -299,16 +459,20 @@ submit model =
                     -- 選んだジャンルの公式テンプレート(空 = 既定の複製元)。
                     -- テンプレートがある時、サイズはテンプレートが決めるので聞かない
                     starter =
-                        selectedFamily model
-                            |> Maybe.map .starter
-                            |> Maybe.withDefault ""
+                        if sketchMode then
+                            sketchStarter
+
+                        else
+                            selectedFamily model
+                                |> Maybe.map .starter
+                                |> Maybe.withDefault ""
                 in
                 case ( starter, size ) of
                     ( "", Nothing ) ->
                         ( { model | error = Just "画面サイズは正の数で入れてください" }, OutNone )
 
                     _ ->
-                        ( { model | phase = Creating { lines = [] }, dir = Nothing, logExpanded = False, error = Nothing }
+                        ( { model | phase = Creating { lines = [], sketch = sketchMode }, dir = Nothing, logExpanded = False, error = Nothing }
                         , OutCreate
                             { name = name
                             , title =
@@ -380,10 +544,35 @@ familiesUnavailable model =
     { model | families = FamiliesUnavailable }
 
 
-{-| GET /prompt/genesis 成功。届いた下書きは編集可になる。 -}
+{-| GET /prompt/genesis 成功。届いた下書きは編集可になる。
+
+誕生画面(ラフ札で born あり)に居る間の門番:
+遅れて届いた応答で合成依頼文を黙って上書きしない。人が手直しした文が
+音もなく消える事故を防ぐ。例外は born.prompt が空の時だけ — それは
+「取り直し待ち」なので、届いた土台をラフと合成し直して埋める。
+
+-}
 gotGenesisPrompt : String -> Model -> Model
 gotGenesisPrompt prompt model =
-    { model | genesisPrompt = GenesisReady prompt, genesisCopied = False }
+    case model.born of
+        Just born ->
+            if model.family == Just sketchFamilyId then
+                if born.prompt == "" then
+                    let
+                        m1 =
+                            { model | genesisPrompt = GenesisReady prompt }
+                    in
+                    { m1 | born = Just { born | prompt = buildSketchPrompt m1 } }
+
+                else
+                    model
+
+            else
+                -- 他の札を見ている間の応答はその札の下書き(合成文は born が守る)
+                { model | genesisPrompt = GenesisReady prompt, genesisCopied = False }
+
+        Nothing ->
+            { model | genesisPrompt = GenesisReady prompt, genesisCopied = False }
 
 
 {-| GET /prompt/genesis の失敗。理由だけを箱の場所に出す。 -}
@@ -392,9 +581,29 @@ genesisPromptFailed message model =
     { model | genesisPrompt = GenesisFailed (cleanReason message) }
 
 
-{-| いま画面の下書きに映っている公式プロンプト(テストの覗き窓)。 -}
+{-| いま画面の下書きに映っている依頼文(テストの覗き窓)。
+ラフ札の誕生画面では合成済みの born.prompt が映っている(空は取り直し導線)。
+-}
 shownGenesisPrompt : Model -> Maybe String
 shownGenesisPrompt model =
+    case model.born of
+        Just born ->
+            if model.family == Just sketchFamilyId then
+                if born.prompt == "" then
+                    Nothing
+
+                else
+                    Just born.prompt
+
+            else
+                shownDraftPrompt model
+
+        Nothing ->
+            shownDraftPrompt model
+
+
+shownDraftPrompt : Model -> Maybe String
+shownDraftPrompt model =
     case model.genesisPrompt of
         GenesisReady prompt ->
             Just prompt
@@ -485,22 +694,41 @@ dir 不明の旧サーバは Nothing — 取り直しだけに倒す)。
 type LogResult
     = LogContinue
     | LogSuccess { dir : Maybe String }
+    | LogSketchBorn
     | LogFailure
 
 
 gotLog : Log -> Model -> ( Model, LogResult )
 gotLog log model =
     case model.phase of
-        Creating _ ->
+        Creating creating ->
             if log.running then
-                ( { model | phase = Creating { lines = log.lines } }, LogContinue )
+                ( { model | phase = Creating { creating | lines = log.lines } }, LogContinue )
 
             else
                 case log.exitCode of
                     Just 0 ->
-                        ( { model | phase = Idle, open = False, name = "", title = "" }
-                        , LogSuccess { dir = model.dir }
-                        )
+                        -- ラフ発かは phase に焼き込んだ印で見る — 今の選択札で見ると、
+                        -- 待ち中に他の札を眺めただけで誕生の扱いを取り違える
+                        if creating.sketch then
+                            -- ラフ札はここで飛ばない — 依頼文を差し出したままにして、
+                            -- 開く(コピー)は人のひと押しに乗せる。
+                            -- 名前・題名はここで空に戻す — 残すと「もう一度うむ」で
+                            -- 同名 409 へまっすぐ落ちるため
+                            ( { model
+                                | phase = Idle
+                                , name = ""
+                                , title = ""
+                                , genesisCopied = False
+                                , born = Just { dir = model.dir, prompt = buildSketchPrompt model }
+                              }
+                            , LogSketchBorn
+                            )
+
+                        else
+                            ( { model | phase = Idle, open = False, name = "", title = "" }
+                            , LogSuccess { dir = model.dir }
+                            )
 
                     Just _ ->
                         ( { model | phase = Failed { lines = log.lines }, logExpanded = True }
@@ -513,6 +741,103 @@ gotLog log model =
 
         _ ->
             ( model, LogContinue )
+
+
+{-| ラフ札の依頼文。並びは
+公式文(「あなたの言葉」節は抜く) → ラフの節 → あなたから → インタビューの催促。
+
+世界・主人公・エッセンスの節は依頼文から外す — インタビュー後の会話で
+決める方が自然で、書きかけの例文を渡すと AI がそれを本気にするため。
+
+中身が何も無ければ空のまま — 空は「取り直し待ち」の印なので、
+催促だけの文で埋めて取り直しの導線を消さない。
+
+-}
+buildSketchPrompt : Model -> String
+buildSketchPrompt model =
+    let
+        official =
+            case model.genesisPrompt of
+                GenesisReady prompt ->
+                    stripYourWords prompt
+
+                -- 公式文がまだ・読めなくても、ラフの節だけで渡せる(fail-open)
+                _ ->
+                    ""
+
+        section =
+            SketchPad.promptSection model.sketch
+
+        note =
+            String.trim model.sketchNote
+
+        parts =
+            [ official
+            , Maybe.withDefault "" section
+            , if note == "" then
+                ""
+
+              else
+                "あなたから: " ++ note
+            ]
+                |> List.filter (\part -> part /= "")
+    in
+    if List.isEmpty parts then
+        ""
+
+    else
+        String.join "\n\n" (parts ++ [ sketchInterviewNote model (section /= Nothing) ])
+
+
+{-| 公式文から「あなたの言葉」の節(--- の行と世界・主人公・エッセンスの行)を抜く。
+行が見つからなくても壊さない(fail-open — そのまま返るだけ)。
+-}
+stripYourWords : String -> String
+stripYourWords official =
+    official
+        |> String.lines
+        |> List.filter (\line -> not (isYourWordsLine (String.trim line)))
+        |> String.join "\n"
+        |> String.trimRight
+
+
+isYourWordsLine : String -> Bool
+isYourWordsLine line =
+    List.any (\prefix -> String.startsWith prefix line)
+        [ "--- ここから あなたの言葉", "世界:", "主人公:", "エッセンス:" ]
+
+
+{-| インタビューの催促。/style-interview は AGENTS.md 経由の間接発火で、
+依頼文から始めると確実には起きないため明示で頼む。
+カメラの一文はラフを塗った時だけ — 塗っていないラフの視点は人の意思ではないので、
+視点の質問を勝手に飛ばさせない。
+-}
+sketchInterviewNote : Model -> Bool -> String
+sketchInterviewNote model hasSketch =
+    let
+        ask =
+            "実装に入る前に、まず /style-interview を実行して画風を私に質問して決めてください。"
+    in
+    if hasSketch then
+        ask
+            ++ "\nカメラ視点はこのラフの『"
+            ++ SketchPad.cameraLabel model.sketch.camera
+            ++ "』で決まっています。視点の質問は飛ばしてください。"
+
+    else
+        ask
+
+
+{-| ラフの一筆の途中か(Main がこの間だけグローバル mouseup を購読する)。 -}
+sketchStrokeActive : Model -> Bool
+sketchStrokeActive model =
+    SketchPad.strokeActive model.sketch
+
+
+{-| ラフのつまみをドラッグ中か(Main がこの間だけグローバル mousemove/up を購読する)。 -}
+sketchResizeActive : Model -> Bool
+sketchResizeActive model =
+    SketchPad.resizeActive model.sketch
 
 
 {-| GET /projects/new/log。欠けは既定値に倒す(fail-open)。 -}
@@ -597,17 +922,23 @@ viewGenesis families model =
     -- カード一覧は内側スクロール。確認バー(次の一歩)は下に常設 —
     -- 選ぶ前から、選んだ後に何が起きる場所かが見えている
     , div [ HA.class "newgame-families mt-2 grid max-h-[38vh] grid-cols-2 gap-1.5 overflow-y-auto pr-1 md:grid-cols-3" ]
-        (List.map (viewFamilyCard model.family) families)
+        (viewSketchCard (isPolling model) model.family
+            :: List.map (viewFamilyCard (isPolling model) model.family) families
+        )
     , div [ HA.class "newgame-confirm mt-3 border-t border-edge pt-3" ]
         (case selectedFamily model of
             Nothing ->
-                [ div [ HA.class "text-[11px] text-ink-faint" ]
-                    [ text "ジャンルをひとつ選ぶと、ここに次の一歩が出ます" ]
-                , div [ HA.class "mt-2" ]
-                    [ button [ HA.class "btn btn-primary", HA.disabled True ]
-                        [ text "テンプレートではじめる →" ]
+                if model.family == Just sketchFamilyId then
+                    viewSketchConfirm model
+
+                else
+                    [ div [ HA.class "text-[11px] text-ink-faint" ]
+                        [ text "ジャンルをひとつ選ぶと、ここに次の一歩が出ます" ]
+                    , div [ HA.class "mt-2" ]
+                        [ button [ HA.class "btn btn-primary", HA.disabled True ]
+                            [ text "テンプレートではじめる →" ]
+                        ]
                     ]
-                ]
 
             Just family ->
                 viewConfirm family model
@@ -615,14 +946,39 @@ viewGenesis families model =
     ]
 
 
-viewFamilyCard : Maybe String -> Family -> Html Msg
-viewFamilyCard chosen family =
+{-| ラフ札。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
+(golden の顔を配る仕組みに乗れない)。
+-}
+viewSketchCard : Bool -> Maybe String -> Html Msg
+viewSketchCard locked chosen =
+    button
+        [ HA.classList
+            [ ( "newgame-family newgame-family-sketch cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
+            , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just sketchFamilyId )
+            , ( "border-edge", chosen /= Just sketchFamilyId )
+            ]
+
+        -- つくっている最中は札替えを受けない(update の関所と二重の守り)
+        , HA.disabled locked
+        , HE.onClick (FamilyChosen sketchFamilyId)
+        ]
+        [ div [ HA.class "mb-1.5 flex w-full items-center justify-center rounded border border-edge/60 bg-black/20 py-2 text-3xl" ]
+            [ text "🎨" ]
+        , div [ HA.class "text-xs font-semibold text-ink" ] [ text "画面のラフから" ]
+        , div [ HA.class "mt-0.5 text-[11px] text-ink-soft" ] [ text "画面の絵を描いて、それを土台にゲームを作ってもらう" ]
+        , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text "塗った絵とカメラ視点が、そのまま依頼文になります" ]
+        ]
+
+
+viewFamilyCard : Bool -> Maybe String -> Family -> Html Msg
+viewFamilyCard locked chosen family =
     button
         [ HA.classList
             [ ( "newgame-family cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
             , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just family.id )
             , ( "border-edge", chosen /= Just family.id )
             ]
+        , HA.disabled locked
         , HE.onClick (FamilyChosen family.id)
         ]
         [ -- 公式テンプレートつきのジャンルは、その golden/title.png が札の顔になる
@@ -673,6 +1029,30 @@ viewConfirm family model =
 -}
 viewStarterForm : Model -> List (Html Msg)
 viewStarterForm model =
+    viewNameTitle model
+        ++ [ div [ HA.class "mt-3" ]
+                [ button
+                    [ HA.class "btn btn-primary"
+                    , HA.disabled (isPolling model)
+                    , HE.onClick CreateClicked
+                    ]
+                    [ text
+                        (if isPolling model then
+                            "⏳ つくっています…"
+
+                         else
+                            "このテンプレートではじめる →"
+                        )
+                    ]
+                ]
+           , viewCreateError model
+           ]
+        ++ viewProgress model
+
+
+{-| なまえ・題名の入力(テンプレート札とラフ札で同じ姿・同じ検証)。 -}
+viewNameTitle : Model -> List (Html Msg)
+viewNameTitle model =
     [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
     , input
         [ HA.class "field mt-1 w-full font-mono text-xs"
@@ -695,24 +1075,107 @@ viewStarterForm model =
         , HE.onInput TitleEdited
         ]
         []
-    , div [ HA.class "mt-3" ]
-        [ button
-            [ HA.class "btn btn-primary"
-            , HA.disabled (isPolling model)
-            , HE.onClick CreateClicked
-            ]
-            [ text
-                (if isPolling model then
-                    "⏳ つくっています…"
-
-                 else
-                    "このテンプレートではじめる →"
-                )
-            ]
-        ]
-    , viewCreateError model
     ]
-        ++ viewProgress model
+
+
+{-| ラフ札の次の一歩。誕生前は塗り場と名前、誕生後は依頼文の差し出し。 -}
+viewSketchConfirm : Model -> List (Html Msg)
+viewSketchConfirm model =
+    case model.born of
+        Just born ->
+            viewSketchBorn born model
+
+        Nothing ->
+            viewSketchDraw model
+
+
+viewSketchDraw : Model -> List (Html Msg)
+viewSketchDraw model =
+        [ div [ HA.class "newgame-sketch mt-2 rounded-lg border border-edge bg-black/10 pt-2" ]
+            [ Html.map SketchMsg (SketchPad.viewInline model.sketch) ]
+        ]
+            ++ viewNameTitle model
+            ++ [ -- 説明もプレースホルダも付けない — 例文を見せると、それに寄せた
+                 -- 言葉しか出てこなくなるため
+                 div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "伝えたいこと(任意)" ]
+               , Html.textarea
+                    [ HA.class "newgame-sketch-note field mt-1 h-auto w-full resize-y py-1.5 text-xs leading-relaxed"
+                    , HA.rows 3
+                    , HA.value model.sketchNote
+                    , HE.onInput SketchNoteEdited
+                    ]
+                    []
+               , div [ HA.class "mt-3" ]
+                    [ button
+                        [ HA.class "btn btn-primary"
+                        , HA.disabled (isPolling model || nameError model.name /= Nothing)
+                        , HE.onClick CreateClicked
+                        ]
+                        [ text
+                            (if isPolling model then
+                                "⏳ つくっています…"
+
+                             else
+                                "この絵からうむ →"
+                            )
+                        ]
+                    ]
+               , viewCreateError model
+               ]
+            ++ viewProgress model
+
+
+{-| 誕生の後。依頼文は自動でコピーしない — 開くと画面が切り替わるので、
+コピー(と移動)は人のひと押しに乗せる。
+-}
+viewSketchBorn : { dir : Maybe String, prompt : String } -> Model -> List (Html Msg)
+viewSketchBorn born model =
+    [ div [ HA.class "newgame-sketch-born text-[11px] leading-relaxed text-ink-soft" ]
+        [ span [ HA.class "font-semibold text-ink" ] [ text "うまれました。" ] ]
+    ]
+        ++ (if born.prompt == "" then
+                -- 空の依頼文はコピーさせない — 何も塗らず公式文も届いていない誕生。
+                -- コピー釦の代わりに取り直しの導線へ倒す
+                [ div [ HA.class "mt-2" ]
+                    [ if model.genesisPrompt == GenesisLoading then
+                        div [ HA.class "newgame-genesis-loading text-[11px] text-ink-soft" ]
+                            [ text "⏳ 依頼文を取り寄せています…" ]
+
+                      else
+                        button [ HA.class "newgame-born-retry btn btn-primary w-full", HE.onClick BornRetryClicked ]
+                            [ text "依頼文を取得できませんでした — 取り直す" ]
+                    ]
+                ]
+
+            else
+                [ viewPromptTextarea BornPromptEdited born.prompt
+                , div [ HA.class "mt-2" ]
+                    [ button [ HA.class "newgame-sketch-open btn btn-primary w-full", HE.onClick OpenBornClicked ]
+                        [ text
+                            (case ( model.genesisCopied, born.dir ) of
+                                ( True, Just _ ) ->
+                                    "✓ コピーしました — 開いています…"
+
+                                ( False, Just _ ) ->
+                                    "📋 依頼文をコピーして開く →"
+
+                                -- dir を教えない旧サーバでは開けない。コピーだけ差し出し、
+                                -- プロジェクトは一覧から選んでもらう(fail-open)
+                                ( True, Nothing ) ->
+                                    "✓ コピーしました — 一覧からプロジェクトを開いてください"
+
+                                ( False, Nothing ) ->
+                                    "📋 依頼文をコピー"
+                            )
+                        ]
+                    ]
+                ]
+           )
+        ++ [ div [ HA.class "mt-3" ]
+                [ button [ HA.class "newgame-sketch-restart btn btn-mini", HE.onClick SketchRestartClicked ]
+                    [ text "🎨 新しいラフでもう一度" ]
+                ]
+           ]
 
 
 {-| starter 無しのジャンル: 公式プロンプト(編集可)を差し出す。 -}
@@ -786,12 +1249,7 @@ viewGenesisPrompt model =
             ]
 
         GenesisReady prompt ->
-            [ Html.textarea
-                [ HA.class "newgame-genesis-prompt mt-2 h-44 max-h-44 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
-                , HA.value prompt
-                , HE.onInput GenesisPromptEdited
-                ]
-                []
+            [ viewPromptTextarea GenesisPromptEdited prompt
             , div [ HA.class "mt-2" ]
                 [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyGenesisPromptClicked ]
                     [ text
@@ -806,6 +1264,19 @@ viewGenesisPrompt model =
             , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ]
                 [ text "Claude Code などの AI に貼ると、テンプレートづくりが始まります。" ]
             ]
+
+
+{-| 依頼文の編集可 textarea(ジャンルの下書きとラフ札の誕生後で共用)。
+書き先が違う(下書き / 合成済みの誕生文)ので、送る Msg は呼び手が決める。
+-}
+viewPromptTextarea : (String -> Msg) -> String -> Html Msg
+viewPromptTextarea onEdit prompt =
+    Html.textarea
+        [ HA.class "newgame-genesis-prompt mt-2 h-44 max-h-44 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+        , HA.value prompt
+        , HE.onInput onEdit
+        ]
+        []
 
 
 viewCreateError : Model -> Html Msg

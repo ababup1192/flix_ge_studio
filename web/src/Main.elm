@@ -560,6 +560,14 @@ type alias Model =
     -- 応答の行き先が違うので別に控える
     , sketchSaveReq : Maybe Int
 
+    -- ラフ札から産まれた直後の「開けたら 1 回だけラフを書き残す」控え。
+    -- PUT /file はプロジェクト選択が前提なので、selectProject の成功を待つ。
+    -- dir を添えるのは、途中で別プロジェクトを選んだ時に書き間違えないため
+    , pendingSketchSave : Maybe { dir : String, path : String, content : String }
+
+    -- その putFile の id。失敗をトーストで知らせる相手を見分ける
+    , bornSketchReq : Maybe Int
+
     -- 保存ボタンを押した瞬間の本文(往復中に編集が進んでも、送るのはこれ)
     , savingText : Maybe String
 
@@ -942,6 +950,8 @@ init _ =
         , loadReq = Nothing
         , putReq = Nothing
         , sketchSaveReq = Nothing
+      , pendingSketchSave = Nothing
+      , bornSketchReq = Nothing
         , savingText = Nothing
         , conflict = Nothing
         , staleMtime = Nothing
@@ -1576,6 +1586,25 @@ update msg model =
                 NewGame.OutCopyPrompt prompt ->
                     -- クリップボードへ(JS 側で解決するローカルな封筒)
                     request "copyClipboard" (E.object [ ( "text", E.string prompt ) ]) m1
+
+                NewGame.OutToast message ->
+                    showToast message m1
+
+                NewGame.OutCopyPromptAndOpen info ->
+                    -- ラフ札の「コピーして開く」。ラフの写しは今は書けない
+                    -- (PUT /file は選択が前提)ので、選択の成功まで控えに持つ
+                    let
+                        ( m2, copyFx ) =
+                            request "copyClipboard" (E.object [ ( "text", E.string info.prompt ) ]) m1
+
+                        ( m3, selectFx ) =
+                            selectProject info.dir
+                                { m2
+                                    | pendingSketchSave =
+                                        Just { dir = info.dir, path = info.sketchFile.path, content = info.sketchFile.content }
+                                }
+                    in
+                    ( m3, Effect.batch [ copyFx, selectFx ] )
 
         ProjectNewPollTick ->
             -- ひな形づくりを待つ間だけ購読が生きている(NewGame.isPolling が判定)
@@ -6338,6 +6367,15 @@ handleOkByKind env model =
                             in
                             ( m3, Effect.batch [ toastFx, requestInfo "projects", selectFx ] )
 
+                        NewGame.LogSketchBorn ->
+                            -- ラフ札の誕生。ここでは開かない — パネルが依頼文を
+                            -- 差し出したままにして、開く(コピー)は人のひと押しに乗せる
+                            let
+                                ( m2, toastFx ) =
+                                    showToast "うまれました。依頼文をコピーして AI に渡してください" m1
+                            in
+                            ( m2, Effect.batch [ toastFx, requestInfo "projects" ] )
+
                         NewGame.LogFailure ->
                             -- パネルがログの尻尾を見せるのに加え、トーストと ⚠ ログでも知らせる
                             showFailure "新しいゲームを作れませんでした" log.lines m1
@@ -6448,8 +6486,29 @@ handleOkByKind env model =
 
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
+
+                        -- ラフ札から産まれた直後だけ、ラフの写しをこのタイミングで書く
+                        -- (PUT /file は選択が前提なので、これより早くは書けない)。
+                        -- dir が違えば黙って捨てる — 別プロジェクトへ書き込まないため
+                        ( m3, sketchFx ) =
+                            case model.pendingSketchSave of
+                                Just pending ->
+                                    if pending.dir == result.dir then
+                                        let
+                                            ( mA, fx ) =
+                                                request "putFile"
+                                                    (E.object [ ( "path", E.string pending.path ), ( "content", E.string pending.content ) ])
+                                                    { m2 | pendingSketchSave = Nothing }
+                                        in
+                                        ( { mA | bornSketchReq = Just mA.reqCounter }, fx )
+
+                                    else
+                                        ( { m2 | pendingSketchSave = Nothing }, Effect.none )
+
+                                Nothing ->
+                                    ( m2, Effect.none )
                     in
-                    ( m2, Effect.batch [ c1, c2, requestInfo "journeyState" ] )
+                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState" ] )
 
                 Ok (Api.SwitchErr message) ->
                     ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
@@ -6985,7 +7044,11 @@ handleOkByKind env model =
             )
 
         "putFile" ->
-            if Just env.id == model.sketchSaveReq then
+            if Just env.id == model.bornSketchReq then
+                -- ラフ札の誕生直後の写し。成功は黙る(誕生の祝いは既に出ている)
+                ( { model | bornSketchReq = Nothing }, Effect.none )
+
+            else if Just env.id == model.sketchSaveReq then
                 -- アトリエのラフ塗りの保存。本文の保存(下の分岐)とは別の道
                 ( { model | sketchSaveReq = Nothing, atelier = Atelier.sketchSaved model.atelier }
                 , Effect.none
@@ -7470,7 +7533,12 @@ handleErrByKind env message model =
                 ( model, Effect.none )
 
         "putFile" ->
-            if Just env.id == model.sketchSaveReq then
+            if Just env.id == model.bornSketchReq then
+                -- 誕生直後のラフの写しの失敗。作成そのものは成功しているので、
+                -- トーストで知らせるだけ(依頼文には塗りの全文が入っていて先へ進める)
+                showToast ("ラフを保存できませんでした — " ++ message) { model | bornSketchReq = Nothing }
+
+            else if Just env.id == model.sketchSaveReq then
                 -- ラフ塗りの保存失敗。理由は塗りパネルの保存ボタンの脇に出す
                 ( { model | sketchSaveReq = Nothing, atelier = Atelier.sketchSaveFailed message model.atelier }
                 , Effect.none
@@ -14119,9 +14187,37 @@ subscriptions model =
           else
             Sub.none
 
-        -- アトリエのラフ塗りの一筆も同じ
+        -- ラフ塗り(アトリエ / 新しいゲームのラフ札)の一筆も同じ。
+        -- 塗り場は画面上に同時に 1 つしか出ないので、届け先は active な方だけでよい
         , if Atelier.sketchStrokeActive model.atelier then
             Browser.Events.onMouseUp (D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.StrokeEnded)))
+
+          else if NewGame.sketchStrokeActive model.newGame then
+            Browser.Events.onMouseUp (D.succeed (NewGameMsg (NewGame.SketchMsg SketchPad.StrokeEnded)))
+
+          else
+            Sub.none
+
+        -- ラフ塗りのグリッドのつまみも、ドラッグ中だけ文書全体の動きを追う
+        , if Atelier.sketchResizeActive model.atelier then
+            Sub.batch
+                [ Browser.Events.onMouseMove
+                    (D.map2 (\x y -> AtelierMsg (Atelier.SketchMsg (SketchPad.ResizeMoved { x = x, y = y })))
+                        (D.field "clientX" D.float)
+                        (D.field "clientY" D.float)
+                    )
+                , Browser.Events.onMouseUp (D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.ResizeEnded)))
+                ]
+
+          else if NewGame.sketchResizeActive model.newGame then
+            Sub.batch
+                [ Browser.Events.onMouseMove
+                    (D.map2 (\x y -> NewGameMsg (NewGame.SketchMsg (SketchPad.ResizeMoved { x = x, y = y })))
+                        (D.field "clientX" D.float)
+                        (D.field "clientY" D.float)
+                    )
+                , Browser.Events.onMouseUp (D.succeed (NewGameMsg (NewGame.SketchMsg SketchPad.ResizeEnded)))
+                ]
 
           else
             Sub.none
