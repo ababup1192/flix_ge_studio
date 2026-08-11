@@ -228,8 +228,11 @@ stage-engine:
 	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
 	cp $(ROOT)/app/engine/flix $(ENGINE_STAGE)/bin/flix
 	chmod +x $(ENGINE_STAGE)/bin/flix
-	# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
-	cp $(ENGINE)/bin/lint-*.py $(ENGINE_STAGE)/bin/
+	# 生まれたゲームへ配る道具 (new-game の sync-agents が bin/ と .claude/hooks/ から写す物。
+	# 一覧は engine の Makefile sync-agents の cp と対 — あちらだけ増えると同梱 new-game が転ぶ)
+	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
+	mkdir -p $(ENGINE_STAGE)/.claude/hooks
+	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/session-diet.py $(ENGINE_STAGE)/.claude/hooks/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
 	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
 	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml
