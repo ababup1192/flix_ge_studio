@@ -414,7 +414,7 @@ suite =
                             , info.sketchFile.path
                             , String.contains "## 画面のラフ" info.prompt
                             )
-                                |> Expect.equal ( "/games/rough_game", "draft/sketch/screen.sketch.json", True )
+                                |> Expect.equal ( "/games/rough_game", "draft/sketch/screen/v1.json", True )
 
                         _ ->
                             Expect.fail "OutCopyPromptAndOpen が出ていません"
@@ -545,7 +545,7 @@ suite =
                             )
                         |> Tuple.second
                         |> kindsOf
-                        |> Expect.equal [ "files", "resources", "putFile", "journeyState", "annotationsList" ]
+                        |> Expect.equal [ "files", "resources", "putFile", "journeyState", "annotationsList", "sketchList" ]
             ]
         ]
 

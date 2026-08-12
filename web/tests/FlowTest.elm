@@ -457,7 +457,7 @@ landingWith resources =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList" ]
+        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList", "sketchList" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
@@ -1345,12 +1345,12 @@ suite =
                 start
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
-                    |> expectKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList" ]
+                    |> expectKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList", "sketchList" ]
         , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで提案を取り直す" <|
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0
                         "journeyState"
                         (E.object
@@ -1399,7 +1399,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0
                         "journeyState"
                         (E.object
@@ -1427,7 +1427,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
                     |> ProgramTest.clickButton "▶ 起動する"
                     |> ensureKinds [ "gameStart" ]
@@ -1438,7 +1438,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
                     |> ProgramTest.clickButton "▶ 起動する"
                     |> ensureKinds [ "gameStart" ]
@@ -1541,7 +1541,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "launch" "launch")
                     |> ProgramTest.clickButton "▶ 起動する"
                     |> ensureKinds [ "gameStart" ]
@@ -1552,7 +1552,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "arrange" "arrange")
                     |> ProgramTest.clickButton "アレンジする"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
@@ -1562,7 +1562,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondErr 0 "journeyState" "HTTP 404"
                     |> ProgramTest.expectViewHas [ text "ゲームをアレンジしてみましょう" ]
         , test "アトリエ: タブから開くと入口が出て、カードで素材へ、「← アトリエ」で入口へ戻る" <|
@@ -1580,7 +1580,7 @@ suite =
                 landingWith resourcesBody
                     |> ProgramTest.ensureViewHas [ class "mini-player" ]
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> ProgramTest.expectViewHasNot [ class "mini-player" ]
         , test "ミニプレイヤー: 絵をクリックすると拡大が開き、閉じると消える" <|
             \() ->
@@ -1683,7 +1683,7 @@ suite =
             \() ->
                 bootedWith resourcesBody
                     |> ProgramTest.clickButton "ホーム"
-                    |> ensureKinds [ "journeyState", "annotationsList", "journeyChanges" ]
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondOk 0 "journeyState" (journeyBody "pick" "atelier")
                     |> ProgramTest.clickButton "アトリエへ"
                     |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]

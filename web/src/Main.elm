@@ -5896,7 +5896,7 @@ handleOkByKind env model =
                     -- 既定の画面はホームなので、その中身も最初に取っておく
                     ( m2
                     , Effect.batch
-                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState", requestInfo "annotationsList" ]
+                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ]
                     )
 
                 Ok (Api.HealthErr _) ->
@@ -6015,6 +6015,15 @@ handleOkByKind env model =
                 Err _ ->
                     -- 契約とずれた応答(旧サーバ等)。パネルを出さないだけ(fail-open)
                     ( { model | tickets = Tickets.listFailed model.tickets }, Effect.none )
+
+        "sketchList" ->
+            case D.decodeValue SketchPad.listDecoder env.body of
+                Ok sketches ->
+                    ( { model | atelier = Atelier.sketchListLoaded sketches model.atelier }, Effect.none )
+
+                Err _ ->
+                    -- 口を持たない旧サーバでも落とさない。ラフはこれまで通り v1 から書く(fail-open)
+                    ( model, Effect.none )
 
         "annotationsComment" ->
             -- 保存できた。一覧を取り直して README と同じ姿に揃える
@@ -6559,7 +6568,7 @@ handleOkByKind env model =
                                     ( m2, Effect.none )
                     in
                     -- 着地はホームなので、その中身(提案とチケット)も切替の足で取る
-                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState", requestInfo "annotationsList" ] )
+                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ] )
 
                 Ok (Api.SwitchErr message) ->
                     ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
@@ -7100,9 +7109,10 @@ handleOkByKind env model =
                 ( { model | bornSketchReq = Nothing }, Effect.none )
 
             else if Just env.id == model.sketchSaveReq then
-                -- アトリエのラフ塗りの保存。本文の保存(下の分岐)とは別の道
+                -- アトリエのラフ塗りの保存。本文の保存(下の分岐)とは別の道。
+                -- 一覧を取り直してサーバの実物と番号を揃え直す
                 ( { model | sketchSaveReq = Nothing, atelier = Atelier.sketchSaved model.atelier }
-                , Effect.none
+                , requestInfo "sketchList"
                 )
 
             else if Just env.id == model.putReq then
@@ -7696,6 +7706,10 @@ handleErrByKind env message model =
             -- 口を持たないサーバ(404 等)。パネルを出さないだけ(fail-open)
             ( { model | tickets = Tickets.listFailed model.tickets }, Effect.none )
 
+        "sketchList" ->
+            -- 口を持たないサーバ(404 等)。ラフはこれまで通り v1 から書く(fail-open)
+            ( model, Effect.none )
+
         "annotationsComment" ->
             showToast ("一言を保存できませんでした — " ++ message) model
 
@@ -7966,6 +7980,7 @@ gotoTab tab model =
                 (requestInfo "journeyState"
                     -- チケットは F8 でしか増えないので、開いた足の 1 回で足りる
                     :: requestInfo "annotationsList"
+                    :: requestInfo "sketchList"
                     :: (if model.changesAvailable then
                             -- 知らせと描き出しの実況も開いた足で取る
                             [ requestInfo "journeyChanges" ]

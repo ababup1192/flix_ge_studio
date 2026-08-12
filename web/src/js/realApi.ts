@@ -230,6 +230,9 @@ export function realApi(base: string): Api {
         case "annotationsList":
           // 違和感チケットの一覧(読むだけ)
           return getJson(`${base}/annotations/list`);
+        case "sketchList":
+          // ラフ塗りの一覧(読むだけ) — 次に書くバージョン番号の元
+          return getJson(`${base}/sketch/list`);
         case "annotationsComment":
           // 404/400 は日本語の理由が契約
           return sendJsonReason("POST", `${base}/annotations/comment`, payload);

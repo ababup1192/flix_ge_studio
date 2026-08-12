@@ -673,7 +673,7 @@ suite =
                     in
                     case out of
                         Atelier.OutSaveSketch info ->
-                            info.path |> Expect.equal "draft/sketch/stage2.sketch.json"
+                            info.path |> Expect.equal "draft/sketch/stage2/v1.json"
 
                         _ ->
                             Expect.fail "保存の注文が出ていない"

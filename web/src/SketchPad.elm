@@ -5,11 +5,14 @@ module SketchPad exposing
     , Model
     , Msg(..)
     , Out(..)
+    , Sketch
     , Tool(..)
     , cameraLabel
     , decode
     , encode
+    , gotList
     , init
+    , listDecoder
     , nextChar
     , presets
     , promptSection
@@ -100,11 +103,23 @@ type Edge
     | TopLeftEdge
 
 
-{-| 保存の進み。失敗はサーバの理由をそのまま出す。 -}
+{-| ラフ 1 本の既存バージョン一覧(GET /sketch/list の 1 要素)。新しい順とは
+限らない — 使うのは最大値だけなので並びは問わない。
+-}
+type alias Sketch =
+    { name : String
+    , versions : List Int
+    }
+
+
+{-| 保存の進み。Flying/Done は「今どこへ書いているか」を運ぶ —
+保存直後は同じ場所を指し続け、絵を触ったら次のバージョンへ動く(sketchPath 参照)。
+失敗はサーバの理由をそのまま出す。
+-}
 type SaveState
     = SaveIdle
-    | SaveFlying
-    | SaveDone
+    | SaveFlying { path : String, content : String }
+    | SaveDone { path : String, content : String }
     | SaveFailed String
 
 
@@ -146,6 +161,11 @@ type alias Model =
     , undo : List { size : { w : Int, h : Int }, rows : List String, legend : List Entry, hidden : List String }
     , save : SaveState
     , camera : Camera
+
+    -- 名前ごとの既存バージョン一覧(GET /sketch/list)。次のバージョン番号を
+    -- 決める材料 — 名前を打ち替えたときに他のラフの番号を使わないよう、
+    -- 選んでいるラフだけでなく全部を持つ
+    , sketches : List Sketch
 
     -- カメラの絵柄一覧を開いているか(普段はチップ 1 枚に畳む)
     , cameraOpen : Bool
@@ -262,6 +282,7 @@ fromPreset presetId =
     , cameraOpen = False
     , hidden = []
     , resize = Nothing
+    , sketches = []
     }
 
 
@@ -504,6 +525,22 @@ sketchDecoder =
         (D.field "note" D.string)
 
 
+{-| GET /sketch/list の "sketches" を読む。ok や個々の要素の欠けた欄には
+寛容(fail-open)— 読めない要素は落とすのでなく、丸ごと失敗させて古い
+一覧のまま据え置く(Tickets.listDecoder と同じ流儀)。
+-}
+listDecoder : D.Decoder (List Sketch)
+listDecoder =
+    D.field "sketches" (D.list sketchListEntryDecoder)
+
+
+sketchListEntryDecoder : D.Decoder Sketch
+sketchListEntryDecoder =
+    D.map2 Sketch
+        (D.field "name" D.string)
+        (D.oneOf [ D.field "versions" (D.list D.int), D.succeed [] ])
+
+
 entryDecoder : D.Decoder Entry
 entryDecoder =
     D.map4 Entry
@@ -523,12 +560,85 @@ entryDecoder =
         (D.oneOf [ D.field "desc" D.string, D.succeed "" ])
 
 
-{-| 保存先の相対パス。名前が空なら "screen"。
-区切り文字はサーバの門番より先に UI で捨てる(エラーで戸惑わせない)。
+{-| 保存先の相対パス。保存した直後は同じ場所を指し続け(絵を触っていなければ
+SaveDone の内容と今の絵が一致する)、絵を触ったら次のバージョンへ動く。
+「原本: 」行(promptSection)がこの値を依頼文に書き残すので、保存直後は
+存在するファイルを指し続けなければならない。
+
+名前も一致を見るのは、encode が name を含まない(name は保存の宛先を
+決めるだけで、絵の中身ではない)ため — 絵はそのままで名前だけ打ち替えると
+content の一致だけでは古い名前の場所を指し続けてしまい、そこへ保存すると
+別のラフを上書きしてしまう。
 -}
 sketchPath : Model -> String
 sketchPath model =
-    "draft/sketch/" ++ safeName model.name ++ ".sketch.json"
+    case model.save of
+        SaveDone done ->
+            if done.content == encode model && nameFromPath done.path == Just (safeName model.name) then
+                done.path
+
+            else
+                nextSketchPath model
+
+        _ ->
+            nextSketchPath model
+
+
+{-| 名前が空なら "screen"。区切り文字はサーバの門番より先に UI で捨てる
+(エラーで戸惑わせない)。
+-}
+nextSketchPath : Model -> String
+nextSketchPath model =
+    let
+        name =
+            safeName model.name
+    in
+    "draft/sketch/" ++ name ++ "/v" ++ String.fromInt (nextVersion name model.sketches) ++ ".json"
+
+
+{-| そのラフの既存バージョンの最大 + 1(無ければ 1)。 -}
+nextVersion : String -> List Sketch -> Int
+nextVersion name sketches =
+    sketches
+        |> List.filter (\s -> s.name == name)
+        |> List.concatMap .versions
+        |> List.maximum
+        |> Maybe.map (\v -> v + 1)
+        |> Maybe.withDefault 1
+
+
+{-| "draft/sketch/<name>/vN.json" からバージョン番号だけを取り出す。
+形が違えば Nothing(壊れたパスで文言や集計を巻き込まないため)。
+-}
+versionFromPath : String -> Maybe Int
+versionFromPath path =
+    path
+        |> String.split "/"
+        |> List.reverse
+        |> List.head
+        |> Maybe.andThen
+            (\fileName ->
+                if String.startsWith "v" fileName && String.endsWith ".json" fileName then
+                    fileName
+                        |> String.dropLeft 1
+                        |> String.dropRight 5
+                        |> String.toInt
+
+                else
+                    Nothing
+            )
+
+
+{-| "draft/sketch/<name>/vN.json" から名前だけを取り出す(vN.json の 1 つ上の階層)。
+形が違えば Nothing。
+-}
+nameFromPath : String -> Maybe String
+nameFromPath path =
+    path
+        |> String.split "/"
+        |> List.reverse
+        |> List.drop 1
+        |> List.head
 
 
 safeName : String -> String
@@ -691,13 +801,16 @@ update msg model =
                 fresh =
                     fromPreset presetId
             in
-            -- マスの大きさ(見た目の好み)と再現度(人の意図)も残す
+            -- マスの大きさ(見た目の好み)と再現度(人の意図)も残す。
+            -- sketches(既存バージョン一覧)もプリセット替えでは消えない —
+            -- 一覧はプロジェクトに紐づく物で、道具の選び直しとは無関係
             ( { fresh
                 | open = True
                 , note = model.note
                 , name = model.name
                 , cellPx = model.cellPx
                 , fidelity = model.fidelity
+                , sketches = model.sketches
               }
             , OutNone
             )
@@ -992,9 +1105,14 @@ update msg model =
                     ( model, OutNone )
 
         SaveClicked ->
-            ( { model | save = SaveFlying }
-            , OutSave { path = sketchPath model, content = encode model }
-            )
+            -- path と content はここで 1 回だけ作り、飛ばす物(OutSave)と
+            -- 控える物(SaveFlying)を必ず同じにする — 後から作り直すと
+            -- 応答が届く頃には絵が動いていて食い違う恐れがある
+            let
+                flying =
+                    { path = sketchPath model, content = encode model }
+            in
+            ( { model | save = SaveFlying flying }, OutSave flying )
 
 
 {-| つまみが左・上を動かすか(動かすなら絵ごと座標をずらす)。 -}
@@ -1312,16 +1430,64 @@ resizeActive model =
     model.resize /= Nothing
 
 
-{-| 保存成功。 -}
+{-| 保存成功。飛ばした物をそのまま「保存済み」へ移し、そのバージョン番号を
+sketches へ足す — 一覧を取り直す前に続けて 2 回保存しても、2 回目が
+1 回目のバージョンを上書きしない(sketchPath が sketches の最大値から
+次を決めるため)。
+
+足す先の名前は flying.path から取り出す(model.name ではない) —
+飛行中に名前を打ち替えられていたら、model.name はもう違う名前を指しているため。
+-}
 saved : Model -> Model
 saved model =
-    { model | save = SaveDone }
+    case model.save of
+        SaveFlying flying ->
+            { model
+                | save = SaveDone flying
+                , sketches = withVersion flying.path model.sketches
+            }
+
+        _ ->
+            model
+
+
+{-| 保存できた場所のバージョン番号を、そのラフの一覧へ足す(重複は足さない)。
+名前・バージョンともパスから取り出す(呼び出し側の model.name には頼らない)。
+-}
+withVersion : String -> List Sketch -> List Sketch
+withVersion path sketches =
+    case ( nameFromPath path, versionFromPath path ) of
+        ( Just name, Just v ) ->
+            if List.any (\s -> s.name == name) sketches then
+                sketches
+                    |> List.map
+                        (\s ->
+                            if s.name == name && not (List.member v s.versions) then
+                                { s | versions = v :: s.versions }
+
+                            else
+                                s
+                        )
+
+            else
+                sketches ++ [ { name = name, versions = [ v ] } ]
+
+        _ ->
+            sketches
 
 
 {-| 保存失敗。理由は保存ボタンの脇に出す。 -}
 saveFailed : String -> Model -> Model
 saveFailed reason model =
     { model | save = SaveFailed reason }
+
+
+{-| GET /sketch/list の中身を流し込む(Atelier だけが呼ぶ — NewGame は
+これから産まれるプロジェクトなので必ず v1 から)。
+-}
+gotList : List Sketch -> Model -> Model
+gotList sketches model =
+    { model | sketches = sketches }
 
 
 
@@ -1934,15 +2100,22 @@ viewSaveRow model =
             []
         , button
             [ HA.class "btn h-7 px-2.5 text-[11px]"
-            , HA.disabled (model.save == SaveFlying)
+            , HA.disabled
+                (case model.save of
+                    SaveFlying _ ->
+                        True
+
+                    _ ->
+                        False
+                )
             , HE.onClick SaveClicked
             ]
             [ text
                 (case model.save of
-                    SaveFlying ->
+                    SaveFlying _ ->
                         "保存中…"
 
-                    SaveDone ->
+                    SaveDone _ ->
                         "保存しました"
 
                     _ ->
@@ -1956,7 +2129,40 @@ viewSaveRow model =
                         "保存できませんでした — " ++ reason
 
                     _ ->
-                        sketchPath model ++ " に保存されます"
+                        saveLabel model
                 )
             ]
         ]
+
+
+{-| 保存ボタン脇の案内。次のバージョン番号が何番かが一目で伝わるよう
+「vN として保存されます」の形に整える(パスも添えて、迷ったときに探せるようにする)。
+
+sketchPath が SaveDone の場所をそのまま返している間(= 絵も名前も保存直後から
+触っていない)は、まだの事でなくもう済んだ事として言う — ボタン側の
+「保存しました」と食い違わせないため。
+-}
+saveLabel : Model -> String
+saveLabel model =
+    let
+        path =
+            sketchPath model
+
+        settled =
+            case model.save of
+                SaveDone done ->
+                    done.path == path
+
+                _ ->
+                    False
+    in
+    case versionFromPath path of
+        Just v ->
+            if settled then
+                "v" ++ String.fromInt v ++ " に保存しました（" ++ path ++ "）"
+
+            else
+                "v" ++ String.fromInt v ++ " として保存されます（" ++ path ++ "）"
+
+        Nothing ->
+            path ++ " に保存されます"

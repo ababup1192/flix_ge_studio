@@ -65,6 +65,7 @@ module Atelier exposing
     , showExtend
     , showLanding
     , showPicks
+    , sketchListLoaded
     , sketchResizeActive
     , sketchSaveFailed
     , sketchSaved
@@ -1380,6 +1381,14 @@ sketchedPrompt model draft =
 
         Just section ->
             SketchPad.spliceInto section draft
+
+
+{-| GET /sketch/list の応答。次のバージョン番号を決める材料をラフ塗りへ渡す —
+NewGame(これから産まれるプロジェクト)は呼ばない・呼ばれない(常に v1 から)。
+-}
+sketchListLoaded : List SketchPad.Sketch -> Model -> Model
+sketchListLoaded sketches model =
+    { model | sketch = SketchPad.gotList sketches model.sketch }
 
 
 {-| putFile(ラフの保存)の応答。成功・失敗の印は塗りパネルの保存ボタンの脇に出す。 -}

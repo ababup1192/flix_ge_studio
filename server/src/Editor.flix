@@ -278,6 +278,9 @@ mod Editor {
                 let (status, json) = Annotations.archive(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
+            // ラフ塗りの置き場。一覧 = 次に書くバージョン番号の材料 (中身は web が持つ)。
+            case ("GET", "/sketch/list") => withProject(selection, exchange, dir ->
+                sendJson(200, Sketches.listJson(dir), exchange))
             case ("GET", "/runner/log") => sendJson(200, Runner.logJson(runner), exchange)
             case ("GET", "/atelier/candidates") => withProject(selection, exchange, dir ->
                 sendJson(200, Atelier.candidatesJson(runner, dir), exchange))

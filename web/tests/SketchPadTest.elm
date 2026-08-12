@@ -6,6 +6,7 @@ module SketchPadTest exposing (suite)
 -}
 
 import Expect
+import Json.Decode as D
 import SketchPad
 import Test exposing (Test, describe, test)
 
@@ -123,7 +124,7 @@ suite =
                                     , ".."
                                     , "補足: 左が入り口"
                                     , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
-                                    , "原本: draft/sketch/stage2.sketch.json"
+                                    , "原本: draft/sketch/stage2/v1.json"
                                     ]
                                 )
                             )
@@ -611,6 +612,73 @@ suite =
                         |> Maybe.withDefault ""
                         |> String.contains "## ドット絵のラフ（カメラ: 画角なし、2x2、再現度: 雰囲気再現、1文字=1ドット"
                         |> Expect.equal True
+            ]
+        , describe "sketchPath(次のバージョン番号)"
+            [ test "一覧が無ければ v1" <|
+                \_ ->
+                    SketchPad.sketchPath paintedModel
+                        |> Expect.equal "draft/sketch/stage2/v1.json"
+            , test "既存バージョン [3,2,1] があれば最大+1の v4" <|
+                \_ ->
+                    { paintedModel | sketches = [ { name = "stage2", versions = [ 3, 2, 1 ] } ] }
+                        |> SketchPad.sketchPath
+                        |> Expect.equal "draft/sketch/stage2/v4.json"
+            , test "別名のラフのバージョン番号には釣られない" <|
+                \_ ->
+                    { paintedModel | sketches = [ { name = "other", versions = [ 9 ] } ] }
+                        |> SketchPad.sketchPath
+                        |> Expect.equal "draft/sketch/stage2/v1.json"
+            ]
+        , describe "保存直後の場所(絵を触るまで動かない)"
+            [ test "保存が受かった直後は同じ場所を指し続ける" <|
+                \_ ->
+                    let
+                        flying =
+                            stepAll [ SketchPad.SaveClicked ] paintedModel |> Tuple.first
+
+                        done =
+                            SketchPad.saved flying
+                    in
+                    SketchPad.sketchPath done |> Expect.equal (SketchPad.sketchPath flying)
+            , test "保存後に絵を触ると次のバージョンへ動く" <|
+                \_ ->
+                    let
+                        done =
+                            stepAll [ SketchPad.SaveClicked ] paintedModel
+                                |> Tuple.first
+                                |> SketchPad.saved
+
+                        touched =
+                            stepAll [ SketchPad.CellDown ( 1, 1 ) ] done |> Tuple.first
+                    in
+                    SketchPad.sketchPath touched |> Expect.equal "draft/sketch/stage2/v2.json"
+            , test "保存後に絵はそのままで名前だけ打ち替えると、前の名前のファイルを指さず新しい名前の v1 へ動く" <|
+                \_ ->
+                    -- NameEdited は絵を触らせずとも save を SaveIdle へ戻すので、name だけ
+                    -- 直に書き換えて sketchPath 自体の名前一致チェックを検査する
+                    -- (content が一致するだけでは古い名前の場所を指し続けてしまう回帰の検査)
+                    let
+                        done =
+                            stepAll [ SketchPad.SaveClicked ] paintedModel
+                                |> Tuple.first
+                                |> SketchPad.saved
+
+                        renamed =
+                            { done | name = "stage3" }
+                    in
+                    SketchPad.sketchPath renamed |> Expect.equal "draft/sketch/stage3/v1.json"
+            ]
+        , describe "listDecoder(GET /sketch/list)"
+            [ test "サーバの応答形を読める" <|
+                \_ ->
+                    D.decodeString SketchPad.listDecoder
+                        """{"ok":true,"sketches":[{"name":"stage2","versions":[3,2,1]},{"name":"title","versions":[1]}]}"""
+                        |> Expect.equal
+                            (Ok
+                                [ { name = "stage2", versions = [ 3, 2, 1 ] }
+                                , { name = "title", versions = [ 1 ] }
+                                ]
+                            )
             ]
         ]
 

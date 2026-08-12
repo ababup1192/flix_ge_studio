@@ -232,7 +232,7 @@ booted =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList" ]
+        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList", "sketchList" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resourcesBody
         |> ProgramTest.clickButton "アトリエ"
