@@ -233,6 +233,9 @@ stage-engine:
 	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/golden-bless.sh \
 	   $(ENGINE)/bin/golden-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
+	cp $(ENGINE)/bin/precommit.py $(ENGINE)/bin/sync-agents.py $(ENGINE_STAGE)/bin/
+	mkdir -p $(ENGINE_STAGE)/bin/githooks
+	cp $(ENGINE)/bin/githooks/pre-commit $(ENGINE_STAGE)/bin/githooks/
 	# ゲームの make api / status / スキルの参照先 (docs)。同梱漏れは末尾の check-refs が止める
 	mkdir -p $(ENGINE_STAGE)/docs/api-digest
 	cp $(ENGINE)/docs/api-digest.md $(ENGINE)/docs/module-index.md \
@@ -276,6 +279,42 @@ stage-engine:
 	python3 $(ENGINE)/bin/check-refs.py --bundle $(ENGINE_STAGE)
 	@echo "==> [engine] OK: $(ENGINE_STAGE) ($$(du -sh $(ENGINE_STAGE) | cut -f1))"
 
+# --- test: server のテスト + 配布の一致検査 ---
+# 変更した部品だけ回す流儀のうち server ぶんの入口。web は web/ で elm-test / vitest。
+.PHONY: test
+test:
+	@echo "==> [test] server (flix test)"
+	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) test
+	$(MAKE) --no-print-directory check-agents-parity
+
+# --- check-agents-parity: AGENTS 配布の二重実装がずれていないかの機械検査 ---
+# 配布物一覧は engine の agents-pack/manifest.json に一本化してあるが、AGENTS.md の
+# 組み立てだけは engine (bin/sync-agents.py) と server (NewGame.flix) の二重実装が残る。
+# 同じ engine から一時フォルダ A (make 版) / B (jar 版) へ配って diff -r で突き合わせる。
+# AGENTS.local.md の有/無の 2 ケース (ゲーム固有部のつなぎ方が本文の形を変えるため)。
+PARITY_JAVA := $(shell [ -x "$(JAVA_BIN)" ] && echo "$(JAVA_BIN)" || echo java)
+.PHONY: check-agents-parity
+check-agents-parity: jar
+	@ver=$$(sed -n 's/^VERSION[[:space:]]*:=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$(ENGINE)/Makefile" | head -1); \
+	test -n "$$ver" || { echo "!! engine の VERSION が読めません: $(ENGINE)/Makefile"; exit 1; }; \
+	tmp=$$(mktemp -d); status=0; \
+	for c in plain local; do \
+	  a="$$tmp/$$c/A"; b="$$tmp/$$c/B"; mkdir -p "$$a" "$$b"; \
+	  if [ "$$c" = "local" ]; then \
+	    printf '## この画面の画風\n\nparity 検査用のゲーム固有部。\n' > "$$a/AGENTS.local.md"; \
+	    cp "$$a/AGENTS.local.md" "$$b/AGENTS.local.md"; \
+	  fi; \
+	  python3 "$(ENGINE)/bin/sync-agents.py" --game "$$a" --version "$$ver" >/dev/null; \
+	  "$(PARITY_JAVA)" -jar "$(JAR)" --sync-agents "$(ENGINE)" "$$b" >/dev/null; \
+	  if diff -r "$$a" "$$b" >/dev/null 2>&1; then \
+	    echo "==> [parity] $$c: 一致"; \
+	  else \
+	    echo "!! [parity] $$c: make 版と Studio 版の配布結果がずれています"; \
+	    diff -r "$$a" "$$b" | head -40; status=1; \
+	  fi; \
+	done; \
+	rm -rf "$$tmp"; exit $$status
+
 # --- dev: 開発起動 ---
 # server を web/dist 配信で起動 (ブラウザ / .app なしでの動作確認用)。
 # プロジェクト未選択で上げ、画面で選ばせる。PORT/DIR で変えられる。
@@ -298,4 +337,6 @@ help:
 	@echo "make jre    jlink  → app/runtime/jre"
 	@echo "make app    jar+web+jre 同梱の .app をビルド"
 	@echo "make dev    server を web/dist 配信で開発起動"
+	@echo "make test   server の flix test + check-agents-parity"
+	@echo "make check-agents-parity  AGENTS 配布の make 版 / jar 版の一致検査"
 	@echo "make clean  生成物を消す"

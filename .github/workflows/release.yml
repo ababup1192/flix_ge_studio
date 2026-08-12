@@ -120,6 +120,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: tauri-cli@2
+      # ビルド前の関所: server のテストと、AGENTS 配布の二重実装 (engine の
+      # bin/sync-agents.py と server の --sync-agents) の一致検査。ここで止めれば
+      # 壊れた配布を .app に焼き込まない。engine は checkout 済みの engine_repo を使う。
+      - name: make test (flix test + check-agents-parity)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          make test
+          ENGINE="$PWD/engine_repo"
+          FLIX="java -Xss16m -jar $PWD/flix.jar"
       - name: make app
         env:
           GITHUB_TOKEN: ${{ github.token }}

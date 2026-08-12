@@ -43,8 +43,22 @@ Copy-Item -Recurse $jreDir "$resources/jre"
 $engineStage = "$resources/engine"
 New-Item -ItemType Directory -Force -Path "$engineStage/bin" | Out-Null
 Copy-Item $FlixJar "$engineStage/bin/flix.jar"
-# 生まれたゲームへ配る lint (new-game の AGENTS 配布の材料)
+# 生まれたゲームへ配る道具一式 (agents-pack/manifest.json の copy が指す物。
+# 欠けると server の配布が黙って飛ばし、生まれたゲームに関所やフックが付かない)
 Copy-Item "$EngineRepo/bin/lint-*.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/img-digest.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/status.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/checkd" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/explain-error" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/precommit.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/sync-agents.py" "$engineStage/bin/"
+New-Item -ItemType Directory -Force -Path "$engineStage/bin/githooks" | Out-Null
+Copy-Item "$EngineRepo/bin/githooks/pre-commit" "$engineStage/bin/githooks/"
+New-Item -ItemType Directory -Force -Path "$engineStage/.claude/hooks" | Out-Null
+Copy-Item "$EngineRepo/.claude/hooks/after-flix-edit.py" "$engineStage/.claude/hooks/"
+Copy-Item "$EngineRepo/.claude/hooks/session-diet.py" "$engineStage/.claude/hooks/"
+# 版刻印の出どころ (VERSION :=)。無くても engine_full/flix.toml に倒れるが、正を入れておく
+Copy-Item "$EngineRepo/Makefile" "$engineStage/Makefile"
 Copy-Item "$EngineRepo/flix.toml" "$engineStage/flix.toml"
 New-Item -ItemType Directory -Force -Path "$engineStage/engine_full/artifact" | Out-Null
 Copy-Item "$EngineRepo/engine_full/flix.toml" "$engineStage/engine_full/flix.toml"
