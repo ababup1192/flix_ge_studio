@@ -77,6 +77,7 @@ type Tool
 
 {-| カメラアングル。グリッドの見た目は変えず、AI への意図伝えにだけ使う
 (編集面まで傾けると塗る操作が難しくなるだけで得が無い)。
+NoAngle は視点を決めない絵(1 枚絵・アドベンチャーの背景・ドット絵)用。
 -}
 type Camera
     = TopDown
@@ -84,6 +85,7 @@ type Camera
     | Quarter
     | Behind
     | FirstPerson
+    | NoAngle
 
 
 {-| リサイズのつまみ。左右の端=列、上下の端=行、角=両方。
@@ -310,6 +312,24 @@ presets =
             , { char = 'A', name = "水", fill = "#4f8fd6", desc = "" }
             ]
       }
+    , { id = "dot"
+      , label = "ドット絵"
+      , size = { w = 16, h = 16 }
+      , camera = NoAngle
+
+      -- ラベルは「何があるか」でなく「どんな面か」。ドット絵で迷うのは
+      -- 物の置き場所でなく、面の明るさと材質(そこが決まれば色は AI が選べる)
+      , legend =
+            [ { char = 'L', name = "輪郭", fill = "#241a24", desc = "外周の濃い線" }
+            , { char = 'H', name = "ハイライト", fill = "#fff3c4", desc = "光が一番当たる面" }
+            , { char = 'S', name = "影", fill = "#3b3550", desc = "光が当たらない面" }
+            , { char = 'B', name = "肌", fill = "#e8b48a", desc = "" }
+            , { char = 'C', name = "布", fill = "#c05a6a", desc = "やわらかい面" }
+            , { char = 'W', name = "木", fill = "#8a6d3b", desc = "木目のある面" }
+            , { char = 'R', name = "石", fill = "#7c7f88", desc = "ざらついた硬い面" }
+            , { char = 'K', name = "金属", fill = "#9fb3c8", desc = "つやのある硬い面" }
+            ]
+      }
     ]
 
 
@@ -337,6 +357,9 @@ cameraLabel camera =
         FirstPerson ->
             "一人称"
 
+        NoAngle ->
+            "画角なし"
+
 
 {-| 保存 JSON に書く英語 id(日本語をファイルに書かない)。 -}
 cameraId : Camera -> String
@@ -357,6 +380,9 @@ cameraId camera =
         FirstPerson ->
             "first-person"
 
+        NoAngle ->
+            "none"
+
 
 cameraFromId : String -> Maybe Camera
 cameraFromId id =
@@ -375,6 +401,9 @@ cameraFromId id =
 
         "first-person" ->
             Just FirstPerson
+
+        "none" ->
+            Just NoAngle
 
         _ ->
             Nothing
@@ -554,7 +583,7 @@ promptSection model =
         Just
             (String.join "\n"
                 (List.concat
-                    [ [ "## 画面のラフ（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、再現度: " ++ fidelityLabel model.fidelity ++ "、1文字=1マス。塗りから自動生成）"
+                    [ [ "## " ++ sketchTitle model ++ "（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、再現度: " ++ fidelityLabel model.fidelity ++ "、1文字=" ++ cellWord model ++ "。塗りから自動生成）"
                       , "凡例: " ++ legendLine
                       ]
                     , model.rows
@@ -565,6 +594,28 @@ promptSection model =
                     ]
                 )
             )
+
+
+{-| 依頼文の見出し。ドット絵だけは「画面」でなく絵そのものの下描きなので
+言い方を変える(画面のつもりで背景まで足されると別物になる)。
+-}
+sketchTitle : Model -> String
+sketchTitle model =
+    if model.preset == "dot" then
+        "ドット絵のラフ"
+
+    else
+        "画面のラフ"
+
+
+{-| 1 マスが何を表すか。 -}
+cellWord : Model -> String
+cellWord model =
+    if model.preset == "dot" then
+        "1ドット"
+
+    else
+        "1マス"
 
 
 {-| 再現度の段階名(スライダーの表示と依頼文の見出しで共用)。 -}
@@ -1587,7 +1638,7 @@ viewCamera model =
             ]
             :: (if model.cameraOpen then
                     [ div [ HA.class "sketch-camera-list mt-1.5 flex flex-wrap gap-1.5 rounded border border-edge bg-black/20 p-2" ]
-                        ([ TopDown, SideView, Quarter, Behind, FirstPerson ]
+                        ([ TopDown, SideView, Quarter, Behind, FirstPerson, NoAngle ]
                             |> List.map (viewCameraOption model.camera)
                         )
                     ]
@@ -1634,6 +1685,9 @@ cameraHint camera =
         FirstPerson ->
             "主人公の目"
 
+        NoAngle ->
+            "1 枚絵・ADV"
+
 
 {-| カメラの絵柄。言葉だけだと「クォーター」等が伝わらないので、
 傾けたミニグリッド等の図で見せる(画像を持たないのは、色テーマに
@@ -1666,6 +1720,12 @@ cameraGlyph camera =
                     [ div [ HA.class "absolute bottom-0 left-0 right-0 h-3 bg-ok/25" ] []
                     , div [ HA.class "absolute left-0 right-0 top-3 h-px bg-ink-soft/40" ] []
                     , div [ HA.class "absolute inset-0 flex items-center justify-center text-[10px] text-warn" ] [ text "+" ]
+                    ]
+
+            NoAngle ->
+                div [ HA.class "relative h-6 w-8 rounded-[2px] border border-ink-soft/40" ]
+                    [ div [ HA.class "absolute bottom-1 left-1 h-2 w-2 rounded-[1px] bg-warn/70" ] []
+                    , div [ HA.class "absolute bottom-1 right-1 h-3 w-2.5 rounded-[1px] bg-ok/50" ] []
                     ]
         ]
 

@@ -819,10 +819,17 @@ sketchInterviewNote model hasSketch =
             "実装に入る前に、まず /style-interview を実行して画風を私に質問して決めてください。"
     in
     if hasSketch then
-        ask
-            ++ "\nカメラ視点はこのラフの『"
-            ++ SketchPad.cameraLabel model.sketch.camera
-            ++ "』で決まっています。視点の質問は飛ばしてください。"
+        case model.sketch.camera of
+            -- 画角なしは「視点を決めない」という意思表示。名前をそのまま
+            -- 埋めると『画角なしという視点』に読めてしまう
+            SketchPad.NoAngle ->
+                ask ++ "\nこのラフに視点はありません(遠近を付けない絵)。視点の質問は飛ばしてください。"
+
+            _ ->
+                ask
+                    ++ "\nカメラ視点はこのラフの『"
+                    ++ SketchPad.cameraLabel model.sketch.camera
+                    ++ "』で決まっています。視点の質問は飛ばしてください。"
 
     else
         ask

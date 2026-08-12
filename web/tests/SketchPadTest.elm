@@ -556,6 +556,11 @@ suite =
                     SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"legend":[],"rows":["..",".."],"note":""}"""
                         |> Maybe.map .camera
                         |> Expect.equal (Just SketchPad.TopDown)
+            , test "画角なしも encode → decode で保たれる" <|
+                \_ ->
+                    SketchPad.decode (SketchPad.encode { paintedModel | camera = SketchPad.NoAngle })
+                        |> Maybe.map .camera
+                        |> Expect.equal (Just SketchPad.NoAngle)
             , test "知らないカメラ名も読める(fail-open で初期カメラに倒す)" <|
                 \_ ->
                     SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"fisheye","legend":[],"rows":["..",".."],"note":""}"""
@@ -569,6 +574,19 @@ suite =
                         |> Tuple.first
                         |> .camera
                         |> Expect.equal SketchPad.SideView
+            , test "ドット絵プリセットは画角なしで始まる" <|
+                \_ ->
+                    stepAll [ SketchPad.PresetPicked "dot" ] SketchPad.init
+                        |> Tuple.first
+                        |> .camera
+                        |> Expect.equal SketchPad.NoAngle
+            , test "ドット絵プリセットは面と材質のラベル 8 枚で始まる" <|
+                \_ ->
+                    stepAll [ SketchPad.PresetPicked "dot" ] SketchPad.init
+                        |> Tuple.first
+                        |> .legend
+                        |> List.map .name
+                        |> Expect.equal [ "輪郭", "ハイライト", "影", "肌", "布", "木", "石", "金属" ]
             , test "プリセットの初期カメラは後から選び直せる" <|
                 \_ ->
                     stepAll
@@ -586,6 +604,12 @@ suite =
                     SketchPad.promptSection { paintedModel | camera = SketchPad.SideView }
                         |> Maybe.withDefault ""
                         |> String.contains "カメラ: サイドビュー、2x2"
+                        |> Expect.equal True
+            , test "ドット絵のラフは見出しと単位が絵向きになる" <|
+                \_ ->
+                    SketchPad.promptSection { paintedModel | preset = "dot", camera = SketchPad.NoAngle }
+                        |> Maybe.withDefault ""
+                        |> String.contains "## ドット絵のラフ（カメラ: 画角なし、2x2、再現度: 雰囲気再現、1文字=1ドット"
                         |> Expect.equal True
             ]
         ]
