@@ -29,8 +29,14 @@ cornerModel =
 {-| 角のつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
 dragCorner : ( Float, Float ) -> SketchPad.Model -> SketchPad.Model
 dragCorner ( dx, dy ) model =
+    dragEdge SketchPad.CornerEdge ( dx, dy ) model
+
+
+{-| 好きなつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
+dragEdge : SketchPad.Edge -> ( Float, Float ) -> SketchPad.Model -> SketchPad.Model
+dragEdge edge ( dx, dy ) model =
     stepAll
-        [ SketchPad.ResizeStarted SketchPad.CornerEdge { x = 100, y = 100 }
+        [ SketchPad.ResizeStarted edge { x = 100, y = 100 }
         , SketchPad.ResizeMoved { x = 100 + dx, y = 100 + dy }
         , SketchPad.ResizeEnded
         ]
@@ -111,12 +117,12 @@ suite =
                         |> Expect.equal
                             (Just
                                 (String.join "\n"
-                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、1文字=1マス。塗りから自動生成）"
+                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1マス。塗りから自動生成）"
                                     , "凡例: W=壁（崩れかけた石壁）  .=空き"
                                     , "W."
                                     , ".."
                                     , "補足: 左が入り口"
-                                    , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。"
+                                    , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
                                     , "原本: draft/sketch/stage2.sketch.json"
                                     ]
                                 )
@@ -265,11 +271,75 @@ suite =
                     in
                     after.size |> Expect.equal { w = 6, h = 6 }
             ]
+        , describe "リサイズ(左・上のつまみ)"
+            [ test "左のつまみを左へ 45px 引くと 2 列が左に増え、見えていた塗りは動かない" <|
+                \_ ->
+                    let
+                        after =
+                            dragEdge SketchPad.LeftEdge ( -45, 0 ) cornerModel
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal
+                            ( { w = 8, h = 4 }
+                            , [ "..W.....", "........", "........", ".......F" ]
+                            )
+            , test "上のつまみを上へ 45px 引くと 2 行が上に増える" <|
+                \_ ->
+                    let
+                        after =
+                            dragEdge SketchPad.TopEdge ( 0, -45 ) cornerModel
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal
+                            ( { w = 6, h = 6 }
+                            , [ "......", "......", "W.....", "......", "......", ".....F" ]
+                            )
+            , test "左上に縮めて離してから広げ直すと、見えていた塗りは元の位置に戻る(ドラッグをまたいだ列と行は戻らない)" <|
+                \_ ->
+                    let
+                        after =
+                            cornerModel
+                                |> dragEdge SketchPad.TopLeftEdge ( 40, 20 )
+                                |> dragEdge SketchPad.TopLeftEdge ( -40, -20 )
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal
+                            ( { w = 6, h = 4 }
+                            , [ "......", "......", "......", ".....F" ]
+                            )
+            , test "左つまみは 1 ドラッグ内なら縮めすぎても戻せる(離すまで列は失われない)" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ResizeStarted SketchPad.LeftEdge { x = 100, y = 100 }
+                                , SketchPad.ResizeMoved { x = 145, y = 100 }
+                                , SketchPad.ResizeMoved { x = 100, y = 100 }
+                                , SketchPad.ResizeEnded
+                                ]
+                                cornerModel
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+            , test "右へ縮める→左へ縮める→undo→右へ広げる、で退避の塗りも元の位置に戻る(hidden も undo の対)" <|
+                \_ ->
+                    let
+                        after =
+                            cornerModel
+                                |> dragEdge SketchPad.RightEdge ( -25, 0 )
+                                |> dragEdge SketchPad.LeftEdge ( 25, 0 )
+                                |> stepAll [ SketchPad.UndoClicked ]
+                                |> Tuple.first
+                                |> dragEdge SketchPad.RightEdge ( 25, 0 )
+                    in
+                    ( after.size, after.rows )
+                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+            ]
         , describe "リサイズ(上限・下限)"
-            [ test "どれだけ引いても 48x32 で止まる" <|
+            [ test "どれだけ引いても 75x75 で止まる" <|
                 \_ ->
                     (dragCorner ( 10000, 10000 ) cornerModel).size
-                        |> Expect.equal { w = 48, h = 32 }
+                        |> Expect.equal { w = 75, h = 75 }
             , test "どれだけ縮めても 4x3 で止まる" <|
                 \_ ->
                     (dragCorner ( -10000, -10000 ) cornerModel).size
@@ -291,6 +361,189 @@ suite =
                     in
                     ( after.size, after.rows )
                         |> Expect.equal ( cornerModel.size, cornerModel.rows )
+            ]
+        , describe "形の道具(直線・矩形・楕円)"
+            [ test "直線: 押して→引いて→離す、で対角 3 マスが塗れて undo は 1 本" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ToolPicked SketchPad.Line
+                                , SketchPad.CellDown ( 0, 0 )
+                                , SketchPad.CellEntered ( 2, 2 )
+                                , SketchPad.StrokeEnded
+                                ]
+                                { cornerModel | rows = blankRows }
+                    in
+                    ( after.rows, List.length after.undo )
+                        |> Expect.equal ( [ "W.....", ".W....", "..W...", "......" ], 1 )
+            , test "直線: undo 1 本で引く前に戻る" <|
+                \_ ->
+                    stepAll
+                        [ SketchPad.ToolPicked SketchPad.Line
+                        , SketchPad.CellDown ( 0, 0 )
+                        , SketchPad.CellEntered ( 2, 2 )
+                        , SketchPad.StrokeEnded
+                        , SketchPad.UndoClicked
+                        ]
+                        cornerModel
+                        |> Tuple.first
+                        |> .rows
+                        |> Expect.equal cornerModel.rows
+            , test "ドラッグ途中(離す前)は rows を触らない(プレビューは実データと別)" <|
+                \_ ->
+                    stepAll
+                        [ SketchPad.ToolPicked SketchPad.Line
+                        , SketchPad.CellDown ( 0, 0 )
+                        , SketchPad.CellEntered ( 2, 2 )
+                        ]
+                        { cornerModel | rows = blankRows }
+                        |> Tuple.first
+                        |> .rows
+                        |> Expect.equal blankRows
+            , test "矩形: (0,0)-(3,2) で枠だけ塗れて中は空きのまま" <|
+                \_ ->
+                    stepAll
+                        [ SketchPad.ToolPicked SketchPad.Rect
+                        , SketchPad.CellDown ( 0, 0 )
+                        , SketchPad.CellEntered ( 3, 2 )
+                        , SketchPad.StrokeEnded
+                        ]
+                        { cornerModel | rows = blankRows }
+                        |> Tuple.first
+                        |> .rows
+                        |> Expect.equal [ "WWWW..", "W..W..", "WWWW..", "......" ]
+            , test "楕円: 確定で始点の列と終点の列にマスが塗られ、undo で戻る" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ToolPicked SketchPad.Ellipse
+                                , SketchPad.CellDown ( 0, 0 )
+                                , SketchPad.CellEntered ( 4, 2 )
+                                , SketchPad.StrokeEnded
+                                ]
+                                { cornerModel | rows = blankRows }
+
+                        ( undone, _ ) =
+                            stepAll [ SketchPad.UndoClicked ] after
+                    in
+                    ( after.rows |> List.any (\row -> String.slice 0 1 row == "W")
+                    , after.rows |> List.any (\row -> String.slice 4 5 row == "W")
+                    , undone.rows
+                    )
+                        |> Expect.equal ( True, True, blankRows )
+            ]
+        , describe "ラベルの削除"
+            [ test "削除で凡例から消え、塗ってあったマスは空きに戻り、選択は残りの先頭に移る" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ChipPicked 'F'
+                                , SketchPad.ChipPicked 'F'
+                                , SketchPad.ChipDeleted
+                                ]
+                                { paintedModel | rows = [ "WF", ".." ] }
+                    in
+                    ( List.map .char after.legend, after.rows, ( after.active, after.editing ) )
+                        |> Expect.equal ( [ 'W' ], [ "W.", ".." ], ( 'W', Nothing ) )
+            , test "削除は退避(hidden)からも消える — 縮めて隠した塗りも広げ直しで復活しない" <|
+                \_ ->
+                    cornerModel
+                        |> dragCorner ( -40, -20 )
+                        |> stepAll
+                            [ SketchPad.ChipPicked 'F'
+                            , SketchPad.ChipPicked 'F'
+                            , SketchPad.ChipDeleted
+                            ]
+                        |> Tuple.first
+                        |> dragCorner ( 40, 20 )
+                        |> .rows
+                        |> List.any (String.contains "F")
+                        |> Expect.equal False
+            , test "undo で塗りと凡例が対で戻る" <|
+                \_ ->
+                    let
+                        ( after, _ ) =
+                            stepAll
+                                [ SketchPad.ChipPicked 'F'
+                                , SketchPad.ChipPicked 'F'
+                                , SketchPad.ChipDeleted
+                                , SketchPad.UndoClicked
+                                ]
+                                { paintedModel | rows = [ "WF", ".." ] }
+                    in
+                    ( List.map .char after.legend, after.rows )
+                        |> Expect.equal ( [ 'W', 'F' ], [ "WF", ".." ] )
+            ]
+        , describe "マスの大きさ"
+            [ test "32 までは入力どおり" <|
+                \_ ->
+                    stepAll [ SketchPad.CellSizeEdited "32" ] cornerModel
+                        |> Tuple.first
+                        |> .cellPx
+                        |> Expect.equal 32
+            , test "0 は下限 10 に丸める" <|
+                \_ ->
+                    stepAll [ SketchPad.CellSizeEdited "0" ] cornerModel
+                        |> Tuple.first
+                        |> .cellPx
+                        |> Expect.equal 10
+            , test "数字でない入力は無視する" <|
+                \_ ->
+                    stepAll [ SketchPad.CellSizeEdited "abc" ] cornerModel
+                        |> Tuple.first
+                        |> .cellPx
+                        |> Expect.equal 20
+            , test "マスを 10px にすると、右つまみ +45px は round(45/10)=5 列増える(スナップが追随)" <|
+                \_ ->
+                    stepAll [ SketchPad.CellSizeEdited "10" ] cornerModel
+                        |> Tuple.first
+                        |> dragEdge SketchPad.RightEdge ( 45, 0 )
+                        |> .size
+                        |> Expect.equal { w = 11, h = 4 }
+            ]
+        , describe "再現度"
+            [ test "encode → decode で再現度が保たれる" <|
+                \_ ->
+                    SketchPad.decode (SketchPad.encode { paintedModel | fidelity = 3 })
+                        |> Maybe.map .fidelity
+                        |> Expect.equal (Just 3)
+            , test "fidelity 欄の無い旧 JSON は 1(雰囲気再現)に倒す" <|
+                \_ ->
+                    SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"legend":[],"rows":["..",".."],"note":""}"""
+                        |> Maybe.map .fidelity
+                        |> Expect.equal (Just 1)
+            , test "段階 1: 見出しに段階名、末尾に雰囲気でよい旨が出る" <|
+                \_ ->
+                    let
+                        section =
+                            SketchPad.promptSection { paintedModel | fidelity = 1 }
+                                |> Maybe.withDefault ""
+                    in
+                    ( String.contains "再現度: 雰囲気再現" section
+                    , String.contains "雰囲気が伝われば十分です。" section
+                    )
+                        |> Expect.equal ( True, True )
+            , test "段階 4: 見出しに段階名、末尾にマス単位で忠実の注文が出る" <|
+                \_ ->
+                    let
+                        section =
+                            SketchPad.promptSection { paintedModel | fidelity = 4 }
+                                |> Maybe.withDefault ""
+                    in
+                    ( String.contains "再現度: 忠実再現" section
+                    , String.contains "マス単位でできるだけ忠実に再現してください。" section
+                    )
+                        |> Expect.equal ( True, True )
+            , test "スライダー入力は 1〜4 に丸め、数字でない入力は無視する" <|
+                \_ ->
+                    ( stepAll [ SketchPad.FidelityEdited "9" ] cornerModel |> Tuple.first |> .fidelity
+                    , stepAll [ SketchPad.FidelityEdited "0" ] cornerModel |> Tuple.first |> .fidelity
+                    , stepAll [ SketchPad.FidelityEdited "abc" ] { cornerModel | fidelity = 2 } |> Tuple.first |> .fidelity
+                    )
+                        |> Expect.equal ( 4, 1, 2 )
             ]
         , describe "カメラ(保存と読み戻し)"
             [ test "encode → decode でカメラが保たれる" <|
@@ -336,6 +589,12 @@ suite =
                         |> Expect.equal True
             ]
         ]
+
+
+{-| cornerModel と同じ 6x4 の何も塗っていないマス目。 -}
+blankRows : List String
+blankRows =
+    List.repeat 4 "......"
 
 
 {-| Msg を順に流す(Out は最後のものだけ返す)。 -}

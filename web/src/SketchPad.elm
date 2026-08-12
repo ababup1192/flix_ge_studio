@@ -43,6 +43,9 @@ import Html.Events as HE
 import Json.Decode as D
 import Json.Encode as E
 import PixelEditor exposing (floodAt, paintAt)
+import Set exposing (Set)
+import Svg
+import Svg.Attributes as SA
 
 
 
@@ -60,11 +63,16 @@ type alias Entry =
     }
 
 
-{-| 道具。Eraser は「空き(.)で塗るペン」。 -}
+{-| 道具。Eraser は「空き(.)で塗るペン」。
+Line/Rect/Ellipse は押した所から離した所までの形をまとめて塗る。
+-}
 type Tool
     = Pen
     | Bucket
     | Eraser
+    | Line
+    | Rect
+    | Ellipse
 
 
 {-| カメラアングル。グリッドの見た目は変えず、AI への意図伝えにだけ使う
@@ -78,11 +86,16 @@ type Camera
     | FirstPerson
 
 
-{-| リサイズのつまみ。右端=列、下端=行、角=両方。 -}
+{-| リサイズのつまみ。左右の端=列、上下の端=行、角=両方。
+左・上のつまみで広げたときはマスが左・上に増える(見えている絵は動かさない)。
+-}
 type Edge
     = RightEdge
     | BottomEdge
     | CornerEdge
+    | LeftEdge
+    | TopEdge
+    | TopLeftEdge
 
 
 {-| 保存の進み。失敗はサーバの理由をそのまま出す。 -}
@@ -114,9 +127,21 @@ type alias Model =
     -- 一筆(mousedown〜up)の途中か。親はこの間だけグローバル mouseup を購読する
     , stroke : Bool
 
+    -- 形の道具(直線・矩形・楕円)のドラッグ中だけ Just。離すまで rows は触らない
+    , shape : Maybe { start : ( Int, Int ), current : ( Int, Int ) }
+
+    -- 1 マスの画面上の大きさ(px)。保存には含めない — 表示倍率は絵ではない
+    , cellPx : Int
+
+    -- ラフの再現度(1=雰囲気 〜 4=マス単位で忠実)。絵に対する意図なので
+    -- カメラと同じく保存にも依頼文にも載せる
+    , fidelity : Int
+
     -- 戻す用のスナップショット(一筆・1 リサイズで 1 本・直近 20 本まで)。
-    -- rows だけ戻すとサイズと食い違うので、必ず対で戻す
-    , undo : List { size : { w : Int, h : Int }, rows : List String }
+    -- rows だけ戻すとサイズと食い違うし、legend を外すとラベル削除を戻した
+    -- とき凡例の無い文字がグリッドに残るし、hidden を外すと左シフトの undo 後に
+    -- 広げたとき退避の塗りが列ずれで復活する。だから必ず 4 つ対で戻す
+    , undo : List { size : { w : Int, h : Int }, rows : List String, legend : List Entry, hidden : List String }
     , save : SaveState
     , camera : Camera
 
@@ -127,13 +152,17 @@ type alias Model =
     -- 保存には含めない — 保存物 = 見えている絵、という約束を守るため
     , hidden : List String
 
-    -- グリッドのつまみをドラッグ中だけ Just。親はこの間だけグローバル mousemove/up を購読する
+    -- グリッドのつまみをドラッグ中だけ Just。親はこの間だけグローバル mousemove/up を購読する。
+    -- 開始時の状態を丸ごと持つのは、寸法を毎回ここから計算し直すため —
+    -- 差分シフトの積み重ねだと、左・上へ縮めすぎた瞬間に列が落ちて
+    -- 同じドラッグ内で戻しても失われる(右・下と手触りが非対称になる)
     , resize :
         Maybe
             { edge : Edge
             , start : { x : Float, y : Float }
             , startSize : { w : Int, h : Int }
             , startRows : List String
+            , startHidden : List String
             }
     }
 
@@ -155,6 +184,7 @@ type Msg
     | ChipDescEdited String
     | ChipEditClosed
     | ChipAdded
+    | ChipDeleted
     | CellDown ( Int, Int )
     | CellEntered ( Int, Int )
     | StrokeEnded
@@ -166,6 +196,8 @@ type Msg
     | UndoClicked
     | NoteEdited String
     | NameEdited String
+    | CellSizeEdited String
+    | FidelityEdited String
     | SaveClicked
 
 
@@ -181,15 +213,15 @@ minSize =
     { w = 4, h = 3 }
 
 
-{-| 依頼文に貼って読める上限(これ以上は文字グリッドが長すぎて AI が迷う)。 -}
+{-| グリッドの上限。これ以上は塗るのも読むのも大変で、ラフの粒度を超える。 -}
 maxSize : { w : Int, h : Int }
 maxSize =
-    { w = 48, h = 32 }
+    { w = 75, h = 75 }
 
 
-{-| 1 マスの画面上の大きさ(px)。viewCell の h-5 w-5 と対。 -}
-cellPx : Int
-cellPx =
+{-| 1 マスの画面上の大きさ(px)の初期値。 -}
+defaultCellPx : Int
+defaultCellPx =
     20
 
 
@@ -219,6 +251,9 @@ fromPreset presetId =
     , active = preset.legend |> List.head |> Maybe.map .char |> Maybe.withDefault emptyChar
     , editing = Nothing
     , stroke = False
+    , shape = Nothing
+    , cellPx = defaultCellPx
+    , fidelity = 1
     , undo = []
     , save = SaveIdle
     , camera = preset.camera
@@ -370,6 +405,7 @@ encode model =
             , ( "preset", E.string model.preset )
             , ( "size", E.object [ ( "w", E.int model.size.w ), ( "h", E.int model.size.h ) ] )
             , ( "camera", E.string (cameraId model.camera) )
+            , ( "fidelity", E.int model.fidelity )
             , ( "legend", E.list encodeEntry model.legend )
             , ( "rows", E.list E.string model.rows )
             , ( "note", E.string model.note )
@@ -403,8 +439,8 @@ decode text =
 
 sketchDecoder : D.Decoder Model
 sketchDecoder =
-    D.map6
-        (\preset size cameraText legend rows note ->
+    D.map7
+        (\preset size cameraText fidelity legend rows note ->
             let
                 base =
                     fromPreset preset
@@ -415,6 +451,15 @@ sketchDecoder =
                 -- カメラの欄が無い・知らない値でも読める(fail-open)。
                 -- 読めない Doc で全体を止めないため、プリセットの初期カメラに倒す
                 , camera = cameraFromId cameraText |> Maybe.withDefault base.camera
+
+                -- 再現度も同じく fail-open。範囲外は 1(雰囲気)に倒す —
+                -- 勝手に忠実側へ寄せると AI への注文が意図より強くなるため
+                , fidelity =
+                    if fidelity >= 1 && fidelity <= 4 then
+                        fidelity
+
+                    else
+                        1
                 , legend = legend
                 , rows = rows
                 , note = note
@@ -424,6 +469,7 @@ sketchDecoder =
         (D.field "preset" D.string)
         (D.field "size" (D.map2 (\w h -> { w = w, h = h }) (D.field "w" D.int) (D.field "h" D.int)))
         (D.oneOf [ D.field "camera" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "fidelity" D.int, D.succeed 1 ])
         (D.field "legend" (D.list entryDecoder))
         (D.field "rows" (D.list D.string))
         (D.field "note" D.string)
@@ -508,17 +554,51 @@ promptSection model =
         Just
             (String.join "\n"
                 (List.concat
-                    [ [ "## 画面のラフ（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、1文字=1マス。塗りから自動生成）"
+                    [ [ "## 画面のラフ（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、再現度: " ++ fidelityLabel model.fidelity ++ "、1文字=1マス。塗りから自動生成）"
                       , "凡例: " ++ legendLine
                       ]
                     , model.rows
                     , noteLines
-                    , [ "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。"
+                    , [ "凡例のかっこ内は意図です。" ++ fidelityClause model.fidelity
                       , "原本: " ++ sketchPath model
                       ]
                     ]
                 )
             )
+
+
+{-| 再現度の段階名(スライダーの表示と依頼文の見出しで共用)。 -}
+fidelityLabel : Int -> String
+fidelityLabel level =
+    case level of
+        2 ->
+            "まあまあ再現"
+
+        3 ->
+            "そこそこ忠実再現"
+
+        4 ->
+            "忠実再現"
+
+        _ ->
+            "雰囲気再現"
+
+
+{-| 再現度を AI への注文の言葉に直す(依頼文の末尾)。 -}
+fidelityClause : Int -> String
+fidelityClause level =
+    case level of
+        2 ->
+            "大きな配置関係(何がどの辺にあるか)は保ってください。細部は変えて構いません。"
+
+        3 ->
+            "配置と大きさの比率をできるだけ保ってください。多少の調整は構いません。"
+
+        4 ->
+            "マス単位でできるだけ忠実に再現してください。"
+
+        _ ->
+            "ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
 
 
 legendTerm : Entry -> String
@@ -560,7 +640,16 @@ update msg model =
                 fresh =
                     fromPreset presetId
             in
-            ( { fresh | open = True, note = model.note, name = model.name }, OutNone )
+            -- マスの大きさ(見た目の好み)と再現度(人の意図)も残す
+            ( { fresh
+                | open = True
+                , note = model.note
+                , name = model.name
+                , cellPx = model.cellPx
+                , fidelity = model.fidelity
+              }
+            , OutNone
+            )
 
         ToolPicked tool ->
             ( { model | tool = tool }, OutNone )
@@ -608,37 +697,105 @@ update msg model =
                     , OutNone
                     )
 
+        ChipDeleted ->
+            case model.editing of
+                Nothing ->
+                    ( model, OutNone )
+
+                Just char ->
+                    let
+                        erase =
+                            String.map
+                                (\c ->
+                                    if c == char then
+                                        emptyChar
+
+                                    else
+                                        c
+                                )
+
+                        remaining =
+                            model.legend |> List.filter (\entry -> entry.char /= char)
+                    in
+                    ( { model
+                        | legend = remaining
+                        , rows = List.map erase model.rows
+                        , hidden = List.map erase model.hidden
+                        , editing = Nothing
+                        , active =
+                            if model.active == char then
+                                remaining |> List.head |> Maybe.map .char |> Maybe.withDefault emptyChar
+
+                            else
+                                model.active
+                        , undo = snapshot model :: List.take 19 model.undo
+                        , save = SaveIdle
+                      }
+                    , OutNone
+                    )
+
         CellDown point ->
-            let
-                brush =
-                    brushChar model
-
-                next =
-                    case model.tool of
-                        Bucket ->
-                            floodAt brush point model.rows
-
-                        _ ->
-                            paintAt brush point model.rows
-            in
-            ( { model
-                | rows = next
-                , stroke = model.tool /= Bucket
-                , undo = { size = model.size, rows = model.rows } :: List.take 19 model.undo
-                , save = SaveIdle
-              }
-            , OutNone
-            )
-
-        CellEntered point ->
-            if model.stroke then
-                ( { model | rows = paintAt (brushChar model) point model.rows }, OutNone )
+            if isShapeTool model.tool then
+                -- rows は離すまで触らないが、undo はここで積む
+                -- (確定直前 = down 時点の絵で正しく、確定時に積み直す手間が要らない)
+                ( { model
+                    | shape = Just { start = point, current = point }
+                    , stroke = True
+                    , undo = snapshot model :: List.take 19 model.undo
+                    , save = SaveIdle
+                  }
+                , OutNone
+                )
 
             else
-                ( model, OutNone )
+                let
+                    brush =
+                        brushChar model
+
+                    next =
+                        case model.tool of
+                            Bucket ->
+                                floodAt brush point model.rows
+
+                            _ ->
+                                paintAt brush point model.rows
+                in
+                ( { model
+                    | rows = next
+                    , stroke = model.tool /= Bucket
+                    , undo = snapshot model :: List.take 19 model.undo
+                    , save = SaveIdle
+                  }
+                , OutNone
+                )
+
+        CellEntered point ->
+            case model.shape of
+                Just going ->
+                    ( { model | shape = Just { going | current = point } }, OutNone )
+
+                Nothing ->
+                    if model.stroke then
+                        ( { model | rows = paintAt (brushChar model) point model.rows }, OutNone )
+
+                    else
+                        ( model, OutNone )
 
         StrokeEnded ->
-            ( { model | stroke = False }, OutNone )
+            case model.shape of
+                Just going ->
+                    ( { model
+                        | rows =
+                            shapeCells model.tool going.start going.current
+                                |> List.foldl (paintAt (brushChar model)) model.rows
+                        , shape = Nothing
+                        , stroke = False
+                      }
+                    , OutNone
+                    )
+
+                Nothing ->
+                    ( { model | stroke = False }, OutNone )
 
         ResizeStarted edge point ->
             ( { model
@@ -648,6 +805,7 @@ update msg model =
                         , start = point
                         , startSize = model.size
                         , startRows = model.rows
+                        , startHidden = model.hidden
                         }
               }
             , OutNone
@@ -661,28 +819,57 @@ update msg model =
                 Just going ->
                     let
                         snap from delta =
-                            from + round (delta / toFloat cellPx)
+                            from + round (delta / toFloat model.cellPx)
+
+                        anchor =
+                            edgeAnchor going.edge
+
+                        -- 左・上のつまみは外(マイナス方向)へ引くほど広がるので符号を返す
+                        dx =
+                            if anchor.left then
+                                going.start.x - point.x
+
+                            else
+                                point.x - going.start.x
+
+                        dy =
+                            if anchor.top then
+                                going.start.y - point.y
+
+                            else
+                                point.y - going.start.y
 
                         newSize =
                             { w =
-                                if going.edge == BottomEdge then
+                                if going.edge == BottomEdge || going.edge == TopEdge then
                                     going.startSize.w
 
                                 else
-                                    clamp minSize.w maxSize.w (snap going.startSize.w (point.x - going.start.x))
+                                    clamp minSize.w maxSize.w (snap going.startSize.w dx)
                             , h =
-                                if going.edge == RightEdge then
+                                if going.edge == RightEdge || going.edge == LeftEdge then
                                     going.startSize.h
 
                                 else
-                                    clamp minSize.h maxSize.h (snap going.startSize.h (point.y - going.start.y))
+                                    clamp minSize.h maxSize.h (snap going.startSize.h dy)
                             }
                     in
                     if newSize == model.size then
                         ( model, OutNone )
 
                     else
-                        ( applySize newSize model, OutNone )
+                        -- 現在の姿でなくドラッグ開始時の姿から毎回計算し直す。
+                        -- 差分シフトの積み重ねだと縮めすぎた列がその場で失われ、
+                        -- 同じドラッグ内で戻しても復元できない
+                        ( applySize anchor
+                            newSize
+                            { model
+                                | size = going.startSize
+                                , rows = going.startRows
+                                , hidden = going.startHidden
+                            }
+                        , OutNone
+                        )
 
         ResizeEnded ->
             case model.resize of
@@ -696,7 +883,13 @@ update msg model =
                     else
                         ( { model
                             | resize = Nothing
-                            , undo = { size = going.startSize, rows = going.startRows } :: List.take 19 model.undo
+                            , undo =
+                                { size = going.startSize
+                                , rows = going.startRows
+                                , legend = model.legend
+                                , hidden = going.startHidden
+                                }
+                                    :: List.take 19 model.undo
                             , save = SaveIdle
                           }
                         , OutNone
@@ -711,7 +904,16 @@ update msg model =
         UndoClicked ->
             case model.undo of
                 previous :: rest ->
-                    ( { model | size = previous.size, rows = previous.rows, undo = rest, save = SaveIdle }, OutNone )
+                    ( { model
+                        | size = previous.size
+                        , rows = previous.rows
+                        , legend = previous.legend
+                        , hidden = previous.hidden
+                        , undo = rest
+                        , save = SaveIdle
+                      }
+                    , OutNone
+                    )
 
                 [] ->
                     ( model, OutNone )
@@ -722,18 +924,47 @@ update msg model =
         NameEdited name ->
             ( { model | name = name, save = SaveIdle }, OutNone )
 
+        CellSizeEdited raw ->
+            case String.toInt raw of
+                Just px ->
+                    ( { model | cellPx = clamp 10 32 px }, OutNone )
+
+                Nothing ->
+                    ( model, OutNone )
+
+        FidelityEdited raw ->
+            case String.toInt raw of
+                Just level ->
+                    ( { model | fidelity = clamp 1 4 level, save = SaveIdle }, OutNone )
+
+                Nothing ->
+                    ( model, OutNone )
+
         SaveClicked ->
             ( { model | save = SaveFlying }
             , OutSave { path = sketchPath model, content = encode model }
             )
 
 
+{-| つまみが左・上を動かすか(動かすなら絵ごと座標をずらす)。 -}
+edgeAnchor : Edge -> { left : Bool, top : Bool }
+edgeAnchor edge =
+    { left = edge == LeftEdge || edge == TopLeftEdge
+    , top = edge == TopEdge || edge == TopLeftEdge
+    }
+
+
 {-| グリッドの寸法替え。縮めて消えた塗りは hidden に取っておき、広げたら戻す。
 重なる範囲は rows が勝つ — 見えている所で消した「.」は人の意思なので、
 hidden の古い塗りで勝手に復活させない。
+
+左・上アンカーのときは全描画履歴(merged)ごと列・行をずらしてから切る。
+左・上へ縮めて merged から落ちた列・行は復元不能でよい(undo で戻れる —
+逆向きの退避まで持つと hidden の意味が「どの向きに落ちたか」まで抱えて重くなる)。
+
 -}
-applySize : { w : Int, h : Int } -> Model -> Model
-applySize newSize model =
+applySize : { left : Bool, top : Bool } -> { w : Int, h : Int } -> Model -> Model
+applySize anchor newSize model =
     let
         fullW =
             max model.size.w
@@ -766,17 +997,208 @@ applySize newSize model =
                                 behind
                     )
 
+        dW =
+            newSize.w - model.size.w
+
+        dH =
+            newSize.h - model.size.h
+
+        shiftRow row =
+            if not anchor.left then
+                row
+
+            else if dW > 0 then
+                String.repeat dW (String.fromChar emptyChar) ++ row
+
+            else
+                String.dropLeft (negate dW) row
+
+        shiftedW =
+            if anchor.left then
+                fullW + dW
+
+            else
+                fullW
+
+        shifted =
+            let
+                columnsDone =
+                    List.map shiftRow merged
+            in
+            if not anchor.top then
+                columnsDone
+
+            else if dH > 0 then
+                List.repeat dH (String.repeat (max shiftedW newSize.w) (String.fromChar emptyChar)) ++ columnsDone
+
+            else
+                List.drop (negate dH) columnsDone
+
         cut =
             List.range 0 (newSize.h - 1)
                 |> List.map
                     (\y ->
-                        rowAt y merged
+                        rowAt y shifted
                             |> Maybe.withDefault ""
                             |> pad newSize.w
                             |> String.left newSize.w
                     )
     in
-    { model | size = newSize, rows = cut, hidden = merged }
+    { model | size = newSize, rows = cut, hidden = shifted }
+
+
+{-| undo 1 本ぶんの控え。 -}
+snapshot : Model -> { size : { w : Int, h : Int }, rows : List String, legend : List Entry, hidden : List String }
+snapshot model =
+    { size = model.size, rows = model.rows, legend = model.legend, hidden = model.hidden }
+
+
+{-| 押してから離すまでで形を決める道具か。 -}
+isShapeTool : Tool -> Bool
+isShapeTool tool =
+    tool == Line || tool == Rect || tool == Ellipse
+
+
+{-| 形の道具が確定・プレビューで塗るマスの一覧。ワイルドカードを使わず
+全部並べるのは、Tool を増やしたときコンパイラに漏れを教えてもらうため。
+形の道具以外は shape が立たないのでここへは来ないが、来ても直線で害がない。
+-}
+shapeCells : Tool -> ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+shapeCells tool start current =
+    case tool of
+        Line ->
+            lineCells start current
+
+        Rect ->
+            rectCells start current
+
+        Ellipse ->
+            ellipseCells start current
+
+        Pen ->
+            lineCells start current
+
+        Bucket ->
+            lineCells start current
+
+        Eraser ->
+            lineCells start current
+
+
+{-| 2 点を結ぶ直線のマス。長い方の軸の歩数で線形補間する。 -}
+lineCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+lineCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        steps =
+            max (abs (x1 - x0)) (abs (y1 - y0))
+    in
+    if steps == 0 then
+        [ ( x0, y0 ) ]
+
+    else
+        List.range 0 steps
+            |> List.map
+                (\i ->
+                    let
+                        t =
+                            toFloat i / toFloat steps
+                    in
+                    ( round (toFloat x0 + toFloat (x1 - x0) * t)
+                    , round (toFloat y0 + toFloat (y1 - y0) * t)
+                    )
+                )
+
+
+{-| 2 点を対角とする四角の枠線のマス。中は塗らない —
+塗り潰しはバケツで一撫でできるので、塗り潰し版の道具を別に増やさない。
+-}
+rectCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+rectCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        left =
+            min x0 x1
+
+        right =
+            max x0 x1
+
+        top =
+            min y0 y1
+
+        bottom =
+            max y0 y1
+    in
+    Set.toList
+        (Set.fromList
+            ((List.range left right |> List.concatMap (\x -> [ ( x, top ), ( x, bottom ) ]))
+                ++ (List.range top bottom |> List.concatMap (\y -> [ ( left, y ), ( right, y ) ]))
+            )
+        )
+
+
+{-| 外接矩形に内接する枠線の楕円のマス。列走査と行走査の両方を重ねるのは、
+片方だけだと細長い楕円で急な曲がりの所に穴が開くため(Set で重複は消える)。
+-}
+ellipseCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+ellipseCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        left =
+            min x0 x1
+
+        right =
+            max x0 x1
+
+        top =
+            min y0 y1
+
+        bottom =
+            max y0 y1
+
+        cx =
+            toFloat (left + right) / 2
+
+        cy =
+            toFloat (top + bottom) / 2
+
+        rx =
+            toFloat (right - left) / 2
+
+        ry =
+            toFloat (bottom - top) / 2
+    in
+    if rx == 0 || ry == 0 then
+        lineCells ( x0, y0 ) ( x1, y1 )
+
+    else
+        let
+            byColumn =
+                List.range left right
+                    |> List.concatMap
+                        (\x ->
+                            let
+                                t =
+                                    (toFloat x - cx) / rx
+
+                                dy =
+                                    ry * sqrt (max 0 (1 - t * t))
+                            in
+                            [ ( x, round (cy - dy) ), ( x, round (cy + dy) ) ]
+                        )
+
+            byRow =
+                List.range top bottom
+                    |> List.concatMap
+                        (\y ->
+                            let
+                                t =
+                                    (toFloat y - cy) / ry
+
+                                dx =
+                                    rx * sqrt (max 0 (1 - t * t))
+                            in
+                            [ ( round (cx - dx), y ), ( round (cx + dx), y ) ]
+                        )
+        in
+        Set.toList (Set.fromList (byColumn ++ byRow))
 
 
 {-| ラベルを選んだら消しゴムからはペンに戻す(選んだ色で塗れない、を防ぐ)。 -}
@@ -1010,6 +1432,12 @@ viewChipEditor model =
                     , HE.onInput ChipDescEdited
                     ]
                     []
+                , button
+                    [ HA.class "sketch-chip-delete btn h-7 px-2 text-[11px]"
+                    , HA.title "このラベルと、塗ったマスをすべて消します"
+                    , HE.onClick ChipDeleted
+                    ]
+                    [ text "削除" ]
                 , button [ HA.class "btn h-7 px-2 text-[11px]", HE.onClick ChipEditClosed ] [ text "閉じる" ]
                 ]
             ]
@@ -1018,30 +1446,122 @@ viewChipEditor model =
 viewTools : Model -> Html Msg
 viewTools model =
     let
-        toolButton tool label title =
+        toolButton tool title =
             button
                 [ HA.class
                     (if model.tool == tool then
-                        "sketch-tool cursor-pointer rounded border border-accent bg-accent/10 px-2 py-0.5 text-[11px] text-accent"
+                        "sketch-tool flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-accent bg-accent/10 text-accent"
 
                      else
-                        "sketch-tool cursor-pointer rounded border border-edge px-2 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
+                        "sketch-tool flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-edge text-ink-soft hover:border-ink-faint"
                     )
                 , HA.title title
+                , HA.attribute "aria-label" title
                 , HE.onClick (ToolPicked tool)
                 ]
-                [ text label ]
+                [ toolGlyph tool ]
     in
-    div [ HA.class "mb-2 flex items-center gap-1.5" ]
-        [ toolButton Pen "✏️ ペン" "選んだラベルで 1 マスずつ塗る"
-        , toolButton Bucket "🪣 バケツ" "同じ色の続きをまとめて塗る"
-        , toolButton Eraser "🧽 消しゴム" "空きに戻す"
+    div [ HA.class "mb-2 flex flex-wrap items-center gap-1.5" ]
+        [ toolButton Pen "ペン — 選んだラベルで 1 マスずつ塗る"
+        , toolButton Bucket "バケツ — 同じ色の続きをまとめて塗る"
+        , toolButton Eraser "消しゴム — 空きに戻す"
+        , toolButton Line "直線 — 押した所から離した所まで直線を引く"
+        , toolButton Rect "矩形 — 2 点を対角とする四角の枠を描く"
+        , toolButton Ellipse "楕円 — 2 点を対角とするだ円の枠を描く"
         , button
-            [ HA.class "sketch-undo cursor-pointer rounded border border-edge px-2 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
+            [ HA.class "sketch-undo flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-edge text-ink-soft hover:border-ink-faint"
+            , HA.title "戻す — ひとつ前の状態に戻る"
+            , HA.attribute "aria-label" "戻す — ひとつ前の状態に戻る"
             , HA.disabled (List.isEmpty model.undo)
             , HE.onClick UndoClicked
             ]
-            [ text "↩ 戻す" ]
+            [ undoGlyph ]
+        ]
+
+
+{-| 道具のアイコン。絵文字でなく SVG なのは、文字色(選択中の accent)に
+そのまま追随させ、どの OS でも同じ見た目にするため。
+-}
+toolGlyph : Tool -> Html msg
+toolGlyph tool =
+    let
+        stroked shapes =
+            Svg.svg
+                [ SA.viewBox "0 0 16 16"
+                , SA.width "16"
+                , SA.height "16"
+                , SA.fill "none"
+                , SA.stroke "currentColor"
+                , SA.strokeWidth "1.5"
+                , SA.strokeLinecap "round"
+                , SA.strokeLinejoin "round"
+                ]
+                shapes
+
+        -- バケツと消しゴムだけ 24 基準。定番の形(lucide)のパスをそのまま使うためで、
+        -- 16 に手で縮めて描き直すと曲線の丸みが崩れる。線幅 2/24 ≒ 1.5/16 で太さは揃う
+        stroked24 shapes =
+            Svg.svg
+                [ SA.viewBox "0 0 24 24"
+                , SA.width "16"
+                , SA.height "16"
+                , SA.fill "none"
+                , SA.stroke "currentColor"
+                , SA.strokeWidth "2"
+                , SA.strokeLinecap "round"
+                , SA.strokeLinejoin "round"
+                ]
+                shapes
+    in
+    case tool of
+        Pen ->
+            stroked
+                [ Svg.path [ SA.d "M4.5 11.5 L11.5 4.5 L13 6 L6 13 Z" ] []
+                , Svg.path [ SA.d "M4.5 11.5 L3.5 14 L6 13 Z", SA.fill "currentColor" ] []
+                ]
+
+        Bucket ->
+            stroked24
+                [ Svg.path [ SA.d "m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" ] []
+                , Svg.path [ SA.d "m5 2 5 5" ] []
+                , Svg.path [ SA.d "M2 13h15" ] []
+                , Svg.path [ SA.d "M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z", SA.fill "currentColor", SA.stroke "none" ] []
+                ]
+
+        Eraser ->
+            stroked24
+                [ Svg.path [ SA.d "m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" ] []
+                , Svg.path [ SA.d "M22 21H7" ] []
+                , Svg.path [ SA.d "m5 11 9 9" ] []
+                ]
+
+        Line ->
+            stroked
+                [ Svg.line [ SA.x1 "3", SA.y1 "13", SA.x2 "13", SA.y2 "3" ] [] ]
+
+        Rect ->
+            stroked
+                [ Svg.rect [ SA.x "3", SA.y "4", SA.width "10", SA.height "8" ] [] ]
+
+        Ellipse ->
+            stroked
+                [ Svg.ellipse [ SA.cx "8", SA.cy "8", SA.rx "5.5", SA.ry "4" ] [] ]
+
+
+undoGlyph : Html msg
+undoGlyph =
+    Svg.svg
+        [ SA.viewBox "0 0 16 16"
+        , SA.width "16"
+        , SA.height "16"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.5"
+        , SA.strokeLinecap "round"
+        , SA.strokeLinejoin "round"
+        ]
+        [ Svg.path [ SA.d "M4.5 6 H10 A3.5 3.5 0 0 1 10 13 H6" ] []
+        , Svg.path [ SA.d "M7 3 L4 6 L7 9" ] []
         ]
 
 
@@ -1055,7 +1575,7 @@ viewCamera model =
             [ HA.class "sketch-camera-toggle cursor-pointer rounded-full border border-edge px-2.5 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
             , HE.onClick CameraToggled
             ]
-            [ text "📷 カメラ: "
+            [ text "カメラ: "
             , span [ HA.class "text-accent" ] [ text (cameraLabel model.camera) ]
             , text
                 (if model.cameraOpen then
@@ -1156,13 +1676,15 @@ miniGrid attrs =
         (List.repeat 9 (div [ HA.class "h-1.5 w-1.5 rounded-[1px] bg-ink-soft/50" ] []))
 
 
-{-| サイズバッジ + グリッド + つまみ 3 つ。つまみはグリッドの外周に
-重ねる(マスの中に置くと塗りの mousedown と取り合いになる)。
+{-| サイズバッジ + マスの大きさスライダー + グリッド + つまみ 6 つ。
+つまみはグリッドの外周に重ねる(マスの中に置くと塗りの mousedown と
+取り合いになる)。グリッドはスクロール箱に入れる — マスを大きくしたり
+48x32 まで広げてもパネルがページを乗っ取らないように。
 -}
 viewGridBlock : Model -> Html Msg
 viewGridBlock model =
     div []
-        [ div [ HA.class "mb-1" ]
+        [ div [ HA.class "mb-1 flex flex-wrap items-center gap-3" ]
             [ span
                 [ HA.class
                     (if model.resize /= Nothing then
@@ -1172,13 +1694,42 @@ viewGridBlock model =
                         "sketch-size text-[10px] text-ink-faint"
                     )
                 ]
-                [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h ++ " — 端をつまんで広げる・縮める") ]
+                [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h ++ " — 端や角をつまんで広げる・縮める") ]
+            , span [ HA.class "flex items-center gap-1.5 text-[10px] text-ink-faint" ]
+                [ text ("マス: " ++ String.fromInt model.cellPx ++ "px")
+                , Html.input
+                    [ HA.type_ "range"
+                    , HA.min "10"
+                    , HA.max "32"
+                    , HA.value (String.fromInt model.cellPx)
+                    , HA.class "sketch-cell-size w-24 cursor-pointer"
+                    , HE.onInput CellSizeEdited
+                    ]
+                    []
+                ]
+            , span [ HA.class "flex items-center gap-1.5 text-[10px] text-ink-faint" ]
+                [ text ("再現度: " ++ fidelityLabel model.fidelity)
+                , Html.input
+                    [ HA.type_ "range"
+                    , HA.min "1"
+                    , HA.max "4"
+                    , HA.value (String.fromInt model.fidelity)
+                    , HA.class "sketch-fidelity w-24 cursor-pointer"
+                    , HE.onInput FidelityEdited
+                    ]
+                    []
+                ]
             ]
-        , div [ HA.class "relative inline-block pb-2 pr-2" ]
-            [ viewGrid model
-            , viewHandle model RightEdge
-            , viewHandle model BottomEdge
-            , viewHandle model CornerEdge
+        , div [ HA.class "max-h-96 max-w-full overflow-auto" ]
+            [ div [ HA.class "relative inline-block p-2" ]
+                [ viewGrid model
+                , viewHandle model RightEdge
+                , viewHandle model BottomEdge
+                , viewHandle model CornerEdge
+                , viewHandle model LeftEdge
+                , viewHandle model TopEdge
+                , viewHandle model TopLeftEdge
+                ]
             ]
         ]
 
@@ -1192,19 +1743,28 @@ viewHandle model edge =
         ( marker, place ) =
             case edge of
                 RightEdge ->
-                    ( "sketch-resize-right", "absolute top-0 right-0 bottom-2 w-2 cursor-ew-resize rounded" )
+                    ( "sketch-resize-right", "absolute top-2 right-0 bottom-2 w-2 cursor-ew-resize rounded" )
 
                 BottomEdge ->
-                    ( "sketch-resize-bottom", "absolute bottom-0 left-0 right-2 h-2 cursor-ns-resize rounded" )
+                    ( "sketch-resize-bottom", "absolute bottom-0 left-2 right-2 h-2 cursor-ns-resize rounded" )
 
                 CornerEdge ->
                     ( "sketch-resize-corner", "absolute bottom-0 right-0 h-2 w-2 cursor-nwse-resize rounded" )
+
+                LeftEdge ->
+                    ( "sketch-resize-left", "absolute top-2 left-0 bottom-2 w-2 cursor-ew-resize rounded" )
+
+                TopEdge ->
+                    ( "sketch-resize-top", "absolute top-0 left-2 right-2 h-2 cursor-ns-resize rounded" )
+
+                TopLeftEdge ->
+                    ( "sketch-resize-topleft", "absolute top-0 left-0 h-2 w-2 cursor-nwse-resize rounded" )
 
         tone =
             if dragging then
                 " bg-accent/40"
 
-            else if edge == CornerEdge then
+            else if edge == CornerEdge || edge == TopLeftEdge then
                 " bg-white/10 hover:bg-accent/40"
 
             else
@@ -1230,6 +1790,17 @@ viewGrid model =
                 |> List.filter (\entry -> entry.char == char)
                 |> List.head
                 |> Maybe.map .fill
+
+        previewSet =
+            case model.shape of
+                Just going ->
+                    Set.fromList (shapeCells model.tool going.start going.current)
+
+                Nothing ->
+                    Set.empty
+
+        previewFill =
+            colorOf model.active
     in
     div [ HA.class "sketch-grid inline-block cursor-crosshair select-none border border-edge" ]
         (model.rows
@@ -1238,27 +1809,41 @@ viewGrid model =
                     div [ HA.class "flex" ]
                         (row
                             |> String.toList
-                            |> List.indexedMap (\x char -> viewCell colorOf x y char)
+                            |> List.indexedMap (\x char -> viewCell model.cellPx colorOf previewFill previewSet x y char)
                         )
                 )
         )
 
 
-viewCell : (Char -> Maybe String) -> Int -> Int -> Char -> Html Msg
-viewCell colorOf x y char =
+viewCell : Int -> (Char -> Maybe String) -> Maybe String -> Set ( Int, Int ) -> Int -> Int -> Char -> Html Msg
+viewCell cellSize colorOf previewFill previewSet x y char =
+    let
+        fillOf maybeFill =
+            case maybeFill of
+                Just fill ->
+                    [ HA.style "background-color" fill ]
+
+                Nothing ->
+                    [ HA.class "bg-black/20" ]
+
+        look =
+            if Set.member ( x, y ) previewSet then
+                -- 内側の白い縁で「まだ確定していない」ことを見せる
+                fillOf previewFill
+                    ++ [ HA.style "box-shadow" "inset 0 0 0 1px rgba(255,255,255,0.5)" ]
+
+            else
+                fillOf (colorOf char)
+    in
     div
-        ([ HA.class "sketch-cell h-5 w-5 shrink-0 border border-black/10"
+        ([ HA.class "sketch-cell shrink-0 border border-black/10"
+         , HA.style "width" (String.fromInt cellSize ++ "px")
+         , HA.style "height" (String.fromInt cellSize ++ "px")
          , HE.custom "mousedown"
             (D.succeed { message = CellDown ( x, y ), stopPropagation = True, preventDefault = True })
          , HE.onMouseEnter (CellEntered ( x, y ))
          ]
-            ++ (case colorOf char of
-                    Just fill ->
-                        [ HA.style "background-color" fill ]
-
-                    Nothing ->
-                        [ HA.class "bg-black/20" ]
-               )
+            ++ look
         )
         []
 
@@ -1295,13 +1880,13 @@ viewSaveRow model =
             [ text
                 (case model.save of
                     SaveFlying ->
-                        "⏳ 保存中…"
+                        "保存中…"
 
                     SaveDone ->
-                        "✓ 保存しました"
+                        "保存しました"
 
                     _ ->
-                        "💾 保存"
+                        "保存"
                 )
             ]
         , span [ HA.class "text-[10px] text-ink-faint" ]
