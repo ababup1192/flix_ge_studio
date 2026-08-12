@@ -545,7 +545,7 @@ suite =
                             )
                         |> Tuple.second
                         |> kindsOf
-                        |> Expect.equal [ "files", "resources", "putFile", "journeyState" ]
+                        |> Expect.equal [ "files", "resources", "putFile", "journeyState", "annotationsList" ]
             ]
         ]
 

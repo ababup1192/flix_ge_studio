@@ -227,6 +227,14 @@ export function realApi(base: string): Api {
         case "galleryList":
           // 「全場面を見る」の一覧(読むだけ)
           return getJson(`${base}/gallery/list`);
+        case "annotationsList":
+          // 違和感チケットの一覧(読むだけ)
+          return getJson(`${base}/annotations/list`);
+        case "annotationsComment":
+          // 404/400 は日本語の理由が契約
+          return sendJsonReason("POST", `${base}/annotations/comment`, payload);
+        case "annotationsArchive":
+          return sendJsonReason("POST", `${base}/annotations/archive`, payload);
         case "runnerLog":
           // プレビューの描き出しのログ(進捗パネルの末尾数行の材料)
           return getJson(`${base}/runner/log`);

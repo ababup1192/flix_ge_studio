@@ -62,6 +62,7 @@ import Selection exposing (EntrySel(..))
 import Skeleton
 import Set exposing (Set)
 import Sources
+import Tickets
 import Time
 import Table
 import Url
@@ -463,6 +464,9 @@ type alias Model =
     -- 上部ナビ。ホームの中身は Journey が持つ(Main は配線だけ)
     , tab : Tab
     , journey : Journey.Model
+
+    -- 違和感チケット(ゲーム内 F8 の注釈に一言を添えて AI へ運ぶ窓)
+    , tickets : Tickets.Model
 
     -- 見た目の自動検査(/journey/changes)。baking = エンジンが全場面を
     -- 描き出している最中(ホームに実況を出す)。available = False は
@@ -911,6 +915,7 @@ init _ =
         { screen = Booting
         , tab = HomeTab
         , journey = Journey.init
+        , tickets = Tickets.init
         , changesBaking = False
         , changesAvailable = True
         , changesModal = Nothing
@@ -1210,6 +1215,7 @@ type Msg
     | RunningGamesPollTick
     | TabClicked Tab
     | JourneyMsg Journey.Msg
+    | TicketsMsg Tickets.Msg
     | ChangesPollTick
     | ReloadClicked
     | StaleDismissed
@@ -1317,6 +1323,31 @@ update msg model =
 
                 Nothing ->
                     ( m1, Effect.none )
+
+        TicketsMsg tmsg ->
+            let
+                ( tickets, out ) =
+                    Tickets.update tmsg model.tickets
+
+                m1 =
+                    { model | tickets = tickets }
+            in
+            case out of
+                Tickets.OutNone ->
+                    ( m1, Effect.none )
+
+                Tickets.OutSaveComment info ->
+                    -- 一言は README のコメント欄へ(保存できたら一覧を取り直す)
+                    request "annotationsComment"
+                        (E.object [ ( "id", E.string info.id ), ( "comment", E.string info.comment ) ])
+                        m1
+
+                Tickets.OutArchive ticketId ->
+                    request "annotationsArchive" (E.object [ ( "id", E.string ticketId ) ]) m1
+
+                Tickets.OutCopyPrompt prompt ->
+                    -- クリップボードへ(JS 側で解決するローカルな封筒)
+                    request "copyClipboard" (E.object [ ( "text", E.string prompt ) ]) m1
 
         ChangesPollTick ->
             -- ホームに居る間の定期便。呼ぶだけで検査が 1 目盛り進み、
@@ -5865,7 +5896,7 @@ handleOkByKind env model =
                     -- 既定の画面はホームなので、その中身も最初に取っておく
                     ( m2
                     , Effect.batch
-                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState" ]
+                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState", requestInfo "annotationsList" ]
                     )
 
                 Ok (Api.HealthErr _) ->
@@ -5975,6 +6006,22 @@ handleOkByKind env model =
                 Err _ ->
                     -- 契約とずれた応答(旧サーバ等)も「準備中」の 1 枚に倒す(落とさない)
                     ( { model | journey = Journey.failed "契約とずれた応答" }, Effect.none )
+
+        "annotationsList" ->
+            case D.decodeValue Tickets.listDecoder env.body of
+                Ok ticketList ->
+                    ( { model | tickets = Tickets.gotList ticketList model.tickets }, Effect.none )
+
+                Err _ ->
+                    -- 契約とずれた応答(旧サーバ等)。パネルを出さないだけ(fail-open)
+                    ( { model | tickets = Tickets.listFailed model.tickets }, Effect.none )
+
+        "annotationsComment" ->
+            -- 保存できた。一覧を取り直して README と同じ姿に揃える
+            ( model, requestInfo "annotationsList" )
+
+        "annotationsArchive" ->
+            ( model, requestInfo "annotationsList" )
 
         "changes" ->
             -- 見張りは 2 本立て。(1) 一覧の増減: mtime 一覧のキー集合を今の
@@ -6399,6 +6446,9 @@ handleOkByKind env model =
                                     | screen = Editing
                                     , tab = HomeTab
                                     , journey = Journey.init
+
+                                    -- 前のプロジェクトのチケットを持ち越さない(混線防止)
+                                    , tickets = Tickets.init
                                     , changesBaking = False
                                     , changesAvailable = True
                                     , changesModal = Nothing
@@ -6508,7 +6558,8 @@ handleOkByKind env model =
                                 Nothing ->
                                     ( m2, Effect.none )
                     in
-                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState" ] )
+                    -- 着地はホームなので、その中身(提案とチケット)も切替の足で取る
+                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState", requestInfo "annotationsList" ] )
 
                 Ok (Api.SwitchErr message) ->
                     ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
@@ -7641,6 +7692,16 @@ handleErrByKind env message model =
             -- エンドポイント未実装のサーバでも赤エラーは出さない(「準備中」の 1 枚へ)
             ( { model | journey = Journey.failed message }, Effect.none )
 
+        "annotationsList" ->
+            -- 口を持たないサーバ(404 等)。パネルを出さないだけ(fail-open)
+            ( { model | tickets = Tickets.listFailed model.tickets }, Effect.none )
+
+        "annotationsComment" ->
+            showToast ("一言を保存できませんでした — " ++ message) model
+
+        "annotationsArchive" ->
+            showToast ("アーカイブへ移せませんでした — " ++ message) model
+
         "journeyChanges" ->
             -- 404 = この口を持たないサーバ。実況もモーダルも出さないだけ(fail-open)
             if String.contains "404" message then
@@ -7903,6 +7964,8 @@ gotoTab tab model =
             ( { model | tab = HomeTab }
             , Effect.batch
                 (requestInfo "journeyState"
+                    -- チケットは F8 でしか増えないので、開いた足の 1 回で足りる
+                    :: requestInfo "annotationsList"
                     :: (if model.changesAvailable then
                             -- 知らせと描き出しの実況も開いた足で取る
                             [ requestInfo "journeyChanges" ]
@@ -8317,6 +8380,7 @@ viewHome model =
         [ Html.map JourneyMsg (Journey.view model.journey)
         , viewLaunchLine model
         , viewDrawingLine model
+        , Html.map TicketsMsg (Tickets.view { serverBase = model.serverBase } model.tickets)
         , div [ HA.class "mt-auto flex flex-wrap items-center justify-center gap-5 pt-10" ]
             [ button
                 [ HA.class "all-scenes-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"

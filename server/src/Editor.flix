@@ -262,6 +262,22 @@ mod Editor {
                 let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
             })
+            // 違和感チケット (ゲーム内 F8 の注釈)。一覧・スクショ・一言の保存・アーカイブ。
+            case ("GET", "/annotations/list") => withProject(selection, exchange, dir ->
+                sendJson(200, Annotations.listJson(dir), exchange))
+            case ("GET", "/annotations/shot") => withProject(selection, exchange, dir ->
+                match Annotations.shotBytes(dir, params) {
+                    case Some(bytes) => sendBytes("image/png", bytes, exchange)
+                    case None        => sendJson(404, errorJson("shot not found"), exchange)
+                })
+            case ("POST", "/annotations/comment") => withProject(selection, exchange, dir -> {
+                let (status, json) = Annotations.setComment(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/annotations/archive") => withProject(selection, exchange, dir -> {
+                let (status, json) = Annotations.archive(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("GET", "/runner/log") => sendJson(200, Runner.logJson(runner), exchange)
             case ("GET", "/atelier/candidates") => withProject(selection, exchange, dir ->
                 sendJson(200, Atelier.candidatesJson(runner, dir), exchange))
