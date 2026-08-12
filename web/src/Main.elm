@@ -35,6 +35,7 @@ import Html.Events as HE
 import Html.Keyed
 import FormHelp
 import Html.Lazy as HL
+import SketchCompare
 import SketchPad
 import Svg
 import Svg.Attributes as SA
@@ -668,6 +669,11 @@ type alias Model =
     -- 焼き上がりの見比べ(golden)。数字はステータスバーに出す
     , golden : GoldenView.Model
 
+    -- 生成された絵とラフの見比べ。ラフの中身の往復は id で見分ける
+    -- (ファイルを開く道と同じ "getFile" の口を使うので、札を分けないと取り違える)
+    , sketchCompare : SketchCompare.Model
+    , sketchDraftReq : Maybe Int
+
     -- 焼き上がりの拡大(ライトボックス)と、その中で動く絵を出しているか。
     -- GIF は止められないので、止める = その時のコマを 1 枚出す
     , bakeZoom : Bool
@@ -987,6 +993,8 @@ init _ =
         , saveGen = 0
         , frameNotes = []
         , golden = GoldenView.init
+        , sketchCompare = SketchCompare.init
+        , sketchDraftReq = Nothing
         , wakeReq = Nothing
         , wakeSeconds = 0
         , pendingAction = BakeAfterWake ""
@@ -1122,6 +1130,13 @@ type Msg
     | GoldenOpacityChanged String
     | GoldenBlessed Api.GoldenItem
     | GoldenPlayClicked { name : String, dir : String }
+    | SketchCompareOpened
+    | SketchCompareClosed
+    | SketchCompareSceneChosen String
+    | SketchCompareSketchChosen String
+    | SketchCompareVersionChosen Int
+    | SketchCompareModeChosen SketchCompare.Mode
+    | SketchCompareOpacityChanged String
     | WakePolled Int
     | PerformClicked
     | BakeCancelled
@@ -1912,6 +1927,31 @@ update msg model =
                     ]
                 )
                 model
+
+        SketchCompareOpened ->
+            -- 開くたびに両方の一覧を取り直す(焼いた直後・ラフを描いた直後に
+            -- 開くのが普通の使い方)。読み取りだけの封筒なので採番外
+            ( { model | sketchCompare = SketchCompare.open model.sketchCompare }
+            , Effect.batch [ requestInfo "galleryList", requestInfo "sketchList" ]
+            )
+
+        SketchCompareClosed ->
+            ( { model | sketchCompare = SketchCompare.close model.sketchCompare }, Effect.none )
+
+        SketchCompareSceneChosen name ->
+            ( { model | sketchCompare = SketchCompare.selectScene name model.sketchCompare }, Effect.none )
+
+        SketchCompareSketchChosen name ->
+            loadSketchDraft { model | sketchCompare = SketchCompare.selectSketch name model.sketchCompare }
+
+        SketchCompareVersionChosen version ->
+            loadSketchDraft { model | sketchCompare = SketchCompare.selectVersion version model.sketchCompare }
+
+        SketchCompareModeChosen mode ->
+            ( { model | sketchCompare = SketchCompare.setMode mode model.sketchCompare }, Effect.none )
+
+        SketchCompareOpacityChanged text_ ->
+            ( { model | sketchCompare = SketchCompare.setOpacity text_ model.sketchCompare }, Effect.none )
 
         WakePolled seq ->
             -- やめた後・別の焼きが始まった後の予約は捨てる
@@ -6019,7 +6059,11 @@ handleOkByKind env model =
         "sketchList" ->
             case D.decodeValue SketchPad.listDecoder env.body of
                 Ok sketches ->
-                    ( { model | atelier = Atelier.sketchListLoaded sketches model.atelier }, Effect.none )
+                    loadSketchDraft
+                        { model
+                            | atelier = Atelier.sketchListLoaded sketches model.atelier
+                            , sketchCompare = SketchCompare.withSketches sketches model.sketchCompare
+                        }
 
                 Err _ ->
                     -- 口を持たない旧サーバでも落とさない。ラフはこれまで通り v1 から書く(fail-open)
@@ -6154,6 +6198,7 @@ handleOkByKind env model =
                     -- ミニプレイヤーの場面チップも同じ出どころ(1 応答で両方養う)
                     ( { model
                         | miniScenes = names
+                        , sketchCompare = SketchCompare.withScenes names model.sketchCompare
                         , scenes =
                             if model.scenes == Just ScenesLoading then
                                 Just (ScenesReady names)
@@ -6166,7 +6211,13 @@ handleOkByKind env model =
 
                 Err _ ->
                     -- 契約とずれた応答。モーダルは静かに畳み、チップは空へ(fail-open)
-                    ( { model | scenes = Nothing, miniScenes = [] }, Effect.none )
+                    ( { model
+                        | scenes = Nothing
+                        , miniScenes = []
+                        , sketchCompare = SketchCompare.withScenes [] model.sketchCompare
+                      }
+                    , Effect.none
+                    )
 
         "atelierCandidates" ->
             case D.decodeValue Atelier.candidatesDecoder env.body of
@@ -6769,6 +6820,14 @@ handleOkByKind env model =
                     else if Just env.id == model.texturesReq then
                         ( { model | texturesReq = Nothing, textures = texturesFrom fc.content }, Effect.none )
 
+                    else if Just env.id == model.sketchDraftReq then
+                        ( { model
+                            | sketchDraftReq = Nothing
+                            , sketchCompare = SketchCompare.loaded fc.content model.sketchCompare
+                          }
+                        , Effect.none
+                        )
+
                     else
                         case crossApply env.id fc model.crossSlots of
                             Just slots ->
@@ -6792,6 +6851,15 @@ handleOkByKind env model =
 
                     else if Just env.id == model.loadReq then
                         ( { model | loadReq = Nothing, notice = Just "file 応答が読めませんでした" }, Effect.none )
+
+                    else if Just env.id == model.sketchDraftReq then
+                        -- 札を畳まないと「読み込んでいます…」が窓に残り続ける
+                        ( { model
+                            | sketchDraftReq = Nothing
+                            , sketchCompare = SketchCompare.loadFailed "ラフを読めませんでした" model.sketchCompare
+                          }
+                        , Effect.none
+                        )
 
                     else
                         ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
@@ -7560,6 +7628,15 @@ handleErrByKind env message model =
                 -- project.json が読めなくても編集は続く(候補が出ないだけ)
                 ( { model | texturesReq = Nothing }, Effect.none )
 
+            else if Just env.id == model.sketchDraftReq then
+                -- 消えたラフ・読めないラフ。窓は開けたまま理由だけ出す
+                ( { model
+                    | sketchDraftReq = Nothing
+                    , sketchCompare = SketchCompare.loadFailed ("ラフを読めませんでした — " ++ message) model.sketchCompare
+                  }
+                , Effect.none
+                )
+
             else
                 case crossFailApply env.id model.crossSlots of
                     Just slots ->
@@ -8090,6 +8167,7 @@ viewShell model content =
         -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
         , viewSearchPanel model
         , viewGoldenWindow model
+        , viewSketchCompareWindow model
         , viewFailureDialog model
         ]
 
@@ -8110,6 +8188,7 @@ viewTopbarRow model extras =
             [ viewSearchButton
             , viewFailureBadge model
             , viewGoldenBadge model
+            , viewSketchCompareButton model
             , viewProjectSwitch
             ]
          ]
@@ -8280,6 +8359,37 @@ viewSearchButton =
         , HE.onClick SearchToggled
         ]
         [ searchIconSvg, text "検索" ]
+
+
+{-| ラフと見比べる窓の入口。ラフが 1 本も無いプロジェクトでは出さない
+(見比べる相手が居ないので、押しても空の窓になる)。
+-}
+viewSketchCompareButton : Model -> Html Msg
+viewSketchCompareButton model =
+    if SketchCompare.hasSketches model.sketchCompare then
+        button
+            [ HA.class "sketch-compare-open btn btn-ghost btn-mini shrink-0"
+            , HA.title "生成された絵とラフを見比べる"
+            , HE.onClick SketchCompareOpened
+            ]
+            [ text "ラフと見比べ" ]
+
+    else
+        text ""
+
+
+viewSketchCompareWindow : Model -> Html Msg
+viewSketchCompareWindow model =
+    SketchCompare.view
+        { onScene = SketchCompareSceneChosen
+        , onSketch = SketchCompareSketchChosen
+        , onVersion = SketchCompareVersionChosen
+        , onMode = SketchCompareModeChosen
+        , onOpacity = SketchCompareOpacityChanged
+        , onClose = SketchCompareClosed
+        }
+        { sceneUrl = \name -> SceneView.galleryImageUrl model.serverBase model.root "gallery" name }
+        model.sketchCompare
 
 
 viewGoldenWindow : Model -> Html Msg
@@ -8931,6 +9041,7 @@ viewEditing model =
                         text ""
                 , viewFileMenu model
                 , viewGoldenWindow model
+                , viewSketchCompareWindow model
                 , viewBakeZoom model
                 , viewTilePicker model
                 , viewSearchPanel model
@@ -9938,6 +10049,23 @@ paintGoldenDiff model =
                 model
 
         _ ->
+            ( model, Effect.none )
+
+
+{-| 選ばれたラフの中身を読みに行く。読み待ちでなければ何もしないので、
+選び直し・一覧の届き直しのどの道からでも同じ呼び方で足りる。
+-}
+loadSketchDraft : Model -> ( Model, Effect )
+loadSketchDraft model =
+    case SketchCompare.pendingPath model.sketchCompare of
+        Just path ->
+            let
+                ( m1, fx ) =
+                    request "getFile" (E.object [ ( "path", E.string path ) ]) model
+            in
+            ( { m1 | sketchDraftReq = Just m1.reqCounter }, fx )
+
+        Nothing ->
             ( model, Effect.none )
 
 
@@ -14347,6 +14475,23 @@ subscriptions model =
                         (\key ->
                             if key == "Escape" then
                                 D.succeed GoldenClosed
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else
+            Sub.none
+
+        -- ラフと見比べる窓も同じく Esc で閉じる
+        , if SketchCompare.isOpen model.sketchCompare then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed SketchCompareClosed
 
                             else
                                 D.fail "他のキーは素通し"

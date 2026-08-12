@@ -1,6 +1,45 @@
 # NOTES
 
-## 次やること（2026-08-12 夜・ラフのバージョンは実装完了／未コミット）
+## 次やること（2026-08-12 深夜・ラフ比較の窓を作る）
+
+人と決めたこと: **重ねる相手は人が選ぶ**（生成された絵に由来が書かれていないので、
+自動の紐づけは後回し。engine 側の相談はしない）／**第一弾は重ねて見るだけ**
+（マスを指してひとこと書く・一覧に並べるのは次の段）。
+
+### 調べ済み（次の人が調べ直さなくていい）
+
+- **サーバの口は全部そろっている。新設は要らない**
+  - ラフの一覧 = `GET /sketch/list` → `{sketches:[{name, versions:[3,2,1]}]}`
+  - ラフの中身 = `GET /file?path=draft/sketch/<名前>/v<番号>.json`（汎用の口で読める。
+    `FileIndex.readInside` はプロジェクト内なら通る）
+  - 生成された絵の一覧 = `GET /gallery/list`（gallery/ golden/ debug/ の PNG）、
+    画像 = `GET /gallery/image?dir=gallery&name=…`
+- **ラフを読み戻す純関数は既にある** — `SketchPad.decode : String -> Maybe Model`（encode と対）
+- **重ねの流儀は `GoldenView.elm` にある** — `Mode = SideBySide | Overlay | Diff`、
+  透過は `opacity : Float` を `HA.style "opacity"` で上の img に掛けるだけ（GoldenView.elm:360-369）。
+  `view` が URL を作る関数を引数で受け、口の組み方を呼び側に残す形も踏襲する
+- **ラフの絵はマスの div の並び** — `SketchPad.viewGrid` / `viewCell`（2011-2074 行）。
+  色は `legend` の `fill`、空きマスは `emptyChar = '.'` で `bg-black/20`。
+  ただし viewCell は `Msg`（塗る操作）を持つので**そのままは使えない**
+
+### 作る物
+
+1. **web/src/SketchCompare.elm**（新設）— GoldenView と同じ「窓」の形
+   （`Model` / `Handlers msg` / `init` / `open` / `close` / `view`）。
+   - 選ぶ物は 2 つ: 生成された絵（gallery の名前）と ラフ（名前 + バージョン）
+   - 見比べ方は 2 つ: 並べる・重ねる（透過スライダ）。「違いを塗る」は入れない
+     （ラフはマスの塗り絵で、画素を比べても意味が無い）
+   - ラフを描くのは読み取り専用の小さな関数を**この中に持つ**
+     （`viewCell` は Msg 付きなので流用せず、`Model.rows` + `legend` から div を並べる。
+     重ねるので大きさは絵に合わせて伸縮させる = `width:100%` + `aspect-ratio`）
+2. **web/src/Main.elm** — 窓の開け閉めと、選ばれたラフの `GET /file` 取得を配線
+   （`sketchList` と同じ足回りが 957-959 行あたりにある）
+3. **テスト** — `web/tests/SketchCompareTest.elm`（純関数だけ: 選び直しの残り方・
+   一覧が変わったときの倒れ方。GoldenView.withStatus と同じ考え方）
+
+反映は web だけなので `make swap-web`。Studio は Cmd+Q → 開き直し。
+
+## 済んだ物（2026-08-12 夜・ラフのバージョン。コミット済み 9e71edc）
 
 1. **人の目で 1 往復**: Studio を開き直して（swap-jar / swap-web は済み）アトリエでラフを保存 →
    `draft/sketch/<名前>/v1.json` → 描き足して保存 → v2 が増えることと、依頼文の「原本: 」行が
