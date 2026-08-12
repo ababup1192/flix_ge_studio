@@ -24,7 +24,7 @@
 
 - **server/** … Flix 製の常駐 HTTP バックエンド（`editor_server`）。対象ゲームの
   `project.json` / `*.kind.json` を読み書きし、プレビュー描画を返す。engine 本体は
-  `github:ababup1192/flix_game_engine`（全部入り 1 本）の 0.21.0 を fpkg 依存として引く
+  `github:ababup1192/flix_game_engine`（全部入り 1 本）の 0.23.2 を fpkg 依存として引く
   （engine のソースは持たない）。GL ウィンドウは開かない（headless）。
 - **web/** … Elm + Vite 製のフロント（`resource_editor`）。ブラウザ画面。スキーマがあれば
   フォームやスライダーを自動生成し、保存すると即・対象ゲームに反映される。
@@ -43,7 +43,7 @@
 - `make dev` … server を `web/dist` 配信で開発起動（.app 無しの動作確認用）
 
 Flix コンパイラは engine リポの `bin/flix` ラッパ経由で呼ぶ（`ENGINE=` で場所を変えられる）。
-engine の 0.21.0 fpkg は `server/lib/` に同梱済み（オフラインでビルドできる）。
+engine の 0.23.2 fpkg は `server/lib/` に同梱済み（オフラインでビルドできる）。
 
 ### .app は engine を自分の中に持つ（スタンドアロン）
 
