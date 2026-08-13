@@ -51,7 +51,7 @@ type alias Model =
     , query : String
     , replacement : String
 
-    -- デバウンスの世代。予約が発火した時、まだ最新かを確かめる合鍵
+    -- デバウンスの世代。予約が発火した時、まだ最新かを確かめる照合キー
     , seq : Int
     , results : Api.SearchResults
     , searching : Bool

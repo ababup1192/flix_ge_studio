@@ -9,7 +9,7 @@ mod TestNewGame {
         { engine = "/engines/e", gameDir = "/games/g", name = "mygame",
           title = "My Game's", w = 240, h = 320, template = "game-starter" }
 
-    /// 札の置き換え: __NAME__/__TITLE__/__W__/__H__ と、窓の大きさ __WW__/__WH__ (2 倍)。
+    /// プレースホルダの置き換え: __NAME__/__TITLE__/__W__/__H__ と、ウィンドウの大きさ __WW__/__WH__ (2 倍)。
     /// 題名にアポストロフィが入ってもそのまま入る (シェルを通らないので割れない)。
     @Test
     def testApplyTokens(): Unit \ Assert =

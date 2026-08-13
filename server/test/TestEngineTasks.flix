@@ -2,15 +2,15 @@
 // 追加の環境変数。java や flix.jar の実体の解決 (環境変数や置き場の存在) は通し確認に任せる。
 //
 // 期待する引数列は engine の bin/flix ラッパが展開していたコマンドと同じ形 + UTF-8 固定:
-//   java [-XstartOnFirstThread(mac)] [-Djava.awt.headless=true(窓なし)]
+//   java [-XstartOnFirstThread(mac)] [-Djava.awt.headless=true(ウィンドウなし)]
 //        -Xss16m -XX:MaxRAMPercentage=50 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8
 //        -jar flix.jar <flix引数>
 
 mod TestEngineTasks {
     use EngineTasks.Task
 
-    /// argv の全体形: macOS の実機再生は窓の旗だけ・焼きは窓の旗 + headless。
-    /// macOS 以外は窓の旗が消える (他の OS の JVM はこの旗で起動に失敗するため)。
+    /// argv の全体形: macOS の実機再生はウィンドウの旗だけ・焼きはウィンドウの旗 + headless。
+    /// macOS 以外はウィンドウの旗が消える (他の OS の JVM はこの旗で起動に失敗するため)。
     /// 出力の UTF-8 固定と積むスタックの広げ (-Xss16m) はどの OS のどの仕事にも必ず付く
     /// (Windows の文字化け対策と、型検査の深い再帰でスタックが溢れるのを防ぐため)。
     @Test
@@ -65,7 +65,7 @@ mod TestEngineTasks {
              EngineTasks.flixArgs(Task.AtelierPreview),
              EngineTasks.flixArgs(Task.EntryPoint("SfxPreview.main"))))
 
-    /// 実窓を開くのは実機再生 (Debug) だけ。他は全部 headless。
+    /// 実際のウィンドウを開くのは実機再生 (Debug) だけ。他は全部 headless。
     @Test
     def testIsHeadless(): Unit \ Assert =
         Assert.assertEq(

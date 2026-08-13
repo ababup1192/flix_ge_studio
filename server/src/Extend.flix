@@ -8,7 +8,7 @@ mod Extend {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JString, JBool}
 
-    /// 広げ方 1 口ぶんの札。id は API の kind、title は画面に出す名前。
+    /// 広げ方 1 口ぶんの定義。id は API の kind、title は画面に出す名前。
     /// steps は【やること】、doneExtras は口ごとの追加の完了条件、hint は
     /// 【あなたの言葉】に添える書き出しの手引き。
     pub type alias Kind = {

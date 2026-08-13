@@ -12,11 +12,11 @@ module SceneView exposing
 
 {-| 焼き上がった場面の絵(golden / gallery の PNG)を見せる物一式。
 
-今はミニプレイヤー(右下の小窓)と、その拡大表示が住む。絵の URL の組み方と
+今はミニプレイヤー(右下の小さなパネル)と、その拡大表示が住む。絵の URL の組み方と
 「どの場面を映すか」の決めごとも、見せる側と同じ場所に置く — 画面が増えても
 同じ絵が同じ規則で出るように。
 
-呼び側(Main)からは Handlers(押された時に投げる便り)と State(映すのに
+呼び側(Main)からは Handlers(押された時に投げるメッセージ)と State(映すのに
 要る今の状態)だけを受け取る。Model 丸ごとは知らない。
 
 -}
@@ -29,7 +29,7 @@ import Journey
 import Url
 
 
-{-| 小窓の操作が投げる便り。 -}
+{-| ミニプレイヤーの操作が投げるメッセージ。 -}
 type alias Handlers msg =
     { onToggle : msg
     , onScene : Maybe String -> msg
@@ -282,7 +282,7 @@ sceneLabel name =
 
 
 {-| 場面の絵(golden/ の PNG)の URL。焼き直しで中身が入れ替わるファイルなので
-v でキャッシュを破る(知らせの版 + 描き直しの目盛り — 同じ URL のまま古い絵を
+v でキャッシュを破る(通知のバージョン + 描き直しの目盛り — 同じ URL のまま古い絵を
 出さない)。ミニプレイヤー本体と拡大表示で同じ式(同じ絵)を使う。
 -}
 imageUrl : State -> String -> String

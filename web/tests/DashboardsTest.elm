@@ -2,7 +2,7 @@ module DashboardsTest exposing (suite)
 
 {-| 汎用ダッシュボード(generic)の導出ロジック:
 エントリ一覧(名前+肖像)・攻略本ページ(額装 3 点とメーター/%/重み棒)・
-ref のぞき窓の解決とぶら下がり。見せ方は全てスキーマの宣言から決まることを固定する。
+ref プレビューの解決とぶら下がり。見せ方は全てスキーマの宣言から決まることを固定する。
 -}
 
 import Dashboards
@@ -160,7 +160,7 @@ suite =
                 fieldValue "ドロップ率" (viewWith (Just "slime")).detail
                     |> Expect.equal
                         (Just (Dashboards.WeightBars { total = 100, entries = [ ( "claw", 70 ), ( "cannon", 30 ) ] }))
-        , test "ref フィールドは参照先の要約(のぞき窓)に解決され、肖像は行でなくサムネの席に乗る" <|
+        , test "ref フィールドは参照先の要約(プレビュー)に解決され、肖像は行でなくサムネの席に乗る" <|
             \() ->
                 fieldValue "武器" (viewWith (Just "slime")).detail
                     |> Expect.equal
@@ -177,7 +177,7 @@ suite =
                                 }
                             )
                         )
-        , test "参照先に居ない id(ぶら下がり)はのぞき窓なしの RefValue になる" <|
+        , test "参照先に居ない id(ぶら下がり)はプレビューなしの RefValue になる" <|
             \() ->
                 fieldValue "武器" (viewWith (Just "ghost")).detail
                     |> Expect.equal

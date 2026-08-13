@@ -22,15 +22,15 @@ import Task
 type Effect
     = SendApi { id : Int, kind : String, payload : E.Value }
       -- トースト通知の消灯予約。seq と message は「その通知がまだ最新の物か」を
-      -- 発火時に確かめる合鍵(古いタイマーが新しい通知を消さない)
+      -- 発火時に確かめる照合キー(古いタイマーが新しい通知を消さない)
     | ExpireNotice { seq : Int, message : String, afterMs : Float }
       -- ライブ反映の自動保存予約。編集のたびに seq が進むので、発火時に
       -- 最新の予約だけが保存する(debounce)
     | Autosave { seq : Int, afterMs : Float }
       -- 焼き上がりの確かめのように「少し置いてからもう一度」の予約。
-      -- seq は古い予約が新しい物を追い越さないための合鍵
+      -- seq は古い予約が新しい物を追い越さないための照合キー
     | Delayed { seq : Int, afterMs : Float }
-      -- 横断検索の打鍵デバウンス。seq は「その予約がまだ最新か」の合鍵で、
+      -- 横断検索の打鍵デバウンス。seq は「その予約がまだ最新か」の照合キーで、
       -- 打っている間の予約は次々に失効する(最後の 1 回だけがサーバへ行く)
     | SearchDebounce { seq : Int, afterMs : Float }
       -- 行を選ぶたびに 1 枚焼きを頼まないための間(連打の最後だけ焼く)

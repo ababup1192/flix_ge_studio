@@ -147,7 +147,7 @@ suite : Test
 suite =
     describe "editor_server 応答の契約"
         [ describe "/health"
-            [ test "ok:true — dir・題名・設計解像度・版が読める" <|
+            [ test "ok:true — dir・題名・設計解像度・バージョンが読める" <|
                 \_ ->
                     D.decodeString Api.healthResultDecoder healthFixture
                         |> Expect.equal
@@ -284,7 +284,7 @@ suite =
                 \_ ->
                     D.decodeString Api.putFileResultDecoder putOkFixture
                         |> Expect.equal (Ok (Api.PutOk { mtime = Just 1784517940797, baking = False }))
-            , test "PUT 409 — 競合(今ディスクに居る版の mtime)として読める" <|
+            , test "PUT 409 — 競合(今ディスクに居る内容の mtime)として読める" <|
                 \_ ->
                     D.decodeString Api.putFileResultDecoder putConflictFixture
                         |> Expect.equal (Ok (Api.PutConflict { currentMtime = 1784274206557 }))

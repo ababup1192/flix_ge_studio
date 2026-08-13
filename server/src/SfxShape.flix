@@ -10,7 +10,7 @@ mod SfxShape {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JNumber}
 
-    /// 音を配ってよいディレクトリの白名前簿。ゲームが焼いた物 (assets/sfx) と
+    /// 音を配ってよいディレクトリの許可リスト。ゲームが焼いた物 (assets/sfx) と
     /// 検証用に吐いた物 (debug/sounds) だけ。
     pub def soundDirs(): List[String] = "assets/sfx" :: "debug/sounds" :: "golden/sfx" :: Nil
 
@@ -24,7 +24,7 @@ mod SfxShape {
     pub def bandLo(): Float64 = 180.0
     pub def bandHi(): Float64 = 9000.0
 
-    /// 白名前簿を順に見て、最初に見つかったファイルのバイト列。
+    /// 許可リストを順に見て、最初に見つかったファイルのバイト列。
     /// 置き場を指しての取り出し(聴き比べ用)。許すのは soundDirs の中だけ。
     pub def findBytesIn(dir: String, subdir: String, name: String): Option[Array[Int8, Static]] \ IO =
         if (not Gallery.isSafeName(name) or not String.endsWith(suffix = ".wav", name)

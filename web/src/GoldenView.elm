@@ -15,7 +15,7 @@ module GoldenView exposing
     , withStatus
     )
 
-{-| 焼き直した絵と音が「前と同じか」を見る窓(golden 差分ビューア)。
+{-| 焼き直した絵と音が「前と同じか」を見るビュー(golden 差分ビューア)。
 
 正(golden)と今(gallery / assets)を並べ、1 枚ずつ確かめて祝福する。
 自動では 1 枚も直さない — 「変わってよかった変化」かどうかは人にしか決められない。
@@ -142,7 +142,7 @@ diffCanvasId =
     "golden-diff-canvas"
 
 
-{-| 見比べの窓。images は「正の URL」「今の URL」を作る関数で受ける —
+{-| 見比べのビュー。images は「正の URL」「今の URL」を作る関数で受ける —
 URL の組み方(サーバの口)を知るのは呼び側の仕事。
 -}
 view : Handlers msg -> { golden : Api.GoldenItem -> String, baked : Api.GoldenItem -> String } -> Model -> Html msg

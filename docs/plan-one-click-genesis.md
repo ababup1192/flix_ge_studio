@@ -4,15 +4,15 @@
 
 ## なぜやるか
 
-新しいゲーム作りは今、「札を選ぶ → 依頼文を人がコピーする → Claude Code に貼る」という
+新しいゲーム作りは今、「カードを選ぶ → 依頼文を人がコピーする → Claude Code に貼る」という
 乗り換えが 1 回ある。ここが Rosebud 系の「数分で遊べる」体験に負けている唯一の本質。
-乗り換えを消せば「札を選ぶ → 3 行書く → 塗る → 待つ → 遊ぶ」が Studio の画面から
+乗り換えを消せば「カードを選ぶ → 3 行書く → 塗る → 待つ → 遊ぶ」が Studio の画面から
 出ずに完結し、しかも成果物は手元の普通のリポジトリのまま(ここは向こうに無い強み)。
 
 ## 使う既存部品(新しく発明しない)
 
-- 依頼文生成: `server/src/Genesis.flix` の `familyPrompt` / `freePrompt`、
-  ラフ札の合成は `web/src/NewGame.elm` の `buildSketchPrompt`
+- 依頼文生成: `server/src/Genesis.flix` の `genrePrompt` / `freePrompt`、
+  ラフ側のプロンプト合成は `web/src/NewGame.elm` の `buildSketchPrompt`
 - 進捗の型: `POST /projects/new` が 202 → `GET /projects/new/log` を 2 秒ポーリング、
   失敗時だけログ自動全文展開(NewGame.elm の進捗ミニパネル)
 - プロセス起動の型: `server/src/EngineTasks.flix`(make 抜きで argv を ProcessBuilder へ、

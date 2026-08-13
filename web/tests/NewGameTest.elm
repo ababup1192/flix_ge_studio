@@ -279,14 +279,38 @@ suite =
                             , NewGame.OutFetchGenesisPrompt { family = "free", direction = "猫が屋根を跳びわたる" }
                             )
             ]
-        , describe "画面のラフから(ラフ札)"
-            [ test "ラフ札を選ぶと、依頼文の土台(blank の公式文)を裏で取りに行く" <|
+        , describe "画面のラフから(ラフのカード)"
+            [ test "ラフのカードを選ぶと、依頼文の土台(blank の公式文)を裏で取りに行く" <|
                 \_ ->
                     begin
                         |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
                         |> Tuple.second
                         |> Expect.equal
                             (NewGame.OutFetchGenesisPrompt { family = "blank", direction = "" })
+            , test "ラフのカードを選ぶと、塗るための窓が出る" <|
+                \_ ->
+                    NewGame.sketchWindowOpen sketchWindowPainted
+                        |> Expect.equal True
+            , test "窓を閉じるとカードの選択だけ外れ、塗った絵は残る" <|
+                \_ ->
+                    let
+                        closed =
+                            ( sketchWindowPainted, NewGame.OutNone )
+                                |> step NewGame.SketchClosed
+                                |> Tuple.first
+                    in
+                    ( NewGame.sketchWindowOpen closed
+                    , NewGame.buildSketchPrompt closed |> String.contains "## 画面のラフ"
+                    )
+                        |> Expect.equal ( False, True )
+            , test "閉じたあとカードを選び直すと、窓がまた出る" <|
+                \_ ->
+                    ( sketchWindowPainted, NewGame.OutNone )
+                        |> step NewGame.SketchClosed
+                        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+                        |> Tuple.first
+                        |> NewGame.sketchWindowOpen
+                        |> Expect.equal True
             , test "名前が規則に合えば game-starter の複製が飛ぶ(w/h は使わない)" <|
                 \_ ->
                     sketchFilled
@@ -296,7 +320,7 @@ suite =
                             (NewGame.OutCreate
                                 { name = "rough_game", title = "ラフのゲーム", w = 0, h = 0, starter = "templates/game-starter" }
                             )
-            , test "規則に合わない名前では封筒が飛ばない(ラフ札も同じ関所)" <|
+            , test "規則に合わない名前では封筒が飛ばない(ラフのカードも同じ関所)" <|
                 \_ ->
                     sketchChosen
                         |> step (NewGame.NameEdited "Abc")
@@ -419,8 +443,8 @@ suite =
                         _ ->
                             Expect.fail "OutCopyPromptAndOpen が出ていません"
             ]
-        , describe "つくり待ち・誕生後の札の行き来"
-            [ test "つくっている最中の札替えは無視される(封筒も飛ばない)" <|
+        , describe "つくり待ち・誕生後のカードの行き来"
+            [ test "つくっている最中のカードの選び直しは無視される(封筒も飛ばない)" <|
                 \_ ->
                     let
                         ( model, out ) =
@@ -430,7 +454,7 @@ suite =
                     in
                     ( model.family, out )
                         |> Expect.equal ( Just NewGame.sketchFamilyId, NewGame.OutNone )
-            , test "ラフ発の作成待ち中に他の札を押しても、誕生はラフの誕生画面になる" <|
+            , test "ラフ発の作成待ち中に他のカードを押しても、誕生はラフの誕生画面になる" <|
                 \_ ->
                     let
                         ( born, result ) =
@@ -442,7 +466,7 @@ suite =
                     in
                     ( result, born.born /= Nothing )
                         |> Expect.equal ( NewGame.LogSketchBorn, True )
-            , test "誕生後に他の札→ラフ札と戻っても、合成依頼文は残っている" <|
+            , test "誕生後に他のカード→ラフのカードと戻っても、合成依頼文は残っている" <|
                 \_ ->
                     let
                         back =
@@ -510,7 +534,7 @@ suite =
                             , Just ("公式文のつもり\n\n" ++ interviewAsk)
                             )
             ]
-        , describe "ラフ札の Main の配線"
+        , describe "ラフのカードの Main の配線"
             [ test "誕生(exitCode 0)でも自動では開かない — /projects の取り直しだけ" <|
                 \_ ->
                     sketchBornMain
@@ -570,7 +594,7 @@ officialWithYourWords =
         ]
 
 
-{-| ラフ札を選んだ状態。 -}
+{-| ラフのカードを選んだ状態。 -}
 sketchChosen : ( NewGame.Model, NewGame.Out )
 sketchChosen =
     begin
@@ -578,7 +602,7 @@ sketchChosen =
         |> Tuple.mapFirst (NewGame.gotGenesisPrompt "公式文のつもり")
 
 
-{-| ラフ札 + 名前・題名まで済ませた状態(塗りはまだ)。 -}
+{-| ラフのカード + 名前・題名まで済ませた状態(塗りはまだ)。 -}
 sketchFilled : ( NewGame.Model, NewGame.Out )
 sketchFilled =
     sketchChosen
@@ -594,7 +618,20 @@ sketchPainted =
         |> step (NewGame.SketchMsg SketchPad.StrokeEnded)
 
 
-{-| ラフ札で誕生(exitCode 0)まで進めた状態(合成依頼文あり)。 -}
+{-| パネルを開いてラフのカードを選び、1 マス塗った状態(窓が出ている)。 -}
+sketchWindowPainted : NewGame.Model
+sketchWindowPainted =
+    begin
+        |> step NewGame.Toggled
+        |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
+        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+        |> Tuple.mapFirst (NewGame.gotGenesisPrompt "公式文のつもり")
+        |> step (NewGame.SketchMsg (SketchPad.CellDown ( 0, 0 )))
+        |> step (NewGame.SketchMsg SketchPad.StrokeEnded)
+        |> Tuple.first
+
+
+{-| ラフのカードで誕生(exitCode 0)まで進めた状態(合成依頼文あり)。 -}
 sketchBorn : NewGame.Model
 sketchBorn =
     sketchPainted
@@ -617,7 +654,7 @@ sketchBornEmpty =
         |> Tuple.first
 
 
-{-| Main 側でラフ札の誕生(exitCode 0)まで進めた状態。 -}
+{-| Main 側でラフのカードの誕生(exitCode 0)まで進めた状態。 -}
 sketchBornMain : ( Main.Model, Effect )
 sketchBornMain =
     pickerModel
@@ -651,7 +688,7 @@ sketchBornMain =
             )
 
 
-{-| ジャンルの札のサンプル(starter 有り / 無し / free)。 -}
+{-| ジャンルのカードのサンプル(starter 有り / 無し / free)。 -}
 genesisFamilies : List NewGame.Family
 genesisFamilies =
     [ { id = "action", name = "アクション", verb = "走って、跳んで、壊す", includes = "ブロック崩し", controls = "←→ + スペース", starter = "templates/game-starter" }

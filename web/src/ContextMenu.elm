@@ -11,12 +11,12 @@ module ContextMenu exposing
 
 {-| 右クリックの小さなメニュー(汎用)。
 
-一覧の行にも盤面の印にも同じ物を出せるよう、中身は「札の列 + 押した時の便り」
+一覧の行にも盤面の印にも同じ物を出せるよう、中身は「ボタンの列 + 押した時のメッセージ」
 だけを受け取る。どこに出すか(カーソルの位置)と、閉じ方(外側クリック / Esc)は
 どの呼び出し元でも同じなので、こちらが持つ。
 
-画面の端では、はみ出す方向へ寄せる。開いた位置と一緒に窓の大きさも受け取るのは、
-そのためだけ — メニューのために窓の大きさを Model に持ち回らせない。
+画面の端では、はみ出す方向へ寄せる。開いた位置と一緒にウィンドウの大きさも受け取るのは、
+そのためだけ — メニューのためにウィンドウの大きさを Model に持ち回らせない。
 
 -}
 
@@ -26,7 +26,7 @@ import Html.Events as HE
 import Json.Decode as D
 
 
-{-| 出す場所(カーソル)と、その時の窓の大きさ。 -}
+{-| 出す場所(カーソル)と、その時のウィンドウの大きさ。 -}
 type alias Anchor =
     { x : Float
     , y : Float
@@ -45,7 +45,7 @@ item label msg =
     Command { label = label, msg = msg, danger = False }
 
 
-{-| 取り返しのつかない札(削除)。赤字にして、他の札と見間違えないようにする。 -}
+{-| 取り返しのつかないボタン(削除)。赤字にして、他のボタンと見間違えないようにする。 -}
 danger : String -> msg -> Item msg
 danger label msg =
     Command { label = label, msg = msg, danger = True }
@@ -56,7 +56,7 @@ separator =
     Separator
 
 
-{-| 右クリックを拾う属性。カーソルの位置と窓の大きさを一緒に読む
+{-| 右クリックを拾う属性。カーソルの位置とウィンドウの大きさを一緒に読む
 (preventDefault はブラウザ標準のメニューを出さないため)。
 -}
 onOpen : (Anchor -> msg) -> Html.Attribute msg
@@ -74,7 +74,7 @@ onOpen toMsg =
         )
 
 
-{-| 窓の大きさ。読めない環境(古い WebView 等)は既定値に倒す —
+{-| ウィンドウの大きさ。読めない環境(古い WebView 等)は既定値に倒す —
 はみ出しの手当てが効かないだけで、メニューは出す。
 -}
 windowSize : String -> Float -> D.Decoder Float
@@ -139,7 +139,7 @@ viewItem entry =
                     , ( "text-ink-soft hover:bg-white/5 hover:text-ink", not command.danger )
                     ]
 
-                -- 受け皿の「外側クリックで閉じる」に食わせない(札の仕事が先)
+                -- 受け皿の「外側クリックで閉じる」に食わせない(ボタンの仕事が先)
                 , HE.stopPropagationOn "click" (D.succeed ( command.msg, True ))
                 ]
                 [ text command.label ]

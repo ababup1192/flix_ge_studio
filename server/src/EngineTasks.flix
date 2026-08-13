@@ -14,7 +14,7 @@ mod EngineTasks {
     /// ゲームに頼める仕事の一覧。ここに無い仕事 (ゲーム固有の焼きなど) は
     /// EntryPoint で入口の名前を直接指す。
     pub enum Task with Eq {
-        /// 実機再生 (実窓を開く)。
+        /// 実機再生 (実際のウィンドウを開く)。
         case Debug
         /// 型検査だけ。
         case Check
@@ -47,8 +47,8 @@ mod EngineTasks {
             case Task.EntryPoint(name) => "run" :: "--entrypoint" :: name :: Nil
         }
 
-    /// 実窓を開かない仕事か。開かない仕事には headless を付け、描画の裏方 (AWT) が
-    /// 窓側の準備を待って固まらないようにする。
+    /// 実際のウィンドウを開かない仕事か。開かない仕事には headless を付け、描画の裏方 (AWT) が
+    /// ウィンドウ側の準備を待って固まらないようにする。
     pub def isHeadless(task: Task): Bool =
         match task {
             case Task.Debug => false
@@ -63,7 +63,7 @@ mod EngineTasks {
         }
 
     /// 起動する 1 本のコマンドの完全な引数列。
-    /// -XstartOnFirstThread は macOS の窓の決まりごと (他の OS の JVM はこの旗を知らず
+    /// -XstartOnFirstThread は macOS のウィンドウの決まりごと (他の OS の JVM はこの旗を知らず
     /// 起動に失敗する) なので、macOS のときだけ付ける。
     /// 出力の文字コードは UTF-8 に固定する — Windows の JVM は放っておくと土地の文字コード
     /// (CP932 など) で喋り、読み手 (UTF-8 固定) の側で文字化けするため。

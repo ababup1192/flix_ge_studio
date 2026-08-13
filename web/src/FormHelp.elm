@@ -83,7 +83,7 @@ section onToggle open key sec =
             []
 
 
-{-| セクションの開閉の鍵。欄(書き戻し先のパス)と衝突しない名前空間を持たせる。 -}
+{-| セクションの開閉のキー。欄(書き戻し先のパス)と衝突しない名前空間を持たせる。 -}
 sectionKey : String -> String
 sectionKey key =
     "section:" ++ key

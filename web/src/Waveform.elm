@@ -124,8 +124,8 @@ playSpan model =
     model.selection |> Maybe.map (\span -> span.to - span.from)
 
 
-{-| プレイヘッドの線の合鍵。JS はこの印を持つ線を全部動かす —
-波形とピアノロールに同じ合鍵を渡せば、1 回の再生で両方の線が走る。
+{-| プレイヘッドの線の照合キー。JS はこの印を持つ線を全部動かす —
+波形とピアノロールに同じ照合キーを渡せば、1 回の再生で両方の線が走る。
 -}
 playheadId : String -> String
 playheadId key =

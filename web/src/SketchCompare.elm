@@ -3,6 +3,9 @@ module SketchCompare exposing
     , Handlers
     , Mode(..)
     , Model
+    , Post(..)
+    , buildTicket
+    , canSubmit
     , close
     , draftOf
     , hasSketches
@@ -10,9 +13,13 @@ module SketchCompare exposing
     , isOpen
     , loadFailed
     , loaded
+    , noteOf
     , open
     , pathOf
     , pendingPath
+    , pickCell
+    , pickedCell
+    , postOf
     , selectScene
     , selectSketch
     , selectVersion
@@ -20,14 +27,18 @@ module SketchCompare exposing
     , selectedSketch
     , selectedVersion
     , setMode
+    , setNote
     , setOpacity
+    , submitFailed
+    , submitted
+    , submitting
     , view
     , versionsOf
     , withScenes
     , withSketches
     )
 
-{-| 生成された絵と、その元になったラフを人が選んで見比べる窓。
+{-| 生成された絵と、その元になったラフを人が選んで見比べるビュー。
 
 どの絵がどのラフから来たかは絵に書かれていないので、機械では結び付けない —
 左の 2 つの一覧から人が 1 枚ずつ指し、並べるか重ねるかで見比べるだけ。
@@ -36,6 +47,9 @@ module SketchCompare exposing
 そもそも合わないため、色の差を出しても読み取れる物にならない。
 
 塗るための操作(Msg)は持たない。ラフの絵は読み取り専用にここで描く。
+
+見比べて気づいた事は、マスを 1 つ指してひとことを添え、遊んでいて切った物と
+同じやること一覧へ並べる(ここ専用の一覧は作らない)。書けるのは見た目の話だけ。
 
 -}
 
@@ -60,6 +74,14 @@ type Draft
     | DraftBroken String
 
 
+{-| ひとことをやること一覧へ並べる途中の姿。並べ終わった印は次に書き始めるまで残す。 -}
+type Post
+    = PostIdle
+    | PostSending
+    | PostDone
+    | PostFailed String
+
+
 type alias Model =
     { open : Bool
 
@@ -74,6 +96,11 @@ type alias Model =
 
     -- 重ねの透過(0 = 生成された絵だけ・1 = ラフだけ)
     , opacity : Float
+
+    -- 指したマス(ラフの左上から数えた 0 始まりの位置)
+    , cell : Maybe { x : Int, y : Int }
+    , note : String
+    , post : Post
     }
 
 
@@ -83,6 +110,9 @@ type alias Handlers msg =
     , onVersion : Int -> msg
     , onMode : Mode -> msg
     , onOpacity : String -> msg
+    , onCell : { x : Int, y : Int } -> msg
+    , onNote : String -> msg
+    , onSubmit : msg
     , onClose : msg
     }
 
@@ -98,6 +128,9 @@ init =
     , draft = DraftNone
     , mode = SideBySide
     , opacity = 0.5
+    , cell = Nothing
+    , note = ""
+    , post = PostIdle
     }
 
 
@@ -197,7 +230,7 @@ withSketches sketches model =
                 next
 
             else
-                { next | version = List.head versions, draft = DraftLoading }
+                forgetCell { next | version = List.head versions, draft = DraftLoading }
 
 
 selectScene : String -> Model -> Model
@@ -210,15 +243,23 @@ selectSketch : String -> Model -> Model
 selectSketch name model =
     case List.head (versionsOf name model) of
         Just newest ->
-            { model | sketch = Just name, version = Just newest, draft = DraftLoading }
+            forgetCell { model | sketch = Just name, version = Just newest, draft = DraftLoading }
 
         Nothing ->
-            { model | sketch = Just name, version = Nothing, draft = DraftNone }
+            forgetCell { model | sketch = Just name, version = Nothing, draft = DraftNone }
 
 
 selectVersion : Int -> Model -> Model
 selectVersion version model =
-    { model | version = Just version, draft = DraftLoading }
+    forgetCell { model | version = Just version, draft = DraftLoading }
+
+
+{-| 指したマスを忘れる。マスの数はラフごと・バージョンごとに違うので、
+別のラフへ移った後も同じ位置を指したままだと、別の場所を指してしまう。
+-}
+forgetCell : Model -> Model
+forgetCell model =
+    { model | cell = Nothing, post = PostIdle }
 
 
 setMode : Mode -> Model -> Model
@@ -252,7 +293,7 @@ pendingPath model =
         Nothing
 
 
-{-| ラフの中身が届いた。読めない中身は空の窓でなく理由を出す。 -}
+{-| ラフの中身が届いた。読めない中身は空のパネルでなく理由を出す。 -}
 loaded : String -> Model -> Model
 loaded content model =
     case SketchPad.decode content of
@@ -269,10 +310,133 @@ loadFailed reason model =
 
 
 
+-- ひとことをやること一覧へ並べる
+
+
+{-| ラフのマスを 1 つ指す。同じマスをもう一度押したら指すのをやめる
+(押した所が合っているか、消して確かめられるように)。
+-}
+pickCell : { x : Int, y : Int } -> Model -> Model
+pickCell cell model =
+    if model.cell == Just cell then
+        { model | cell = Nothing, post = PostIdle }
+
+    else
+        { model | cell = Just cell, post = PostIdle }
+
+
+pickedCell : Model -> Maybe { x : Int, y : Int }
+pickedCell model =
+    model.cell
+
+
+setNote : String -> Model -> Model
+setNote note model =
+    { model | note = note, post = PostIdle }
+
+
+noteOf : Model -> String
+noteOf model =
+    model.note
+
+
+postOf : Model -> Post
+postOf model =
+    model.post
+
+
+submitting : Model -> Model
+submitting model =
+    { model | post = PostSending }
+
+
+{-| 並べ終わった。ひとことは棚へ移ったので画面からは消す(同じ言葉の二重投稿を防ぐ)。 -}
+submitted : Model -> Model
+submitted model =
+    { model | post = PostDone, note = "" }
+
+
+submitFailed : String -> Model -> Model
+submitFailed reason model =
+    { model | post = PostFailed reason }
+
+
+{-| 並べられるのは、絵とラフとマスが揃っていて、ひとことが書いてあるときだけ。 -}
+canSubmit : Model -> Bool
+canSubmit model =
+    model.post /= PostSending && buildTicket model /= Nothing
+
+
+{-| やること一覧へ並べる 1 枚ぶんの言葉。中身は見比べた物の置き場とひとことだけで、
+どこをどう直すかは書かない(直し方を決めるのはいつも人と AI の側)。
+-}
+buildTicket : Model -> Maybe { title : String, comment : String, body : String, scene : String }
+buildTicket model =
+    case ( model.scene, model.cell, model.draft ) of
+        ( Just scene, Just cell, DraftReady pad ) ->
+            let
+                note =
+                    String.trim model.note
+
+                where_ =
+                    "左から " ++ String.fromInt (cell.x + 1) ++ " マス目・上から " ++ String.fromInt (cell.y + 1) ++ " マス目"
+            in
+            if note == "" || model.sketch == Nothing then
+                Nothing
+
+            else
+                Just
+                    { title = "ラフと見比べ: " ++ scene ++ " ↔ " ++ draftName model ++ " — " ++ where_
+                    , comment = note
+                    , scene = scene
+                    , body =
+                        String.join "\n"
+                            [ "## 見比べた物"
+                            , ""
+                            , "- 生成された絵: gallery/" ++ scene
+                            , "- ラフ: " ++ (pathOf model |> Maybe.withDefault "")
+                            , "- 指した場所: " ++ where_ ++ "(ラフ全体は " ++ String.fromInt pad.size.w ++ "×" ++ String.fromInt pad.size.h ++ " マス)"
+                            , "- そのマスにラフで置いてあった物: " ++ cellName pad cell
+                            , ""
+                            , "見た目の話だけを書いています(遊んでみないと分からない事はここに書きません)。"
+                            ]
+                    }
+
+        _ ->
+            Nothing
+
+
+{-| ラフの名前とバージョンをひと続きに。 -}
+draftName : Model -> String
+draftName model =
+    case ( model.sketch, model.version ) of
+        ( Just name, Just version ) ->
+            name ++ " v" ++ String.fromInt version
+
+        ( Just name, Nothing ) ->
+            name
+
+        _ ->
+            "ラフ"
+
+
+{-| 指したマスにラフで塗ってあった物の名前(凡例の名前)。塗っていなければ「何も置いていない」。 -}
+cellName : SketchPad.Model -> { x : Int, y : Int } -> String
+cellName pad cell =
+    SketchPad.flatRows pad
+        |> List.drop cell.y
+        |> List.head
+        |> Maybe.andThen (\line -> line |> String.toList |> List.drop cell.x |> List.head)
+        |> Maybe.andThen (\char -> pad.legend |> List.filter (\entry -> entry.char == char) |> List.head)
+        |> Maybe.map .name
+        |> Maybe.withDefault "何も置いていない所"
+
+
+
 -- 画面
 
 
-{-| 見比べの窓。sceneUrl は「生成された絵の URL」を作る関数で受ける —
+{-| 見比べのビュー。sceneUrl は「生成された絵の URL」を作る関数で受ける —
 サーバの口の組み方を知るのは呼び側の仕事。
 -}
 view : Handlers msg -> { sceneUrl : String -> String } -> Model -> Html msg
@@ -391,7 +555,8 @@ viewCompare handlers urls model =
         ( Just scene, Just _ ) ->
             div [ HA.class "sketch-compare-body flex min-w-0 flex-1 flex-col gap-2 overflow-auto p-3" ]
                 (viewModes handlers model
-                    :: viewPair urls model scene
+                    :: viewPair handlers urls model scene
+                    ++ [ viewNote handlers model ]
                 )
 
         _ ->
@@ -432,8 +597,8 @@ viewModes handlers model =
         ]
 
 
-viewPair : { sceneUrl : String -> String } -> Model -> String -> List (Html msg)
-viewPair urls model scene =
+viewPair : Handlers msg -> { sceneUrl : String -> String } -> Model -> String -> List (Html msg)
+viewPair handlers urls model scene =
     let
         shot =
             img [ HA.class "sketch-compare-shot block w-full rounded border border-edge bg-well", HA.src (urls.sceneUrl scene) ] []
@@ -447,7 +612,7 @@ viewPair urls model scene =
                     ]
                 , div [ HA.class "min-w-0 flex-1" ]
                     [ div [ HA.class "mb-1 text-[10px] text-ink-faint" ] [ text (draftLabel model) ]
-                    , viewDraft model
+                    , viewDraft handlers model
                     ]
                 ]
             , viewLegend model
@@ -460,7 +625,7 @@ viewPair urls model scene =
                     [ HA.class "sketch-compare-overlay absolute inset-0"
                     , HA.style "opacity" (String.fromFloat model.opacity)
                     ]
-                    [ viewDraft model ]
+                    [ viewDraft handlers model ]
                 ]
             , viewLegend model
             ]
@@ -479,11 +644,11 @@ draftLabel model =
             "ラフ"
 
 
-{-| ラフの絵(読み取り専用)。重ねたとき生成された絵と縦横の割合がずれないよう、
-横幅いっぱいに伸ばしてマスの縦横比で高さを決める。
+{-| ラフの絵(塗れない)。重ねたとき生成された絵と縦横の割合がずれないよう、
+横幅いっぱいに伸ばしてマスの縦横比で高さを決める。マスを押すと場所を指せる。
 -}
-viewDraft : Model -> Html msg
-viewDraft model =
+viewDraft : Handlers msg -> Model -> Html msg
+viewDraft handlers model =
     case model.draft of
         DraftReady pad ->
             let
@@ -493,15 +658,20 @@ viewDraft model =
                         |> List.head
                         |> Maybe.map .fill
 
-                row line =
+                row y line =
                     div [ HA.class "flex min-h-0 flex-1" ]
-                        (line |> String.toList |> List.map (viewDraftCell colorOf))
+                        (line
+                            |> String.toList
+                            |> List.indexedMap (\x char -> viewDraftCell handlers model colorOf { x = x, y = y } char)
+                        )
             in
             div
                 [ HA.class "sketch-compare-draft w-full rounded border border-edge bg-well"
                 , HA.style "aspect-ratio" (String.fromInt (max 1 pad.size.w) ++ " / " ++ String.fromInt (max 1 pad.size.h))
                 ]
-                [ div [ HA.class "flex h-full w-full flex-col" ] (List.map row pad.rows) ]
+                -- WhyNot: 1 枚のレイヤーだけを描かない — 分けて描いたラフでは選んでいる 1 枚しか入っておらず、
+                -- 奥と手前が黙って消える。
+                [ div [ HA.class "flex h-full w-full flex-col" ] (List.indexedMap row (SketchPad.flatRows pad)) ]
 
         DraftLoading ->
             div [ HA.class "rounded border border-edge bg-well p-4 text-[11px] text-ink-faint" ] [ text "読み込んでいます…" ]
@@ -513,15 +683,86 @@ viewDraft model =
             div [ HA.class "rounded border border-edge bg-well p-4 text-[11px] text-ink-faint" ] [ text "バージョンを選んでください" ]
 
 
-viewDraftCell : (Char -> Maybe String) -> Char -> Html msg
-viewDraftCell colorOf char =
-    case colorOf char of
-        Just fill ->
-            div [ HA.class "sketch-compare-cell min-w-0 flex-1", HA.style "background-color" fill ] []
+viewDraftCell : Handlers msg -> Model -> (Char -> Maybe String) -> { x : Int, y : Int } -> Char -> Html msg
+viewDraftCell handlers model colorOf cell char =
+    let
+        -- 空きマスは塗らない。重ねたとき塗っていない所で下の絵を隠さないため
+        fill =
+            case colorOf char of
+                Just color ->
+                    [ HA.style "background-color" color ]
+
+                Nothing ->
+                    []
+
+        -- 指したマスは内側の枠で示す。塗りつぶすと、そのマスのラフの色が見えなくなる
+        picked =
+            if model.cell == Just cell then
+                [ HA.style "box-shadow" "inset 0 0 0 2px #f43f5e" ]
+
+            else
+                []
+    in
+    div
+        (HA.class "sketch-compare-cell min-w-0 flex-1 cursor-crosshair"
+            :: HE.onClick (handlers.onCell cell)
+            :: fill
+            ++ picked
+        )
+        []
+
+
+{-| 指した場所へのひとこと。書けるのは見た目の話だけ — 遊ばないと分からない事は
+このビューでは確かめようがないので、書く前に断っておく。
+-}
+viewNote : Handlers msg -> Model -> Html msg
+viewNote handlers model =
+    div [ HA.class "sketch-compare-note flex flex-wrap items-center gap-2 rounded border border-edge bg-panel p-2" ]
+        [ span [ HA.class "text-[10px] text-ink-faint" ] [ text (pickLabel model) ]
+        , input
+            [ HA.class "sketch-compare-note-input min-w-0 flex-1 rounded border border-edge bg-transparent px-2 py-1 text-xs text-ink"
+            , HA.placeholder "見た目で気になった事を書く(例: 空が明るすぎる)"
+            , HA.value model.note
+            , HE.onInput handlers.onNote
+            ]
+            []
+        , button
+            [ HA.class "sketch-compare-submit btn btn-primary text-xs"
+            , HA.disabled (not (canSubmit model))
+            , HA.title "指したマスとひとことを、遊んでいて切った物と同じやること一覧へ並べます"
+            , HE.onClick handlers.onSubmit
+            ]
+            [ text (submitLabel model) ]
+        , case model.post of
+            PostFailed reason ->
+                span [ HA.class "text-[10px] text-ink-faint" ] [ text reason ]
+
+            _ ->
+                text ""
+        ]
+
+
+pickLabel : Model -> String
+pickLabel model =
+    case model.cell of
+        Just cell ->
+            "指した場所: 左から " ++ String.fromInt (cell.x + 1) ++ " ・上から " ++ String.fromInt (cell.y + 1) ++ " マス目"
 
         Nothing ->
-            -- 空きマスは透かす。重ねたとき塗っていない所で下の絵を隠さないため
-            div [ HA.class "sketch-compare-cell min-w-0 flex-1" ] []
+            "ラフのマスを押して場所を指してください"
+
+
+submitLabel : Model -> String
+submitLabel model =
+    case model.post of
+        PostSending ->
+            "並べています…"
+
+        PostDone ->
+            "✓ 並べました"
+
+        _ ->
+            "やること一覧へ並べる"
 
 
 {-| どの色が何のつもりか。ラフだけでは色の意味が読めない。 -}

@@ -35,7 +35,7 @@ docText schema =
     E.encode 2 body ++ "\n"
 
 
-{-| version はスキーマが版を宣言している時だけ、同じ数字で先頭に書く。 -}
+{-| version はスキーマがバージョンを宣言している時だけ、同じ数字で先頭に書く。 -}
 versionPair : Schema -> List ( String, E.Value )
 versionPair schema =
     case schema.version of

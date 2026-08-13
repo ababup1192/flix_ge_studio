@@ -21,10 +21,25 @@ import Test exposing (Test, describe, test)
 -}
 cornerModel : SketchPad.Model
 cornerModel =
-    { paintedModel
-        | size = { w = 6, h = 4 }
-        , rows = [ "W.....", "......", "......", ".....F" ]
+    withRows [ "W.....", "......", "......", ".....F" ] { paintedModel | size = { w = 6, h = 4 } }
+
+
+{-| いま塗っているレイヤーの絵を差し替える(レイヤー 1 枚だけの模型になる)。 -}
+withRows : List String -> SketchPad.Model -> SketchPad.Model
+withRows rows model =
+    { model
+        | layers = [ { name = "レイヤー1", rows = rows, hidden = [], visible = True } ]
+        , layerIndex = 0
     }
+
+
+{-| いま塗っているレイヤー 1 枚。 -}
+activeSheet : SketchPad.Model -> SketchPad.LayerSheet
+activeSheet model =
+    model.layers
+        |> List.drop model.layerIndex
+        |> List.head
+        |> Maybe.withDefault { name = "", rows = [], hidden = [], visible = True }
 
 
 {-| 角のつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
@@ -57,16 +72,45 @@ paintedModel =
         base =
             SketchPad.init
     in
-    { base
-        | size = { w = 2, h = 2 }
-        , legend =
-            [ { char = 'W', name = "壁", fill = "#8a6d3b", desc = "崩れかけた石壁" }
-            , { char = 'F', name = "床", fill = "#d9cfb8", desc = "" }
+    withRows [ "W.", ".." ]
+        { base
+            | size = { w = 2, h = 2 }
+            , legend =
+                [ { char = 'W', name = "壁", fill = "#8a6d3b", desc = "崩れかけた石壁" }
+                , { char = 'F', name = "床", fill = "#d9cfb8", desc = "" }
+                ]
+            , note = "左が入り口"
+            , name = "stage2"
+        }
+
+
+{-| paintedModel を 3 枚のレイヤーに塗り分けた模型(並びは奥から手前)。
+
+    1枚目 = F(床) 左下 / 2枚目 = W(壁) 左上 / 3枚目 = F(床) 右上
+
+-}
+layeredModel : SketchPad.Model
+layeredModel =
+    { paintedModel
+        | layers =
+            [ { name = "1枚目", rows = [ "..", "F." ], hidden = [], visible = True }
+            , { name = "2枚目", rows = [ "W.", ".." ], hidden = [], visible = True }
+            , { name = "3枚目", rows = [ ".F", ".." ], hidden = [], visible = True }
             ]
-        , rows = [ "W.", ".." ]
-        , note = "左が入り口"
-        , name = "stage2"
+        , layerIndex = 1
     }
+
+
+{-| レイヤーを持たない頃に保存されたラフ(比較の窓が読み戻す形)。 -}
+oldSketchJson : String
+oldSketchJson =
+    """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"top-down","fidelity":1,"legend":[{"char":"W","name":"壁","fill":"#8a6d3b","desc":"崩れかけた石壁"},{"char":"F","name":"床","fill":"#d9cfb8"}],"rows":["W.",".."],"note":"左が入り口"}"""
+
+
+{-| id で奥・主役・手前を指していた頃に保存されたラフ。 -}
+idLayeredSketchJson : String
+idLayeredSketchJson =
+    """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"top-down","fidelity":1,"legend":[{"char":"W","name":"壁","fill":"#8a6d3b","desc":"崩れかけた石壁"},{"char":"F","name":"床","fill":"#d9cfb8"}],"rows":["WF","F."],"layers":[{"id":"back","rows":["..","F."]},{"id":"main","rows":["W.",".."]},{"id":"front","rows":[".F",".."]}],"note":"左が入り口"}"""
 
 
 {-| サーバの依頼文の形(必ず【やること】の行を持つ)を模した最小の下書き。 -}
@@ -98,10 +142,10 @@ suite =
             [ test "書いた JSON を読み戻すと同じ絵とラベルに戻る" <|
                 \_ ->
                     SketchPad.decode (SketchPad.encode paintedModel)
-                        |> Maybe.map (\m -> ( m.rows, m.legend, ( m.size, m.note, m.preset ) ))
+                        |> Maybe.map (\m -> ( SketchPad.activeRows m, m.legend, ( m.size, m.note, m.preset ) ))
                         |> Expect.equal
                             (Just
-                                ( paintedModel.rows
+                                ( SketchPad.activeRows paintedModel
                                 , paintedModel.legend
                                 , ( paintedModel.size, paintedModel.note, paintedModel.preset )
                                 )
@@ -159,9 +203,9 @@ suite =
                                 , SketchPad.CellEntered ( 1, 0 )
                                 , SketchPad.StrokeEnded
                                 ]
-                                { paintedModel | rows = [ "..", ".." ], active = 'W' }
+                                (withRows [ "..", ".." ] { paintedModel | active = 'W' })
                     in
-                    ( afterStroke.rows, List.length afterStroke.undo )
+                    ( SketchPad.activeRows afterStroke, List.length afterStroke.undo )
                         |> Expect.equal ( [ "WW", ".." ], 1 )
             , test "戻すと一筆まるごと塗る前に戻る" <|
                 \_ ->
@@ -173,9 +217,9 @@ suite =
                                 , SketchPad.StrokeEnded
                                 , SketchPad.UndoClicked
                                 ]
-                                { paintedModel | rows = [ "..", ".." ], active = 'W' }
+                                (withRows [ "..", ".." ] { paintedModel | active = 'W' })
                     in
-                    ( afterUndo.rows, List.length afterUndo.undo )
+                    ( SketchPad.activeRows afterUndo, List.length afterUndo.undo )
                         |> Expect.equal ( [ "..", ".." ], 0 )
             ]
         , describe "リサイズ(はみ出した塗りの保持と復元)"
@@ -185,7 +229,7 @@ suite =
                         shrunk =
                             dragCorner ( -40, -20 ) cornerModel
                     in
-                    ( shrunk.size, shrunk.rows )
+                    ( shrunk.size, SketchPad.activeRows shrunk )
                         |> Expect.equal ( { w = 4, h = 3 }, [ "W...", "....", "...." ] )
             , test "縮めた後の保存 JSON と依頼文は、見えている範囲だけを載せる" <|
                 \_ ->
@@ -209,8 +253,8 @@ suite =
                                 |> dragCorner ( -40, -20 )
                                 |> dragCorner ( 40, 20 )
                     in
-                    ( restored.size, restored.rows )
-                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+                    ( restored.size, SketchPad.activeRows restored )
+                        |> Expect.equal ( { w = 6, h = 4 }, SketchPad.activeRows cornerModel )
             , test "縮めた後にプリセットを替えると、退避していた塗りも捨てられ、広げても蘇らない" <|
                 \_ ->
                     let
@@ -221,7 +265,7 @@ suite =
                                 |> Tuple.first
                                 |> dragCorner ( 40, 20 )
                     in
-                    (after.rows ++ after.hidden)
+                    (SketchPad.activeRows after ++ (activeSheet after).hidden)
                         |> List.any (\row -> String.contains "F" row || String.contains "W" row)
                         |> Expect.equal False
             , test "縮める→戻す→消す→縮める→広げる、で消した塗りは退避から戻らない" <|
@@ -241,8 +285,8 @@ suite =
                                 |> dragCorner ( -40, -20 )
                                 |> dragCorner ( 40, 20 )
                     in
-                    ( after.rows |> List.any (String.contains "F")
-                    , after.rows |> List.head |> Maybe.map (String.startsWith "W")
+                    ( SketchPad.activeRows after |> List.any (String.contains "F")
+                    , SketchPad.activeRows after |> List.head |> Maybe.map (String.startsWith "W")
                     )
                         |> Expect.equal ( False, Just True )
             ]
@@ -279,7 +323,7 @@ suite =
                         after =
                             dragEdge SketchPad.LeftEdge ( -45, 0 ) cornerModel
                     in
-                    ( after.size, after.rows )
+                    ( after.size, SketchPad.activeRows after )
                         |> Expect.equal
                             ( { w = 8, h = 4 }
                             , [ "..W.....", "........", "........", ".......F" ]
@@ -290,7 +334,7 @@ suite =
                         after =
                             dragEdge SketchPad.TopEdge ( 0, -45 ) cornerModel
                     in
-                    ( after.size, after.rows )
+                    ( after.size, SketchPad.activeRows after )
                         |> Expect.equal
                             ( { w = 6, h = 6 }
                             , [ "......", "......", "W.....", "......", "......", ".....F" ]
@@ -303,7 +347,7 @@ suite =
                                 |> dragEdge SketchPad.TopLeftEdge ( 40, 20 )
                                 |> dragEdge SketchPad.TopLeftEdge ( -40, -20 )
                     in
-                    ( after.size, after.rows )
+                    ( after.size, SketchPad.activeRows after )
                         |> Expect.equal
                             ( { w = 6, h = 4 }
                             , [ "......", "......", "......", ".....F" ]
@@ -320,8 +364,8 @@ suite =
                                 ]
                                 cornerModel
                     in
-                    ( after.size, after.rows )
-                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+                    ( after.size, SketchPad.activeRows after )
+                        |> Expect.equal ( { w = 6, h = 4 }, SketchPad.activeRows cornerModel )
             , test "右へ縮める→左へ縮める→undo→右へ広げる、で退避の塗りも元の位置に戻る(hidden も undo の対)" <|
                 \_ ->
                     let
@@ -333,8 +377,8 @@ suite =
                                 |> Tuple.first
                                 |> dragEdge SketchPad.RightEdge ( 25, 0 )
                     in
-                    ( after.size, after.rows )
-                        |> Expect.equal ( { w = 6, h = 4 }, cornerModel.rows )
+                    ( after.size, SketchPad.activeRows after )
+                        |> Expect.equal ( { w = 6, h = 4 }, SketchPad.activeRows cornerModel )
             ]
         , describe "リサイズ(上限・下限)"
             [ test "どれだけ引いても 75x75 で止まる" <|
@@ -360,8 +404,8 @@ suite =
                             dragCorner ( -40, -20 ) cornerModel
                                 |> stepAll [ SketchPad.UndoClicked ]
                     in
-                    ( after.size, after.rows )
-                        |> Expect.equal ( cornerModel.size, cornerModel.rows )
+                    ( after.size, SketchPad.activeRows after )
+                        |> Expect.equal ( cornerModel.size, SketchPad.activeRows cornerModel )
             ]
         , describe "形の道具(直線・矩形・楕円)"
             [ test "直線: 押して→引いて→離す、で対角 3 マスが塗れて undo は 1 本" <|
@@ -374,9 +418,9 @@ suite =
                                 , SketchPad.CellEntered ( 2, 2 )
                                 , SketchPad.StrokeEnded
                                 ]
-                                { cornerModel | rows = blankRows }
+                                (withRows blankRows cornerModel)
                     in
-                    ( after.rows, List.length after.undo )
+                    ( SketchPad.activeRows after, List.length after.undo )
                         |> Expect.equal ( [ "W.....", ".W....", "..W...", "......" ], 1 )
             , test "直線: undo 1 本で引く前に戻る" <|
                 \_ ->
@@ -389,8 +433,8 @@ suite =
                         ]
                         cornerModel
                         |> Tuple.first
-                        |> .rows
-                        |> Expect.equal cornerModel.rows
+                        |> SketchPad.activeRows
+                        |> Expect.equal (SketchPad.activeRows cornerModel)
             , test "ドラッグ途中(離す前)は rows を触らない(プレビューは実データと別)" <|
                 \_ ->
                     stepAll
@@ -398,9 +442,9 @@ suite =
                         , SketchPad.CellDown ( 0, 0 )
                         , SketchPad.CellEntered ( 2, 2 )
                         ]
-                        { cornerModel | rows = blankRows }
+                        (withRows blankRows cornerModel)
                         |> Tuple.first
-                        |> .rows
+                        |> SketchPad.activeRows
                         |> Expect.equal blankRows
             , test "矩形: (0,0)-(3,2) で枠だけ塗れて中は空きのまま" <|
                 \_ ->
@@ -410,9 +454,9 @@ suite =
                         , SketchPad.CellEntered ( 3, 2 )
                         , SketchPad.StrokeEnded
                         ]
-                        { cornerModel | rows = blankRows }
+                        (withRows blankRows cornerModel)
                         |> Tuple.first
-                        |> .rows
+                        |> SketchPad.activeRows
                         |> Expect.equal [ "WWWW..", "W..W..", "WWWW..", "......" ]
             , test "楕円: 確定で始点の列と終点の列にマスが塗られ、undo で戻る" <|
                 \_ ->
@@ -424,14 +468,14 @@ suite =
                                 , SketchPad.CellEntered ( 4, 2 )
                                 , SketchPad.StrokeEnded
                                 ]
-                                { cornerModel | rows = blankRows }
+                                (withRows blankRows cornerModel)
 
                         ( undone, _ ) =
                             stepAll [ SketchPad.UndoClicked ] after
                     in
-                    ( after.rows |> List.any (\row -> String.slice 0 1 row == "W")
-                    , after.rows |> List.any (\row -> String.slice 4 5 row == "W")
-                    , undone.rows
+                    ( SketchPad.activeRows after |> List.any (\row -> String.slice 0 1 row == "W")
+                    , SketchPad.activeRows after |> List.any (\row -> String.slice 4 5 row == "W")
+                    , SketchPad.activeRows undone
                     )
                         |> Expect.equal ( True, True, blankRows )
             ]
@@ -445,9 +489,9 @@ suite =
                                 , SketchPad.ChipPicked 'F'
                                 , SketchPad.ChipDeleted
                                 ]
-                                { paintedModel | rows = [ "WF", ".." ] }
+                                (withRows [ "WF", ".." ] paintedModel)
                     in
-                    ( List.map .char after.legend, after.rows, ( after.active, after.editing ) )
+                    ( List.map .char after.legend, SketchPad.activeRows after, ( after.active, after.editing ) )
                         |> Expect.equal ( [ 'W' ], [ "W.", ".." ], ( 'W', Nothing ) )
             , test "削除は退避(hidden)からも消える — 縮めて隠した塗りも広げ直しで復活しない" <|
                 \_ ->
@@ -460,7 +504,7 @@ suite =
                             ]
                         |> Tuple.first
                         |> dragCorner ( 40, 20 )
-                        |> .rows
+                        |> SketchPad.activeRows
                         |> List.any (String.contains "F")
                         |> Expect.equal False
             , test "undo で塗りと凡例が対で戻る" <|
@@ -473,9 +517,9 @@ suite =
                                 , SketchPad.ChipDeleted
                                 , SketchPad.UndoClicked
                                 ]
-                                { paintedModel | rows = [ "WF", ".." ] }
+                                (withRows [ "WF", ".." ] paintedModel)
                     in
-                    ( List.map .char after.legend, after.rows )
+                    ( List.map .char after.legend, SketchPad.activeRows after )
                         |> Expect.equal ( [ 'W', 'F' ], [ "WF", ".." ] )
             ]
         , describe "マスの大きさ"
@@ -667,6 +711,187 @@ suite =
                             { done | name = "stage3" }
                     in
                     SketchPad.sketchPath renamed |> Expect.equal "draft/sketch/stage3/v1.json"
+            ]
+        , describe "レイヤーの増減と並べ替え"
+            [ test "新しいラフのレイヤーは 1 枚だけ" <|
+                \_ ->
+                    ( List.map .name SketchPad.init.layers, SketchPad.init.layerIndex )
+                        |> Expect.equal ( [ "レイヤー1" ], 0 )
+            , test "追加すると一番手前に足され、そのまま選ばれる" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerAdded ] paintedModel
+                        |> Tuple.first
+                        |> (\m -> ( List.map .name m.layers, m.layerIndex ))
+                        |> Expect.equal ( [ "レイヤー1", "レイヤー2" ], 1 )
+            , test "3 枚まで増やせる" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerAdded, SketchPad.LayerAdded ] paintedModel
+                        |> Tuple.first
+                        |> .layers
+                        |> List.length
+                        |> Expect.equal 3
+            , test "4 枚目は増やせず、断りを伝える" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerAdded, SketchPad.LayerAdded, SketchPad.LayerAdded ] paintedModel
+                        |> Tuple.second
+                        |> Expect.equal (SketchPad.OutToast "レイヤーはこれ以上増やせません")
+            , test "上限まで増やしても 3 枚を超えない" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerAdded, SketchPad.LayerAdded, SketchPad.LayerAdded ] paintedModel
+                        |> Tuple.first
+                        |> .layers
+                        |> List.length
+                        |> Expect.equal 3
+            , test "選んでいるレイヤーを削除すると、そのレイヤーの絵ごと消える" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerDeleted ] layeredModel
+                        |> Tuple.first
+                        |> (\m -> ( List.map .name m.layers, m.layerIndex ))
+                        |> Expect.equal ( [ "1枚目", "3枚目" ], 1 )
+            , test "残り 1 枚のときは削除できず、断りを伝える" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerDeleted ] paintedModel
+                        |> Tuple.second
+                        |> Expect.equal (SketchPad.OutToast "最後の 1 枚は削除できません")
+            , test "残り 1 枚のときの削除は絵を 1 マスも変えない" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerDeleted ] paintedModel
+                        |> Tuple.first
+                        |> SketchPad.activeRows
+                        |> Expect.equal [ "W.", ".." ]
+            , test "手前へ動かすと重なり順が入れ替わり、選んだままになる" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerRaised ] layeredModel
+                        |> Tuple.first
+                        |> (\m -> ( List.map .name m.layers, m.layerIndex ))
+                        |> Expect.equal ( [ "1枚目", "3枚目", "2枚目" ], 2 )
+            , test "奥へ動かすと重なり順が入れ替わる" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerLowered ] layeredModel
+                        |> Tuple.first
+                        |> (\m -> List.map .name m.layers)
+                        |> Expect.equal [ "2枚目", "1枚目", "3枚目" ]
+            , test "一番手前のレイヤーはさらに手前へ動かせない" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerPicked 2, SketchPad.LayerRaised ] layeredModel
+                        |> Tuple.first
+                        |> (\m -> ( List.map .name m.layers, m.layerIndex ))
+                        |> Expect.equal ( [ "1枚目", "2枚目", "3枚目" ], 2 )
+            , test "名前はその場で打ち替えられる" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerRenamed 0 "地面" ] layeredModel
+                        |> Tuple.first
+                        |> (\m -> List.map .name m.layers)
+                        |> Expect.equal [ "地面", "2枚目", "3枚目" ]
+            ]
+        , describe "レイヤーの重なりと表示・非表示"
+            [ test "レイヤーの欄が無い古いラフは、1 枚として読める" <|
+                \_ ->
+                    SketchPad.decode oldSketchJson
+                        |> Maybe.map (\m -> ( List.map .rows m.layers, List.map .name m.layers, m.layerIndex ))
+                        |> Expect.equal (Just ( [ [ "W.", ".." ] ], [ "レイヤー1" ], 0 ))
+            , test "id で奥・主役・手前を指していた頃のラフは、3 枚のレイヤーとして読める" <|
+                \_ ->
+                    SketchPad.decode idLayeredSketchJson
+                        |> Maybe.map (\m -> List.map (\sheet -> ( sheet.name, sheet.rows )) m.layers)
+                        |> Expect.equal
+                            (Just
+                                [ ( "奥", [ "..", "F." ] )
+                                , ( "主役", [ "W.", ".." ] )
+                                , ( "手前", [ ".F", ".." ] )
+                                ]
+                            )
+            , test "1 枚で描いたラフの保存物にレイヤーの欄は出ない" <|
+                \_ ->
+                    SketchPad.encode paintedModel
+                        |> String.contains "\"layers\""
+                        |> Expect.equal False
+            , test "レイヤーに分けて描いたら保存物にレイヤーの欄が出る" <|
+                \_ ->
+                    SketchPad.encode layeredModel
+                        |> String.contains "\"layers\""
+                        |> Expect.equal True
+            , test "3 枚のラフは読み書きしてもレイヤーごとの絵と名前が変わらない" <|
+                \_ ->
+                    SketchPad.decode (SketchPad.encode layeredModel)
+                        |> Maybe.map (\m -> List.map (\sheet -> ( sheet.name, sheet.rows )) m.layers)
+                        |> Expect.equal
+                            (Just
+                                [ ( "1枚目", [ "..", "F." ] )
+                                , ( "2枚目", [ "W.", ".." ] )
+                                , ( "3枚目", [ ".F", ".." ] )
+                                ]
+                            )
+            , test "非表示の印も読み書きで残る" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerVisibilityToggled 2 ] layeredModel
+                        |> Tuple.first
+                        |> SketchPad.encode
+                        |> SketchPad.decode
+                        |> Maybe.map (\m -> List.map .visible m.layers)
+                        |> Expect.equal (Just [ True, True, False ])
+            , test "保存物の rows はレイヤーを畳んだ 1 枚(手前のレイヤーが勝つ)" <|
+                \_ ->
+                    SketchPad.flatRows layeredModel |> Expect.equal [ "WF", "F." ]
+            , test "非表示のレイヤーは畳んだ絵に入らない" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerVisibilityToggled 2 ] layeredModel
+                        |> Tuple.first
+                        |> SketchPad.flatRows
+                        |> Expect.equal [ "W.", "F." ]
+            , test "塗るのは選んでいるレイヤーだけ(ほかは変わらない)" <|
+                \_ ->
+                    stepAll [ SketchPad.CellDown ( 1, 1 ), SketchPad.StrokeEnded ] layeredModel
+                        |> Tuple.first
+                        |> SketchPad.layerRows 0
+                        |> Expect.equal [ "..", "F." ]
+            , test "広げると塗っていないレイヤーも一緒に広がる" <|
+                \_ ->
+                    dragEdge SketchPad.RightEdge ( 40, 0 ) layeredModel
+                        |> SketchPad.layerRows 0
+                        |> Expect.equal [ "....", "F..." ]
+            , test "戻すと、塗っていないレイヤーの寸法替えも一緒に戻る" <|
+                \_ ->
+                    stepAll [ SketchPad.UndoClicked ] (dragEdge SketchPad.RightEdge ( 40, 0 ) layeredModel)
+                        |> Tuple.first
+                        |> SketchPad.layerRows 0
+                        |> Expect.equal [ "..", "F." ]
+            , test "ラベルを消すと、ほかのレイヤーで塗ったマスも消える" <|
+                \_ ->
+                    stepAll [ SketchPad.ChipDeleted ] { layeredModel | editing = Just 'F' }
+                        |> Tuple.first
+                        |> SketchPad.layerRows 0
+                        |> Expect.equal [ "..", ".." ]
+            , test "レイヤーに分けたラフの依頼文は、レイヤーごとにマス目を 1 枚ずつ書く" <|
+                \_ ->
+                    SketchPad.promptSection layeredModel
+                        |> Expect.equal
+                            (Just
+                                (String.join "\n"
+                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1マス。塗りから自動生成）"
+                                    , "凡例: W=壁（崩れかけた石壁）  F=床  .=空き"
+                                    , "レイヤー: あとに書いたものほど手前に重なります。レイヤーごとに 1 枚ずつ書きます。"
+                                    , "### 1枚目"
+                                    , ".."
+                                    , "F."
+                                    , "### 2枚目"
+                                    , "W."
+                                    , ".."
+                                    , "### 3枚目"
+                                    , ".F"
+                                    , ".."
+                                    , "補足: 左が入り口"
+                                    , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
+                                    , "原本: draft/sketch/stage2/v1.json"
+                                    ]
+                                )
+                            )
+            , test "レイヤーを増やしただけ(塗ったのは 1 枚)の依頼文は、1 枚で描いたときと同じ" <|
+                \_ ->
+                    stepAll [ SketchPad.LayerAdded ] paintedModel
+                        |> Tuple.first
+                        |> SketchPad.promptSection
+                        |> Expect.equal (SketchPad.promptSection paintedModel)
             ]
         , describe "listDecoder(GET /sketch/list)"
             [ test "サーバの応答形を読める" <|

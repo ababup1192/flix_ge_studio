@@ -19,7 +19,14 @@ sample =
     , title = "注釈: my_game — frame 3412(2026-08-12 14:03)"
     , comment = ""
     , hasShot = True
+    , isSketch = False
     }
+
+
+{-| ラフと見比べて切った 1 枚(印だけが違う)。 -}
+sketchSample : Tickets.Ticket
+sketchSample =
+    { sample | id = "20260812-140312_title_png_sketch", isSketch = True }
 
 
 {-| 一覧が届いた状態から始める。 -}
@@ -37,7 +44,10 @@ suite =
                     let
                         prompt =
                             Tickets.buildTicketPrompt
-                                { id = sample.id, comment = "敵がジャンプ台の上に湧いて理不尽" }
+                                { id = sample.id
+                                , comment = "敵がジャンプ台の上に湧いて理不尽"
+                                , isSketch = False
+                                }
                     in
                     Expect.equal
                         [ True, True, True, True ]
@@ -48,9 +58,22 @@ suite =
                         ]
             , test "直し先の判断は AI に委ねる一文を必ず載せる" <|
                 \_ ->
-                    Tickets.buildTicketPrompt { id = sample.id, comment = "一言" }
+                    Tickets.buildTicketPrompt { id = sample.id, comment = "一言", isSketch = False }
                         |> String.contains "直し先はあなたが選んでください"
                         |> Expect.equal True
+            , test "ラフと見比べて切った 1 枚は、遊んだ時の手がかりでなく見比べた 2 枚を指す" <|
+                \_ ->
+                    let
+                        prompt =
+                            Tickets.buildTicketPrompt
+                                { id = sketchSample.id, comment = "空が明るすぎる", isSketch = True }
+                    in
+                    Expect.equal
+                        [ True, True, False ]
+                        [ String.contains "見た目の直し" prompt
+                        , String.contains ("debug/annotations/" ++ sketchSample.id ++ "/screenshot.png") prompt
+                        , String.contains "world.json" prompt
+                        ]
             ]
         , describe "報告のゲート"
             [ test "一言が空のままの報告は何も起こさない(依頼文を作らない)" <|
@@ -69,7 +92,7 @@ suite =
                         |> Expect.equal
                             (Tickets.OutCopyPrompt
                                 (Tickets.buildTicketPrompt
-                                    { id = sample.id, comment = "コインが取れない" }
+                                    { id = sample.id, comment = "コインが取れない", isSketch = False }
                                 )
                             )
             ]

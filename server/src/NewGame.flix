@@ -29,8 +29,8 @@ mod NewGame {
 
     // ── 純粋なルール (ここだけテストする) ──────────────────
 
-    /// テンプレート本文の置き換え。__NAME__ などの札を実際の値に差し替える。
-    /// __WW__/__WH__ は窓の大きさ (設計解像度の 2 倍)。
+    /// テンプレート本文の置き換え。__NAME__ などのプレースホルダを実際の値に差し替える。
+    /// __WW__/__WH__ はウィンドウの大きさ (設計解像度の 2 倍)。
     /// engine の現在地は Makefile に書かない — git に入れない local.mk へ書く
     /// (localMkText)。Makefile はマシンをまたいで共有できる形のまま。
     pub def applyTokens(request: Request, text: String): String =
@@ -41,7 +41,7 @@ mod NewGame {
             |> String.replace(src = "__WH__", dst = "${request#h * 2}")
             |> String.replace(src = "__W__", dst = "${request#w}")
             |> String.replace(src = "__H__", dst = "${request#h}")
-            // 古い engine のテンプレ (ENGINE ?= __ENGINE__) との互換のためだけに残す札。
+            // 古い engine のテンプレ (ENGINE ?= __ENGINE__) との互換のためだけに残すプレースホルダ。
             // いまのテンプレの Makefile は engine の場所を持たない (local.mk が教える)。
             |> String.replace(src = "__ENGINE__", dst = request#engine)
 
@@ -56,7 +56,7 @@ mod NewGame {
             + "ENGINE ?= ${line(engine)}\n"
             + (java |> Option.map(exe -> "JAVA ?= ${line(exe)}\n") |> Option.getWithDefault(""))
 
-    /// 札の書き換え対象か。テンプレの文字ファイルだけ (絵や音はそのまま写す)。
+    /// プレースホルダの書き換え対象か。テンプレの文字ファイルだけ (絵や音はそのまま写す)。
     pub def isTokenTarget(fileName: String): Bool =
         String.endsWith(suffix = ".flix", fileName)
             or String.endsWith(suffix = ".json", fileName)
@@ -231,7 +231,7 @@ mod NewGame {
             } else ()
         })
 
-    /// ゲーム内の文字ファイル全部に札の書き換えをかける。
+    /// ゲーム内の文字ファイル全部にプレースホルダの書き換えをかける。
     def rewriteTokens(request: Request): Unit \ IO =
         walkFiles(new JFile(request#gameDir))
             |> List.forEach(file ->
@@ -246,13 +246,13 @@ mod NewGame {
         let java = if (Object.isNull(javaValue) or String.trim(javaValue) == "") None else Some(javaValue);
         writeText("${request#gameDir}/local.mk", localMkText(request#engine, java))
 
-    /// engine_full の fpkg と flix.toml を、ゲームの lib/github/… に版名で置く
-    /// (初回ビルドでのダウンロードを不要にする)。版が読めなければ飛ばす —
+    /// engine_full の fpkg と flix.toml を、ゲームの lib/github/… にバージョン名で置く
+    /// (初回ビルドでのダウンロードを不要にする)。バージョンが読めなければ飛ばす —
     /// その場合は初回ビルドが自分でダウンロードする (fail-open)。
     def seedEngineFull(state: Runner.State, request: Request): Unit \ IO =
         match versionFromToml(readText("${request#engine}/engine_full/flix.toml")) {
             case None =>
-                Runner.logLine(state, "[new-game] engine_full の版が読めません — lib の種付けを飛ばします (初回ビルドでダウンロードされます)")
+                Runner.logLine(state, "[new-game] engine_full のバージョンが読めません — lib の種付けを飛ばします (初回ビルドでダウンロードされます)")
             case Some(version) => {
                 let seedDir = "${request#gameDir}/lib/github/ababup1192/flix_game_engine/${version}";
                 discard new JFile(seedDir).mkdirs();
@@ -356,9 +356,9 @@ mod NewGame {
         writeText("${gameDir}/AGENTS.md", agentsText(engineVersionOf(engine), core, skillCatalog(engine), localPart));
         writeText("${gameDir}/CLAUDE.md", "@AGENTS.md\n")
 
-    /// 版刻印の出どころ: engine の Makefile の VERSION := が正。Makefile を持たない
-    /// 同梱 engine では engine_full/flix.toml (bump が同じ版へそろえる) に倒す。
-    /// engine 自身の flix.toml を見ないのは、あれが 0.1.0 のまま動かない札だから。
+    /// バージョン刻印の出どころ: engine の Makefile の VERSION := が正。Makefile を持たない
+    /// 同梱 engine では engine_full/flix.toml (bump が同じバージョンへそろえる) に倒す。
+    /// engine 自身の flix.toml を見ないのは、あれが 0.1.0 のまま動かないラベルだから。
     def engineVersionOf(engine: String): String \ IO =
         match (readTextIfFile("${engine}/Makefile") |> Option.flatMap(versionFromMakefile)) {
             case Some(version) => version

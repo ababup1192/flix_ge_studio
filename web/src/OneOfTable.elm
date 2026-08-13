@@ -2,9 +2,9 @@ module OneOfTable exposing (Row, filterRows, rows)
 
 {-| oneOf セクション(カットの表 等)専用の 3 列(#/カット/内容)の行モデル。
 
-鍵ごとに 1 列 + 見出しがスキーマの長文、では 1 カット = 1 鍵の表が横スクロール
-だらけになる。ここでは「勝っている鍵」(SchemaForm.oneOf と同じ規則: 宣言順
-[order 昇順・未指定はフィールド定義順] で最初に行に存在する鍵)を「カット」
+キーごとに 1 列 + 見出しがスキーマの長文、では 1 カット = 1 キーの表が横スクロール
+だらけになる。ここでは「勝っているキー」(SchemaForm.oneOf と同じ規則: 宣言順
+[order 昇順・未指定はフィールド定義順] で最初に行に存在するキー)を「カット」
 1 列にまとめ、他の値は「内容」列へ値の型から汎用に組んだ要約として畳む。
 
 Html を作らない(EntryTable が描画を持つ)。
@@ -22,21 +22,21 @@ type alias Row =
     { rowId : Table.RowId
     , idText : String
 
-    -- 勝っている鍵の名前(候補が 1 つも無ければ "?")
+    -- 勝っているキーの名前(候補が 1 つも無ければ "?")
     , kind : String
 
     -- スキーマの label(セルの title = hover 用)。無ければ kind と同じ
     , kindTitle : String
 
-    -- 内容の要約(勝っている鍵の値 + 添え鍵の札)
+    -- 内容の要約(勝っているキーの値 + 補助キーのバッジ)
     , summary : String
     }
 
 
-{-| スキーマに「アクション鍵か添え鍵か」の構造化された宣言は無いので、
+{-| スキーマに「アクションキーか補助キーか」の構造化された宣言は無いので、
 この一覧で見分ける(条件行 only/unless・待たせない noWait・量だけ添える
-pan/secs/run/back の類)。ここに無い鍵は誤って除くよりアクション候補に
-残す方が実害が小さい(勝ち鍵が消えて見えなくなる方がまずい)。
+pan/secs/run/back の類)。ここに無いキーは誤って除くよりアクション候補に
+残す方が実害が小さい(勝ちキーが消えて見えなくなる方がまずい)。
 -}
 addedKeyNames : List String
 addedKeyNames =
@@ -102,7 +102,7 @@ buildRow ordered actionCandidates rowId idText entry =
     , kindTitle =
         chosen
             |> Maybe.andThen (\( name, field ) -> field.label |> Maybe.map (\l -> name ++ ": " ++ l))
-            |> Maybe.withDefault (chosenName |> Maybe.withDefault "この行はアクション鍵を持ちません")
+            |> Maybe.withDefault (chosenName |> Maybe.withDefault "この行はアクションキーを持ちません")
     , summary = mainPart :: badges |> List.filter ((/=) "") |> String.join " "
     }
 
@@ -112,8 +112,8 @@ valueOf name entry =
     D.decodeValue (D.field name D.value) entry |> Result.toMaybe
 
 
-{-| 勝っている鍵の値の要約。型で汎用に組む:
-{x,y} は "(x, y)"、他の鍵も持つ物({room,x,y,facing} 等)は元の並びのまま
+{-| 勝っているキーの値の要約。型で汎用に組む:
+{x,y} は "(x, y)"、他のキーも持つ物({room,x,y,facing} 等)は元の並びのまま
 "room (x, y) facing" のように連ねる。文字列・文字列列は先頭を短く、
 数値はそのまま、bool はカット名(呼び名)が既に言っているので空。
 -}
@@ -147,7 +147,7 @@ mainSummary v =
                                             "…"
 
 
-{-| {x,y} を 1 つの "(x, y)" にまとめ、他の鍵は元の並びの位置のまま
+{-| {x,y} を 1 つの "(x, y)" にまとめ、他のキーは元の並びの位置のまま
 素朴な値のテキストで挟む("room (x, y) facing" のように)。
 -}
 objectSummary : List ( String, D.Value ) -> String
@@ -179,7 +179,7 @@ lookup key pairs =
     pairs |> List.filter (\( k, _ ) -> k == key) |> List.head |> Maybe.map Tuple.second
 
 
-{-| 添え鍵 1 つを「内容」列の札にする。only/unless/noWait は読みやすい定型文、
+{-| 補助キー 1 つを「内容」列のバッジにする。only/unless/noWait は読みやすい定型文、
 それ以外は bool を [名前]、数値・文字列は "名前 値" の汎用形。
 -}
 extraBadge : String -> D.Value -> Maybe String

@@ -15,7 +15,7 @@ module EntryTable exposing
 持っているので、クリック時はそこから EntrySel を作る — 表示位置は使わない。
 フォーム(選択 1 件)は表示と独立で、絞り込みで行が隠れても選択は生きる。
 
-画面(Main)からは Handlers(押された時に投げる便り)と State(表に効く
+画面(Main)からは Handlers(押された時に投げるメッセージ)と State(表に効く
 選択・並び・絞り込み)だけを受け取る。Model 丸ごとを知らないので、
 2 ペイン常設や別画面から同じ表を出しても、ここは書き換わらない。
 
@@ -36,7 +36,7 @@ import Sources
 import Table
 
 
-{-| 表の操作が投げる便り。Main の Msg をここへ持ち込まないための受け口。 -}
+{-| 表の操作が投げるメッセージ。Main の Msg をここへ持ち込まないための受け口。 -}
 type alias Handlers msg =
     { onSelect : EntrySel -> msg
     , onSort : String -> msg
@@ -125,7 +125,7 @@ viewCrudBar handlers state doc key section =
 viewBox : Handlers msg -> State -> String -> D.Value -> String -> Schema.Section -> Maybe UsageDicts -> Html msg
 viewBox handlers state heightClass doc key section usageDict =
     if section.oneOf && section.kind == Schema.ListKind then
-        -- 鍵ごとに 1 列 + 長文見出しでは横スクロールだらけになる、oneOf 専用の
+        -- キーごとに 1 列 + 長文見出しでは横スクロールだらけになる、oneOf 専用の
         -- #/カット/内容の 3 列(OneOfTable 参照)。並び替えは # 固定でよい
         viewOneOfBox handlers state heightClass doc key section
 
@@ -244,7 +244,7 @@ viewOneOfBox handlers state heightClass doc key section =
         ]
 
 
-{-| oneOf の表 1 行。カット列は勝っている鍵の名前(スキーマの長い label は
+{-| oneOf の表 1 行。カット列は勝っているキーの名前(スキーマの長い label は
 title で hover に回す)。内容列は OneOfTable が組んだ要約をそのまま出す
 (セルは広げず truncate + title で全文を持たせる)。
 -}

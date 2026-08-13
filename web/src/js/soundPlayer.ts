@@ -15,7 +15,7 @@ type PlayRequest = {
   offset?: number;
   duration?: number;
   loop?: boolean;
-  // 線を動かす合鍵(data-playhead)。同じ合鍵の線は全部動く —
+  // 線を動かす照合キー(data-playhead)。同じ照合キーの線は全部動く —
   // 1 回の再生で波形とピアノロールの線が揃って走る。無ければ音だけ鳴る
   playheadId?: string;
 };

@@ -676,7 +676,7 @@ viewWave config model shape =
         ]
 
 
-{-| 掴む縁 1 本。線と丸と札を HTML で重ねる(字が潰れないように)。 -}
+{-| 掴む縁 1 本。線と丸とラベルを HTML で重ねる(字が潰れないように)。 -}
 grip : Float -> String -> Html Msg
 grip fx label =
     div [ HA.class "sfx-grip", HA.style "left" (String.fromFloat (fx * 100) ++ "%") ]

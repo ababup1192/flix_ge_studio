@@ -66,6 +66,7 @@ module Atelier exposing
     , showLanding
     , showPicks
     , sketchListLoaded
+    , sketchOpen
     , sketchResizeActive
     , sketchSaveFailed
     , sketchSaved
@@ -166,7 +167,7 @@ type Section
 
 
 {-| 「ゲームを広げる」の下書き(GET /prompt/extend)の進み。
-Loading は押した口の kind を持つ(押した札に ⏳ を出す)。
+Loading は押した口の kind を持つ(押したボタンに ⏳ を出す)。
 -}
 type ExtendPrompt
     = ExtendIdle
@@ -176,7 +177,7 @@ type ExtendPrompt
 
 
 {-| 切り替えで積まれたバージョン 1 枚(atelier/archive/<base>.vN.<kind>.json)。
-slot はこの札の戻し先(assets/)。
+slot はこのカードの戻し先(assets/)。
 -}
 type alias HistoryEntry =
     { file : String
@@ -232,7 +233,7 @@ type Phase
     | Settled
 
 
-{-| プレビュー拡大(lightbox)。140px そこそこの札ではドット絵の良し悪しは
+{-| プレビュー拡大(lightbox)。140px そこそこのカードではドット絵の良し悪しは
 判らない — クリックで原寸級に開く。compareWith はスロットの「いまの見た目」の
 プレビューキー(file=<slot>)— 候補のカードだけ持ち、同じ場所で A/B に
 切り替えて見比べる(いまの見た目のカード自身には比べる相手がない)。
@@ -374,7 +375,7 @@ type alias Model =
     , archivePending : Maybe String
     , restorePending : Maybe String
 
-    -- 履歴の「vN に戻す」を押した札(⏳ と失敗理由をその行に出す控え)
+    -- 履歴の「vN に戻す」を押したボタン(⏳ と失敗理由をその行に出す控え)
     , versionPending : Maybe String
 
     -- ゲーム起動(make debug)の進み
@@ -556,7 +557,7 @@ update msg model =
 
         RollbackClicked slot file ->
             -- 戻すのは怖くない操作なので、起動の案内も選択も挟まず直行する。
-            -- どの札を押したかは控える(アーカイブの行の ⏳ と失敗理由の置き場)
+            -- どのボタンを押したかは控える(アーカイブの行の ⏳ と失敗理由の置き場)
             if model.pending == Nothing then
                 promote Rollback { slot = slot, file = file } { model | versionPending = Just file }
 
@@ -1077,7 +1078,7 @@ materialTitleOf model file =
         |> Maybe.map (\s -> rowTitle s.title s.file)
 
 
-{-| スロットの候補の数(過去バージョン prev の札は数えない)。境界の「候補 N 件」の材料。 -}
+{-| スロットの候補の数(過去バージョン prev のカードは数えない)。境界の「候補 N 件」の材料。 -}
 slotCandidateCount : Model -> String -> Int
 slotCandidateCount model slotFile =
     case model.data of
@@ -1412,6 +1413,12 @@ sketchStrokeActive model =
 sketchResizeActive : Model -> Bool
 sketchResizeActive model =
     SketchPad.resizeActive model.sketch
+
+
+{-| ラフを塗る窓が出ているか(Main がこの間だけ Esc を購読する)。 -}
+sketchOpen : Model -> Bool
+sketchOpen model =
+    SketchPad.isOpen model.sketch
 
 
 {-| コピーする本文 — 下書きに「あなたの言葉」を続ける(空なら下書きだけ)。 -}
@@ -1910,7 +1917,7 @@ landingCard info =
         ]
 
 
-{-| 入口カードのチップに出す候補の総数(過去バージョン prev の札は数えない)。 -}
+{-| 入口カードのチップに出す候補の総数(過去バージョン prev のカードは数えない)。 -}
 candidateCount : Model -> Int
 candidateCount model =
     case model.data of
@@ -2158,8 +2165,8 @@ viewHistory model entries =
     ]
 
 
-{-| 履歴をスロット別に束ね、各スロットは新しい版から。スロットの並びは
-一番新しい札を持つものが先(直近に触った場所が上)。
+{-| 履歴をスロット別に束ね、各スロットは新しいバージョンから。スロットの並びは
+一番新しいカードを持つものが先(直近に触った場所が上)。
 -}
 historyBySlot : List HistoryEntry -> List ( String, List HistoryEntry )
 historyBySlot entries =
@@ -3052,8 +3059,8 @@ baseName path =
         |> Maybe.withDefault path
 
 
-{-| 過去バージョン(prev)の札のラベル。ファイル名の "prev-N" から N を拾い、
-アーカイブの札と同じ「vN」で呼ぶ。N が読めない名前は「前のバージョン」。
+{-| 過去バージョン(prev)のカードのラベル。ファイル名の "prev-N" から N を拾い、
+アーカイブのカードと同じ「vN」で呼ぶ。N が読めない名前は「前のバージョン」。
 -}
 prevTag : String -> String
 prevTag file =

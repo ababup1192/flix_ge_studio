@@ -1137,6 +1137,9 @@ type Msg
     | SketchCompareVersionChosen Int
     | SketchCompareModeChosen SketchCompare.Mode
     | SketchCompareOpacityChanged String
+    | SketchCompareCellPicked { x : Int, y : Int }
+    | SketchCompareNoteEdited String
+    | SketchCompareSubmitClicked
     | WakePolled Int
     | PerformClicked
     | BakeCancelled
@@ -1952,6 +1955,28 @@ update msg model =
 
         SketchCompareOpacityChanged text_ ->
             ( { model | sketchCompare = SketchCompare.setOpacity text_ model.sketchCompare }, Effect.none )
+
+        SketchCompareCellPicked cell ->
+            ( { model | sketchCompare = SketchCompare.pickCell cell model.sketchCompare }, Effect.none )
+
+        SketchCompareNoteEdited text_ ->
+            ( { model | sketchCompare = SketchCompare.setNote text_ model.sketchCompare }, Effect.none )
+
+        SketchCompareSubmitClicked ->
+            case SketchCompare.buildTicket model.sketchCompare of
+                Nothing ->
+                    ( model, Effect.none )
+
+                Just ticket ->
+                    request "annotationsCreate"
+                        (E.object
+                            [ ( "title", E.string ticket.title )
+                            , ( "comment", E.string ticket.comment )
+                            , ( "body", E.string ticket.body )
+                            , ( "scene", E.string ticket.scene )
+                            ]
+                        )
+                        { model | sketchCompare = SketchCompare.submitting model.sketchCompare }
 
         WakePolled seq ->
             -- やめた後・別の焼きが始まった後の予約は捨てる
@@ -6076,6 +6101,12 @@ handleOkByKind env model =
         "annotationsArchive" ->
             ( model, requestInfo "annotationsList" )
 
+        "annotationsCreate" ->
+            -- 並べられた。ホームのやること一覧を取り直して、切ったばかりの 1 枚を出す
+            ( { model | sketchCompare = SketchCompare.submitted model.sketchCompare }
+            , requestInfo "annotationsList"
+            )
+
         "changes" ->
             -- 見張りは 2 本立て。(1) 一覧の増減: mtime 一覧のキー集合を今の
             -- ファイル一覧と比べ、違えば files/resources を取り直す(サイドバーだけに
@@ -7793,6 +7824,12 @@ handleErrByKind env message model =
         "annotationsArchive" ->
             showToast ("アーカイブへ移せませんでした — " ++ message) model
 
+        "annotationsCreate" ->
+            -- 窓の中に理由を残す(窓を閉じずに書き直せるように)
+            ( { model | sketchCompare = SketchCompare.submitFailed message model.sketchCompare }
+            , Effect.none
+            )
+
         "journeyChanges" ->
             -- 404 = この口を持たないサーバ。実況もモーダルも出さないだけ(fail-open)
             if String.contains "404" message then
@@ -8386,6 +8423,9 @@ viewSketchCompareWindow model =
         , onVersion = SketchCompareVersionChosen
         , onMode = SketchCompareModeChosen
         , onOpacity = SketchCompareOpacityChanged
+        , onCell = SketchCompareCellPicked
+        , onNote = SketchCompareNoteEdited
+        , onSubmit = SketchCompareSubmitClicked
         , onClose = SketchCompareClosed
         }
         { sceneUrl = \name -> SceneView.galleryImageUrl model.serverBase model.root "gallery" name }
@@ -14425,6 +14465,37 @@ subscriptions model =
                     )
                 , Browser.Events.onMouseUp (D.succeed (NewGameMsg (NewGame.SketchMsg SketchPad.ResizeEnded)))
                 ]
+
+          else
+            Sub.none
+
+        -- ラフを塗る窓が出ている間だけ Esc で閉じる。暗幕は押しても閉じない口なので、
+        -- 塗り場から手を離さずに畳める道はここだけ
+        , if Atelier.sketchOpen model.atelier then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.ToggleOpen))
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
+
+          else if NewGame.sketchWindowOpen model.newGame then
+            Browser.Events.onKeyDown
+                (D.field "key" D.string
+                    |> D.andThen
+                        (\key ->
+                            if key == "Escape" then
+                                D.succeed (NewGameMsg NewGame.SketchClosed)
+
+                            else
+                                D.fail "他のキーは素通し"
+                        )
+                )
 
           else
             Sub.none

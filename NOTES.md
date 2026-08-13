@@ -1,6 +1,70 @@
 # NOTES
 
-## 次やること（2026-08-12 深夜・ラフ比較の窓を作る）
+## 次やること（2026-08-13 昼・言葉づかいの直し。未コミット）
+
+1. **`NewGame.elm` の `family` → `genre` が未着手**（74 箇所）。server とサーバの口は
+   `genre` へ改名済みで、`web/src/js/realApi.ts` が**新旧どちらの名前でも動くように
+   両受け**にしてある（`payload.genre ?? payload.family`・port のタグも
+   `case "genesisGenres": case "genesisFamilies":`）。**Elm を付け替えたら、
+   その両受けと `?? payload.family` を消す**
+   - UI に出ている「家族」も「ジャンル」へ（人からの「家族のカード -> 家族？」の指摘）
+2. **engine 側で `golden/` → `snapshot/` に改名した追随**が要る:
+   - `Makefile` の `stage-engine` の cp リスト: `bin/golden-bless.sh` / `golden-check.sh` →
+     `bin/snapshot-update.sh` / `bin/snapshot-check.sh`
+   - `GET /genesis/title` が読む `templates/<genre>-starter/golden/title.png` →
+     `snapshot/title.png`
+   - `/golden/*` API 一式と `GoldenView.elm` → `snapshot` / `SnapshotView.elm`。
+     UI 文言は**「スナップショットを更新」**で統一（「この姿を正にする」は使わない）
+   - `docs/glossary.md` の見比べのパス（engine 側は `snapshot/archive/<scene>.vN.png` へ更新済み）
+3. **反映は未実施**。server も web も変えたので `make swap-jar` と `make swap-web` の両方が要る
+
+## 済んだ物（2026-08-13 昼・言葉づかい）
+
+- 「札」「版」などの独自語を業界の言葉へ（ボタン / カード / バージョン）。
+  engine 側では `AGENTS.md` の言葉づかいの節そのものを書き換えた（単語は業界の言葉・
+  説明は平易に、の 2 段構え）+ 名前の付け方の節を新設 + `bin/lint-jargon.py` で
+  コミット時に止める仕組みを入れた
+- `family` → `genre`（server・realApi.ts・テスト・docs）
+
+## （旧）ラフ 3 点は実装済み（2026-08-13 朝）
+
+1. **人の目で確かめる**（`/Applications` へ反映済み。Studio を Cmd+Q → 開き直すだけ）。
+   見る所は下の「済んだ物」の 3 節それぞれの末尾に書いた手順
+2. **コミット**（この環境は git add / commit が拒否されるので人の手が要る）。
+   server も web も変えたので、コミット後の再反映は要らない（もう入っている）
+3. 残り = ラフのフレーム（1 枚のラフに複数コマ）と、engine 側の由来の覚え書き（要相談）。
+   **再現度(fidelity)のつまみの処遇**も未決のまま（消さずに残して相談）
+
+## 済んだ物（2026-08-13 未明・レイヤーとラフ比較の第 2 段）
+
+### ラフに奥・主役・手前の 3 層（web/src/SketchPad.elm だけ）
+
+- 道具列の下に層のボタン。選んだ層だけ塗り、**他の層は薄く透けて見える**
+- 保存は `rows` = 3 層を畳んだ 1 枚（今までと同じ形）+ `layers` は主役以外にも
+  塗ったときだけ足す。**層を知らない読み手が今までどおり絵を出せる**のが狙い
+- 依頼文も同じ考え方（主役だけなら出力は従来と 1 バイトも変わらない）
+- 層の無い古いラフは「主役 1 枚」として読む。テストで固定済み
+- 畳んだ絵が要る所は `SketchPad.flatRows`（比較の窓はこれを使う）
+
+### ラフ比較の第 2 段（マスを指してひとこと → やること一覧へ）
+
+- `POST /annotations/create` を新設（server/src/Annotations.flix + Editor.flix にルート 1 行）。
+  `debug/annotations/<日時>_<絵>_sketch/` に README.md + screenshot.png を置く。
+  **engine 側は触っていない**
+- 印は**置き場の名前の末尾 `_sketch`**（engine のチケットは `_f<フレーム>` で終わるので衝突しない）。
+  判定は純関数 `isSketchId` 1 本で、サーバは中身を読まない
+- README の文面は Studio が組み、サーバは日時を足して置くだけ
+- 一覧（Tickets.elm）の各行に「ラフ比較」/「遊んで」の印。依頼文は印で手がかりを出し分ける
+
+### 確かめ方（Studio を開き直してから）
+
+1. 右上「ラフと見比べ」→ 絵とラフを 1 枚ずつ選ぶ → 「重ねる」で透過を動かす
+2. ラフのマスを 1 つ押す（赤枠 + 「左から N・上から M マス目」）→ ひとことを書いて
+   「やること一覧へ並べる」
+3. ホームの「🎫 違和感チケット」に「ラフ比較」の印つきで増える
+4. アトリエのラフ描きで層ボタンを切り替え、奥に塗って主役へ戻すと薄く透けること
+
+## （旧）ラフ比較の窓 = 第 1 段（2026-08-12 深夜）
 
 人と決めたこと: **重ねる相手は人が選ぶ**（生成された絵に由来が書かれていないので、
 自動の紐づけは後回し。engine 側の相談はしない）／**第一弾は重ねて見るだけ**

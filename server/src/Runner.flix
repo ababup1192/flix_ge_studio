@@ -1,5 +1,5 @@
 // Runner — Studio から make を安全に走らせる係。
-// 走らせられる make 対象は白名前簿の中だけ。同時に走るのは 1 本 (重ねては 409 で断る)。
+// 走らせられる make 対象は許可リストの中だけ。同時に走るのは 1 本 (重ねては 409 で断る)。
 // ログは最新の 1 回ぶんを尻尾 500 行まで覚え、GET /runner/log で配る。
 // 焼き (bake) だけは make の代わりに「走行中のゲームの命令口 (POST /bake)」へ頼む道もある
 // (launchRemoteBake)。走行権・ログ・終了記録は make と同じ器なので、外から見れば同じ 1 回の bake。
@@ -38,16 +38,16 @@ mod Runner {
 
     // ── 純粋なルール (ここだけテストする) ──────────────────
 
-    /// 走らせてよい make 対象の白名前簿。ここに無い対象は 400 で断る。
+    /// 走らせてよい make 対象の許可リスト。ここに無い対象は 400 で断る。
     pub def isAllowedTarget(target: String): Bool =
         Set.memberOf(target, Set#{"bake", "gallery-prologue", "gallery-sounds", "atelier-preview"})
 
-    /// 「焼く」の白名前簿 (この順で配る)。atelier-preview は試作の窓口なのでここには入れない。
+    /// 「焼く」の許可リスト (この順で配る)。atelier-preview は試作の窓口なのでここには入れない。
     pub def bakeTargets(): List[String] =
         "bake" :: "gallery-prologue" :: "gallery-sounds" :: Nil
 
     /// Makefile の本文に実在する焼き対象だけを選ぶ (純粋)。行頭が「<対象>:」の行が
-    /// あれば実在とみなす (白名前簿の中しか見ないので安い走査で足りる)。
+    /// あれば実在とみなす (許可リストの中しか見ないので安い走査で足りる)。
     /// 本文が空 (Makefile が無い・読めない) は "bake" だけに倒す (fail-open)。
     pub def targetsFromMakefileText(text: String): List[String] =
         if (text == "")
@@ -252,10 +252,10 @@ mod Runner {
         pump(state, reader);
         proc.waitFor()
 
-    /// 窓なしの仕事の見張り番: 「出力が 10 分止まったら」打ち切る — 固まったコンパイルが
+    /// ウィンドウなしの仕事の見張り番: 「出力が 10 分止まったら」打ち切る — 固まったコンパイルが
     /// 走行権を握ったまま黙り込むのを防ぐ。合計時間では見ない — 遅い機械の初回コンパイルや
     /// 大きな焼きは 10 分を超えても、喋り続けている限り正当な仕事だから。
-    /// 実機再生 (窓あり) には付けない — 遊んでいる時間はいくら長くてもよい。
+    /// 実機再生 (ウィンドウあり) には付けない — 遊んでいる時間はいくら長くてもよい。
     def watchdog(state: State, proc: Process): Unit \ IO =
         stampOutput(state);
         let executor = Executors.newSingleThreadExecutor();

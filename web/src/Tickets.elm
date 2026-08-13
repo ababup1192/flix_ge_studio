@@ -12,7 +12,7 @@ module Tickets exposing
     , view
     )
 
-{-| 違和感チケット — ゲーム内で切った注釈(debug/annotations/)に一言を添えて AI に運ぶ窓。
+{-| 違和感チケット — ゲーム内で切った注釈(debug/annotations/)に一言を添えて AI に運ぶパネル。
 
 チケットの中身(world.json 等)は解釈しない。読むのはタイトルと一言だけで、あとはパスを運ぶ。
 サーバ往復は Main の仕事(Out で頼む)。
@@ -27,12 +27,15 @@ import Json.Decode as D
 import Url
 
 
-{-| チケット 1 枚。title はエンジンが自動で付けた見出し、comment は人の一言(未記入は "")。 -}
+{-| チケット 1 枚。title は自動で付いた見出し、comment は人の一言(未記入は "")。
+isSketch はラフと見比べて気づいた物(遊んでいて気づいた物と手がかりが違う)。
+-}
 type alias Ticket =
     { id : String
     , title : String
     , comment : String
     , hasShot : Bool
+    , isSketch : Bool
     }
 
 
@@ -127,7 +130,10 @@ update msg model =
 
             else
                 ( { model | copiedId = Just ticket.id }
-                , OutCopyPrompt (buildTicketPrompt { id = ticket.id, comment = comment })
+                , OutCopyPrompt
+                    (buildTicketPrompt
+                        { id = ticket.id, comment = comment, isSketch = ticket.isSketch }
+                    )
                 )
 
         ArchiveClicked ticket ->
@@ -148,27 +154,47 @@ commentOf model ticket =
 
 {-| AI へ渡す依頼文。一言とチケット内ファイルの場所だけを運び、
 直し先(コードか Doc か)の判断は AI に委ねる。
+
+手がかりは切った場所で変わる — 遊んでいて切った物にはその瞬間のゲーム状態が付き、
+ラフと見比べて切った物には見比べた 2 枚の置き場が付く。
+
 -}
-buildTicketPrompt : { id : String, comment : String } -> String
+buildTicketPrompt : { id : String, comment : String, isSketch : Bool } -> String
 buildTicketPrompt info =
     let
         dir =
             "debug/annotations/" ++ info.id
+
+        ( lead, clues ) =
+            if info.isSketch then
+                ( "【見た目の直し】生成された絵をラフと見比べて気になった所があります。"
+                , [ "- " ++ dir ++ "/README.md(見比べた 2 枚の置き場と、指したマス)"
+                  , "- " ++ dir ++ "/screenshot.png(見比べていた生成された絵)"
+                  ]
+                )
+
+            else
+                ( "【違和感の直し】遊んでいて気になった所があります。"
+                , [ "- " ++ dir ++ "/README.md(囲った場所と、そこに描かれていた物の一覧)"
+                  , "- " ++ dir ++ "/highlighted.png(気になる場所を赤枠で囲ったスクショ)"
+                  , "- " ++ dir ++ "/world.json(その瞬間のゲーム状態のダンプ)"
+                  ]
+                )
     in
     String.join "\n"
-        [ "【違和感の直し】遊んでいて気になった所があります。"
-        , ""
-        , "ひとこと: " ++ info.comment
-        , ""
-        , "手がかり(まずこれを開いてください。無い物は飛ばして構いません):"
-        , "- " ++ dir ++ "/README.md(囲った場所と、そこに描かれていた物の一覧)"
-        , "- " ++ dir ++ "/highlighted.png(気になる場所を赤枠で囲ったスクショ)"
-        , "- " ++ dir ++ "/world.json(その瞬間のゲーム状態のダンプ)"
-        , ""
-        , "直し先はあなたが選んでください(コードか Doc か、正しい層を)。"
-        , "見た目や数値の調整なら Doc、ルールや生成の変更ならコードです。"
-        , "直したら make check と make test を通してください。"
-        ]
+        ([ lead
+         , ""
+         , "ひとこと: " ++ info.comment
+         , ""
+         , "手がかり(まずこれを開いてください。無い物は飛ばして構いません):"
+         ]
+            ++ clues
+            ++ [ ""
+               , "直し先はあなたが選んでください(コードか Doc か、正しい層を)。"
+               , "見た目や数値の調整なら Doc、ルールや生成の変更ならコードです。"
+               , "直したら make check と make test を通してください。"
+               ]
+        )
 
 
 
@@ -203,11 +229,13 @@ listDecoder =
 
 ticketDecoder : D.Decoder Ticket
 ticketDecoder =
-    D.map4 Ticket
+    D.map5 Ticket
         (D.field "id" D.string)
         (D.field "title" D.string)
         (D.oneOf [ D.field "comment" D.string, D.succeed "" ])
         (D.oneOf [ D.field "hasShot" D.bool, D.succeed False ])
+        -- 印を持たない古いサーバでは、全部「遊んでいて気づいた物」として扱う
+        (D.oneOf [ D.field "kind" D.string |> D.map (\kind -> kind == "sketch"), D.succeed False ])
 
 
 
@@ -248,8 +276,11 @@ viewTicket ctx model ticket =
         [ viewShot ctx ticket
         , div [ HA.class "min-w-0 flex-1" ]
             [ -- 見出しは「どこの注釈か」と「いつ切ったか」の 2 行に分けて全文を見せる
-              div [ HA.class "truncate text-xs font-semibold text-ink", HA.title ticket.title ]
-                [ text (titleLines ticket.title).head ]
+              div [ HA.class "flex min-w-0 items-baseline gap-1.5" ]
+                [ viewMark ticket
+                , div [ HA.class "min-w-0 truncate text-xs font-semibold text-ink", HA.title ticket.title ]
+                    [ text (titleLines ticket.title).head ]
+                ]
             , case (titleLines ticket.title).stamp of
                 Nothing ->
                     text ""
@@ -288,6 +319,26 @@ viewTicket ctx model ticket =
                 ]
             ]
         ]
+
+
+{-| どこで気づいたかの印。一覧に 2 種類が混ざるので、開く手がかりが違う事が
+一目で分かるようにする。
+-}
+viewMark : Ticket -> Html Msg
+viewMark ticket =
+    if ticket.isSketch then
+        span
+            [ HA.class "ticket-mark shrink-0 rounded-sm bg-accent/20 px-1 text-[10px] text-ink-soft"
+            , HA.title "ラフと見比べて気づいた事"
+            ]
+            [ text "ラフ比較" ]
+
+    else
+        span
+            [ HA.class "ticket-mark shrink-0 rounded-sm bg-white/10 px-1 text-[10px] text-ink-faint"
+            , HA.title "遊んでいて気づいた事"
+            ]
+            [ text "遊んで" ]
 
 
 {-| チケットのスクショ(赤枠つき)。無いチケットは絵の枠ごと出さない。クリックで拡大。 -}

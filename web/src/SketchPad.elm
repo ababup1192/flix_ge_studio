@@ -2,17 +2,24 @@ module SketchPad exposing
     ( Camera(..)
     , Edge(..)
     , Entry
+    , LayerSheet
     , Model
     , Msg(..)
     , Out(..)
     , Sketch
+    , Snapshot
     , Tool(..)
+    , activeRows
     , cameraLabel
     , decode
     , encode
+    , flatRows
     , gotList
     , init
+    , isOpen
+    , layerRows
     , listDecoder
+    , maxLayers
     , nextChar
     , presets
     , promptSection
@@ -25,6 +32,7 @@ module SketchPad exposing
     , update
     , view
     , viewInline
+    , viewWindow
     )
 
 {-| 画面のラフ塗り。「大体ここ壁・ここに人」をマス目に雑に塗って、
@@ -34,6 +42,9 @@ AI への依頼文に文字グリッドとして自動で挟むための下書�
 塗りの道具(ペン・バケツ・消しゴム)は PixelEditor の純関数を借りる。
 ラベル(何色が何を表すか)は人間が名前・色・ひとことで自由に増やせて、
 1 文字コードは Studio が自動で割り振る(人間には見せない)。
+
+絵は最大 3 枚のレイヤーに分けて塗る。最初は 1 枚で、増やすかどうかは人が決める。
+塗る先は選んでいる 1 枚だけで、ほかのレイヤーは薄く透けて見える。
 
 依頼文への差し込みは promptSection / spliceInto の純関数で行い、
 描き直せば導出し直すだけで追随する(失効の管理を持たない)。
@@ -103,6 +114,26 @@ type Edge
     | TopLeftEdge
 
 
+{-| レイヤー 1 枚。hidden は縮めて見えなくなった塗りの退避。
+名前は人が自由に打ち替えるので、これを鍵にして探さない。
+-}
+type alias LayerSheet =
+    { name : String
+    , rows : List String
+    , hidden : List String
+    , visible : Bool
+    }
+
+
+{-| 戻す 1 本ぶんの控え。 -}
+type alias Snapshot =
+    { size : { w : Int, h : Int }
+    , legend : List Entry
+    , layers : List LayerSheet
+    , layerIndex : Int
+    }
+
+
 {-| ラフ 1 本の既存バージョン一覧(GET /sketch/list の 1 要素)。新しい順とは
 限らない — 使うのは最大値だけなので並びは問わない。
 -}
@@ -128,7 +159,6 @@ type alias Model =
     , preset : String
     , size : { w : Int, h : Int }
     , legend : List Entry
-    , rows : List String
     , note : String
 
     -- 保存名(拡張子抜き)。空のまま保存したら "screen" に倒す
@@ -155,10 +185,11 @@ type alias Model =
     , fidelity : Int
 
     -- 戻す用のスナップショット(一筆・1 リサイズで 1 本・直近 20 本まで)。
-    -- rows だけ戻すとサイズと食い違うし、legend を外すとラベル削除を戻した
+    -- 絵だけ戻すとサイズと食い違うし、legend を外すとラベル削除を戻した
     -- とき凡例の無い文字がグリッドに残るし、hidden を外すと左シフトの undo 後に
-    -- 広げたとき退避の塗りが列ずれで復活する。だから必ず 4 つ対で戻す
-    , undo : List { size : { w : Int, h : Int }, rows : List String, legend : List Entry, hidden : List String }
+    -- 広げたとき退避の塗りが列ずれで復活する。layerIndex まで戻すのは、
+    -- レイヤーを消した操作を戻したとき選び先が別のレイヤーへずれないため
+    , undo : List Snapshot
     , save : SaveState
     , camera : Camera
 
@@ -170,9 +201,15 @@ type alias Model =
     -- カメラの絵柄一覧を開いているか(普段はチップ 1 枚に畳む)
     , cameraOpen : Bool
 
-    -- 縮めて見えなくなった塗りの退避(これまで塗った全域)。
-    -- 保存には含めない — 保存物 = 見えている絵、という約束を守るため
-    , hidden : List String
+    -- レイヤーを奥から手前の順に。ここが絵の唯一の正本 — 選んでいる 1 枚だけ
+    -- 別の場所へ写すと、どちらが正しいかで必ず食い違う。
+    -- 各 hidden(縮めて見えなくなった塗りの退避)は保存に含めない —
+    -- 保存物 = 見えている絵、という約束を守るため
+    , layers : List LayerSheet
+
+    -- いま塗っているレイヤーの位置(layers の何番目か)。
+    -- 範囲外を指しても絵は失わない(読みは空きに倒れ、塗りは捨てられる)
+    , layerIndex : Int
 
     -- グリッドのつまみをドラッグ中だけ Just。親はこの間だけグローバル mousemove/up を購読する。
     -- 開始時の状態を丸ごと持つのは、寸法を毎回ここから計算し直すため —
@@ -183,8 +220,7 @@ type alias Model =
             { edge : Edge
             , start : { x : Float, y : Float }
             , startSize : { w : Int, h : Int }
-            , startRows : List String
-            , startHidden : List String
+            , startLayers : List LayerSheet
             }
     }
 
@@ -215,6 +251,13 @@ type Msg
     | ResizeEnded
     | CameraToggled
     | CameraPicked Camera
+    | LayerPicked Int
+    | LayerAdded
+    | LayerDeleted
+    | LayerRenamed Int String
+    | LayerVisibilityToggled Int
+    | LayerRaised
+    | LayerLowered
     | UndoClicked
     | NoteEdited String
     | NameEdited String
@@ -247,6 +290,12 @@ defaultCellPx =
     20
 
 
+{-| レイヤーの上限。これ以上は下敷きが濁って、どこに塗っているのか読めなくなる。 -}
+maxLayers : Int
+maxLayers =
+    3
+
+
 init : Model
 init =
     fromPreset "map"
@@ -266,7 +315,6 @@ fromPreset presetId =
     , preset = preset.id
     , size = preset.size
     , legend = preset.legend
-    , rows = List.repeat preset.size.h (String.repeat preset.size.w (String.fromChar emptyChar))
     , note = ""
     , name = ""
     , tool = Pen
@@ -280,10 +328,35 @@ fromPreset presetId =
     , save = SaveIdle
     , camera = preset.camera
     , cameraOpen = False
-    , hidden = []
+    , layers = [ blankLayer 1 preset.size ]
+    , layerIndex = 0
     , resize = Nothing
     , sketches = []
     }
+
+
+{-| 全部空きの絵 1 枚。 -}
+blankRows : { w : Int, h : Int } -> List String
+blankRows size =
+    List.repeat size.h (String.repeat size.w (String.fromChar emptyChar))
+
+
+{-| 何も塗っていないレイヤー 1 枚。 -}
+blankLayer : Int -> { w : Int, h : Int } -> LayerSheet
+blankLayer number size =
+    { name = defaultLayerName number
+    , rows = blankRows size
+    , hidden = []
+    , visible = True
+    }
+
+
+{-| 増やしたレイヤーに最初に付く名前。人がすぐ打ち替えられるので、
+中身を当てにいかず番号だけにする。
+-}
+defaultLayerName : Int -> String
+defaultLayerName number =
+    "レイヤー" ++ String.fromInt number
 
 
 
@@ -431,6 +504,115 @@ cameraFromId id =
 
 
 
+-- レイヤー
+
+
+{-| 番号で 1 枚を取り出す。範囲外なら空きの 1 枚 — 呼び側で
+Maybe を開かずに済ませ、番号がずれても絵を消さない。
+-}
+sheetAt : Int -> Model -> LayerSheet
+sheetAt index model =
+    model.layers
+        |> List.drop index
+        |> List.head
+        |> Maybe.withDefault (blankLayer 1 model.size)
+
+
+{-| レイヤー 1 枚の見えている絵。 -}
+layerRows : Int -> Model -> List String
+layerRows index model =
+    (sheetAt index model).rows
+
+
+{-| いま塗っているレイヤーの絵。 -}
+activeRows : Model -> List String
+activeRows model =
+    layerRows model.layerIndex model
+
+
+{-| いま塗っているレイヤーだけを書き換える。 -}
+mapActive : (LayerSheet -> LayerSheet) -> Model -> Model
+mapActive f model =
+    { model
+        | layers =
+            model.layers
+                |> List.indexedMap
+                    (\index sheet ->
+                        if index == model.layerIndex then
+                            f sheet
+
+                        else
+                            sheet
+                    )
+    }
+
+
+{-| いま塗っているレイヤーの絵を差し替える。 -}
+setActiveRows : List String -> Model -> Model
+setActiveRows rows model =
+    mapActive (\sheet -> { sheet | rows = rows }) model
+
+
+{-| 表示にしているレイヤーだけを奥から手前の順に。 -}
+shownLayers : Model -> List LayerSheet
+shownLayers model =
+    model.layers |> List.filter .visible
+
+
+{-| 表示にしている全レイヤーを 1 枚に畳んだ絵(手前のレイヤーが勝つ)。 -}
+flatRows : Model -> List String
+flatRows model =
+    shownLayers model
+        |> List.map .rows
+        |> List.foldl (mergeRows model.size) (blankRows model.size)
+
+
+{-| 何か塗ってあるか。 -}
+isPainted : LayerSheet -> Bool
+isPainted sheet =
+    sheet.rows |> String.concat |> String.any (\c -> c /= emptyChar)
+
+
+{-| 依頼文とレイヤーパネルで数える「塗ったマスの数」。 -}
+paintedCells : LayerSheet -> Int
+paintedCells sheet =
+    sheet.rows
+        |> String.concat
+        |> String.toList
+        |> List.filter (\c -> c /= emptyChar)
+        |> List.length
+
+
+{-| 上の絵を下の絵へ重ねる(上が空きのマスだけ下が見える)。 -}
+mergeRows : { w : Int, h : Int } -> List String -> List String -> List String
+mergeRows size upper lower =
+    List.map2
+        (\upperRow lowerRow ->
+            List.map2
+                (\up down ->
+                    if up == emptyChar then
+                        down
+
+                    else
+                        up
+                )
+                (String.toList upperRow)
+                (String.toList lowerRow)
+                |> String.fromList
+        )
+        (fitRows size upper)
+        (fitRows size lower)
+
+
+{-| 依頼文と保存でレイヤーごとに書き分けるか。表示していて塗ってあるものが
+2 枚以上あるときだけ — 1 枚しか中身が無いなら見出しは邪魔なだけになる。
+-}
+isLayered : Model -> Bool
+isLayered model =
+    (shownLayers model |> List.filter isPainted |> List.length) > 1
+
+
+
 -- 純ロジック(コード割り振り・JSON・依頼文)
 
 
@@ -445,20 +627,52 @@ nextChar used =
         |> List.head
 
 
-{-| sketch.json の中身。desc が空のラベルは desc ごと省く。 -}
+{-| sketch.json の中身。desc が空のラベルは desc ごと省く。
+
+rows はレイヤーを畳んだ 1 枚。レイヤーを知らない読み手(比較の窓・古い Studio)が
+これだけで絵を出せるようにするため、レイヤーが何枚あっても必ず書く。
+layers は 2 枚以上あるときだけ足す — 1 枚で描いたラフの保存物を、
+レイヤーの入れ物の分だけ膨らませない。
+
+-}
 encode : Model -> String
 encode model =
     E.encode 2
         (E.object
-            [ ( "version", E.int 1 )
-            , ( "kind", E.string "sketch" )
-            , ( "preset", E.string model.preset )
-            , ( "size", E.object [ ( "w", E.int model.size.w ), ( "h", E.int model.size.h ) ] )
-            , ( "camera", E.string (cameraId model.camera) )
-            , ( "fidelity", E.int model.fidelity )
-            , ( "legend", E.list encodeEntry model.legend )
-            , ( "rows", E.list E.string model.rows )
-            , ( "note", E.string model.note )
+            (List.concat
+                [ [ ( "version", E.int 1 )
+                  , ( "kind", E.string "sketch" )
+                  , ( "preset", E.string model.preset )
+                  , ( "size", E.object [ ( "w", E.int model.size.w ), ( "h", E.int model.size.h ) ] )
+                  , ( "camera", E.string (cameraId model.camera) )
+                  , ( "fidelity", E.int model.fidelity )
+                  , ( "legend", E.list encodeEntry model.legend )
+                  , ( "rows", E.list E.string (flatRows model) )
+                  ]
+                , if List.length model.layers > 1 then
+                    [ ( "layers", E.list encodeLayer model.layers ) ]
+
+                  else
+                    []
+                , [ ( "note", E.string model.note ) ]
+                ]
+            )
+        )
+
+
+{-| レイヤー 1 枚。visible は隠したときだけ書く(既定は表示)。 -}
+encodeLayer : LayerSheet -> E.Value
+encodeLayer sheet =
+    E.object
+        (List.concat
+            [ [ ( "name", E.string sheet.name )
+              , ( "rows", E.list E.string sheet.rows )
+              ]
+            , if sheet.visible then
+                []
+
+              else
+                [ ( "visible", E.bool False ) ]
             ]
         )
 
@@ -489,11 +703,26 @@ decode text =
 
 sketchDecoder : D.Decoder Model
 sketchDecoder =
-    D.map7
-        (\preset size cameraText fidelity legend rows note ->
+    D.map8
+        (\preset size cameraText fidelity legend rows note layers ->
             let
                 base =
                     fromPreset preset
+
+                sheets =
+                    if List.isEmpty layers then
+                        -- レイヤーの欄が無いラフは、畳んだ絵をそのまま 1 枚として読む。
+                        -- ここでレイヤーに分け直そうとすると、どのマスがどのレイヤーかは
+                        -- 元の絵に書かれていないので当て推量になる
+                        [ { name = defaultLayerName 1, rows = fitRows size rows, hidden = [], visible = True } ]
+
+                    else
+                        layers
+                            |> List.take maxLayers
+                            |> List.indexedMap
+                                (\index sheet ->
+                                    { sheet | rows = fitRows size sheet.rows, name = orName (index + 1) sheet.name }
+                                )
             in
             { base
                 | size = size
@@ -511,7 +740,11 @@ sketchDecoder =
                     else
                         1
                 , legend = legend
-                , rows = rows
+                , layers = sheets
+
+                -- 開いた直後に選ぶのは一番手前(パネルの一番上)。
+                -- イラストソフトと同じで、続きを描く場所として当たりやすい
+                , layerIndex = List.length sheets - 1
                 , note = note
                 , active = legend |> List.head |> Maybe.map .char |> Maybe.withDefault emptyChar
             }
@@ -523,6 +756,70 @@ sketchDecoder =
         (D.field "legend" (D.list entryDecoder))
         (D.field "rows" (D.list D.string))
         (D.field "note" D.string)
+        (D.oneOf [ D.field "layers" (D.list layerSheetDecoder), D.succeed [] ])
+
+
+{-| layers の 1 要素。名前の欄が無い形(id で奥・主役・手前を指していた頃のラフ)も
+読めるようにしておく — 読めないと絵が 1 枚に潰れて、分けて描いた形が失われる。
+-}
+layerSheetDecoder : D.Decoder LayerSheet
+layerSheetDecoder =
+    D.map3
+        (\name sheetRows visible ->
+            { name = name, rows = sheetRows, hidden = [], visible = visible }
+        )
+        (D.oneOf
+            [ D.field "name" D.string
+            , D.field "id" D.string |> D.map nameFromLayerId
+            , D.succeed ""
+            ]
+        )
+        (D.field "rows" (D.list D.string))
+        (D.oneOf [ D.field "visible" D.bool, D.succeed True ])
+
+
+{-| 名前の欄が空なら番号の名前に倒す。 -}
+orName : Int -> String -> String
+orName number name =
+    if String.isEmpty (String.trim name) then
+        defaultLayerName number
+
+    else
+        name
+
+
+{-| id で重なりを指していた頃の呼び名。知らない id は空(番号の名前に倒れる)。 -}
+nameFromLayerId : String -> String
+nameFromLayerId id =
+    case id of
+        "back" ->
+            "奥"
+
+        "main" ->
+            "主役"
+
+        "front" ->
+            "手前"
+
+        _ ->
+            ""
+
+
+{-| 絵 1 枚を寸法どおりの形に整える。レイヤーごとに丈がまちまちだと、
+重ねたときや切り出したときに行がずれて別の絵になる。
+-}
+fitRows : { w : Int, h : Int } -> List String -> List String
+fitRows size rows =
+    List.range 0 (size.h - 1)
+        |> List.map
+            (\y ->
+                rows
+                    |> List.drop y
+                    |> List.head
+                    |> Maybe.withDefault ""
+                    |> String.padRight size.w emptyChar
+                    |> String.left size.w
+            )
 
 
 {-| GET /sketch/list の "sketches" を読む。ok や個々の要素の欠けた欄には
@@ -659,12 +956,17 @@ safeName raw =
 {-| 依頼文に挟む「## 画面のラフ」の一節。何も塗っておらず補足も空なら
 Nothing(= 描かなければ依頼文は今まで通り)。
 凡例は塗りに使われているラベルだけ載せる(使っていない色で AI を迷わせない)。
+
+1 枚で描いたラフはマス目を 1 枚だけ書く。レイヤーに分けて描いたときは
+レイヤーごとに 1 枚ずつ書く — 畳んで注記だけにすると、手前の物に隠れた奥の形が
+文字グリッドから消えてしまう。
+
 -}
 promptSection : Model -> Maybe String
 promptSection model =
     let
         usedChars =
-            model.rows |> String.concat |> String.toList
+            flatRows model |> String.concat |> String.toList
 
         usedLegend =
             model.legend |> List.filter (\entry -> List.member entry.char usedChars)
@@ -689,6 +991,17 @@ promptSection model =
 
                     written ->
                         [ "補足: " ++ written ]
+
+            gridLines =
+                if isLayered model then
+                    "レイヤー: あとに書いたものほど手前に重なります。レイヤーごとに 1 枚ずつ書きます。"
+                        :: (shownLayers model
+                                |> List.filter isPainted
+                                |> List.concatMap (\sheet -> ("### " ++ sheet.name) :: sheet.rows)
+                           )
+
+                else
+                    flatRows model
         in
         Just
             (String.join "\n"
@@ -696,7 +1009,7 @@ promptSection model =
                     [ [ "## " ++ sketchTitle model ++ "（カメラ: " ++ cameraLabel model.camera ++ "、" ++ String.fromInt model.size.w ++ "x" ++ String.fromInt model.size.h ++ "、再現度: " ++ fidelityLabel model.fidelity ++ "、1文字=" ++ cellWord model ++ "。塗りから自動生成）"
                       , "凡例: " ++ legendLine
                       ]
-                    , model.rows
+                    , gridLines
                     , noteLines
                     , [ "凡例のかっこ内は意図です。" ++ fidelityClause model.fidelity
                       , "原本: " ++ sketchPath model
@@ -883,8 +1196,9 @@ update msg model =
                     in
                     ( { model
                         | legend = remaining
-                        , rows = List.map erase model.rows
-                        , hidden = List.map erase model.hidden
+                        , layers =
+                            model.layers
+                                |> List.map (\sheet -> { sheet | rows = List.map erase sheet.rows, hidden = List.map erase sheet.hidden })
                         , editing = Nothing
                         , active =
                             if model.active == char then
@@ -919,17 +1233,17 @@ update msg model =
                     next =
                         case model.tool of
                             Bucket ->
-                                floodAt brush point model.rows
+                                floodAt brush point (activeRows model)
 
                             _ ->
-                                paintAt brush point model.rows
+                                paintAt brush point (activeRows model)
                 in
-                ( { model
-                    | rows = next
-                    , stroke = model.tool /= Bucket
-                    , undo = snapshot model :: List.take 19 model.undo
-                    , save = SaveIdle
-                  }
+                ( setActiveRows next
+                    { model
+                        | stroke = model.tool /= Bucket
+                        , undo = snapshot model :: List.take 19 model.undo
+                        , save = SaveIdle
+                    }
                 , OutNone
                 )
 
@@ -940,7 +1254,7 @@ update msg model =
 
                 Nothing ->
                     if model.stroke then
-                        ( { model | rows = paintAt (brushChar model) point model.rows }, OutNone )
+                        ( setActiveRows (paintAt (brushChar model) point (activeRows model)) model, OutNone )
 
                     else
                         ( model, OutNone )
@@ -948,13 +1262,11 @@ update msg model =
         StrokeEnded ->
             case model.shape of
                 Just going ->
-                    ( { model
-                        | rows =
-                            shapeCells model.tool going.start going.current
-                                |> List.foldl (paintAt (brushChar model)) model.rows
-                        , shape = Nothing
-                        , stroke = False
-                      }
+                    ( setActiveRows
+                        (shapeCells model.tool going.start going.current
+                            |> List.foldl (paintAt (brushChar model)) (activeRows model)
+                        )
+                        { model | shape = Nothing, stroke = False }
                     , OutNone
                     )
 
@@ -968,8 +1280,7 @@ update msg model =
                         { edge = edge
                         , start = point
                         , startSize = model.size
-                        , startRows = model.rows
-                        , startHidden = model.hidden
+                        , startLayers = model.layers
                         }
               }
             , OutNone
@@ -1027,11 +1338,7 @@ update msg model =
                         -- 同じドラッグ内で戻しても復元できない
                         ( applySize anchor
                             newSize
-                            { model
-                                | size = going.startSize
-                                , rows = going.startRows
-                                , hidden = going.startHidden
-                            }
+                            { model | size = going.startSize, layers = going.startLayers }
                         , OutNone
                         )
 
@@ -1049,9 +1356,9 @@ update msg model =
                             | resize = Nothing
                             , undo =
                                 { size = going.startSize
-                                , rows = going.startRows
                                 , legend = model.legend
-                                , hidden = going.startHidden
+                                , layers = going.startLayers
+                                , layerIndex = model.layerIndex
                                 }
                                     :: List.take 19 model.undo
                             , save = SaveIdle
@@ -1065,14 +1372,96 @@ update msg model =
         CameraPicked camera ->
             ( { model | camera = camera, cameraOpen = False, save = SaveIdle }, OutNone )
 
+        LayerPicked index ->
+            -- 絵は 1 マスも変わらないので save には触らない
+            -- (保存済みの表示が、塗る場所を選び直しただけで消えると戸惑う)
+            ( { model | layerIndex = clamp 0 (List.length model.layers - 1) index, editing = Nothing }, OutNone )
+
+        LayerAdded ->
+            if List.length model.layers >= maxLayers then
+                ( model, OutToast "レイヤーはこれ以上増やせません" )
+
+            else
+                -- 足したレイヤーは一番手前に置き、そのまま選ぶ —
+                -- 増やす動機はたいてい「この上に描き足す」ため
+                ( { model
+                    | layers = model.layers ++ [ blankLayer (List.length model.layers + 1) model.size ]
+                    , layerIndex = List.length model.layers
+                    , undo = snapshot model :: List.take 19 model.undo
+                    , save = SaveIdle
+                  }
+                , OutNone
+                )
+
+        LayerDeleted ->
+            if List.length model.layers <= 1 then
+                ( model, OutToast "最後の 1 枚は削除できません" )
+
+            else
+                let
+                    remaining =
+                        model.layers
+                            |> List.indexedMap Tuple.pair
+                            |> List.filter (\( index, _ ) -> index /= model.layerIndex)
+                            |> List.map Tuple.second
+                in
+                ( { model
+                    | layers = remaining
+                    , layerIndex = clamp 0 (List.length remaining - 1) model.layerIndex
+                    , undo = snapshot model :: List.take 19 model.undo
+                    , save = SaveIdle
+                  }
+                , OutNone
+                )
+
+        LayerRenamed index name ->
+            ( { model
+                | layers =
+                    model.layers
+                        |> List.indexedMap
+                            (\at sheet ->
+                                if at == index then
+                                    { sheet | name = name }
+
+                                else
+                                    sheet
+                            )
+                , save = SaveIdle
+              }
+            , OutNone
+            )
+
+        LayerVisibilityToggled index ->
+            ( { model
+                | layers =
+                    model.layers
+                        |> List.indexedMap
+                            (\at sheet ->
+                                if at == index then
+                                    { sheet | visible = not sheet.visible }
+
+                                else
+                                    sheet
+                            )
+                , save = SaveIdle
+              }
+            , OutNone
+            )
+
+        LayerRaised ->
+            ( swapLayers model.layerIndex (model.layerIndex + 1) model, OutNone )
+
+        LayerLowered ->
+            ( swapLayers model.layerIndex (model.layerIndex - 1) model, OutNone )
+
         UndoClicked ->
             case model.undo of
                 previous :: rest ->
                     ( { model
                         | size = previous.size
-                        , rows = previous.rows
                         , legend = previous.legend
-                        , hidden = previous.hidden
+                        , layers = previous.layers
+                        , layerIndex = previous.layerIndex
                         , undo = rest
                         , save = SaveIdle
                       }
@@ -1115,6 +1504,35 @@ update msg model =
             ( { model | save = SaveFlying flying }, OutSave flying )
 
 
+{-| 2 枚の重なり順を入れ替え、選んだままにする。行き先が範囲外なら何もしない
+(端で押しても選び先だけ飛ぶ、を防ぐ)。
+-}
+swapLayers : Int -> Int -> Model -> Model
+swapLayers from to model =
+    if to < 0 || to >= List.length model.layers || from == to then
+        model
+
+    else
+        { model
+            | layers =
+                model.layers
+                    |> List.indexedMap
+                        (\index sheet ->
+                            if index == from then
+                                sheetAt to model
+
+                            else if index == to then
+                                sheetAt from model
+
+                            else
+                                sheet
+                        )
+            , layerIndex = to
+            , undo = snapshot model :: List.take 19 model.undo
+            , save = SaveIdle
+        }
+
+
 {-| つまみが左・上を動かすか(動かすなら絵ごと座標をずらす)。 -}
 edgeAnchor : Edge -> { left : Bool, top : Bool }
 edgeAnchor edge =
@@ -1134,13 +1552,25 @@ hidden の古い塗りで勝手に復活させない。
 -}
 applySize : { left : Bool, top : Bool } -> { w : Int, h : Int } -> Model -> Model
 applySize anchor newSize model =
+    { model
+        | size = newSize
+
+        -- 全レイヤーを同じだけ切る・伸ばす。1 枚でも飛ばすと丈が食い違い、
+        -- 重ねたときに行がずれる
+        , layers = model.layers |> List.map (resizeSheet anchor model.size newSize)
+    }
+
+
+{-| 絵 1 枚の寸法替え。 -}
+resizeSheet : { left : Bool, top : Bool } -> { w : Int, h : Int } -> { w : Int, h : Int } -> LayerSheet -> LayerSheet
+resizeSheet anchor oldSize newSize sheet =
     let
         fullW =
-            max model.size.w
-                (model.hidden |> List.map String.length |> List.maximum |> Maybe.withDefault 0)
+            max oldSize.w
+                (sheet.hidden |> List.map String.length |> List.maximum |> Maybe.withDefault 0)
 
         fullH =
-            max model.size.h (List.length model.hidden)
+            max oldSize.h (List.length sheet.hidden)
 
         pad width row =
             String.padRight width emptyChar row
@@ -1154,23 +1584,23 @@ applySize anchor newSize model =
                     (\y ->
                         let
                             behind =
-                                pad fullW (rowAt y model.hidden |> Maybe.withDefault "")
+                                pad fullW (rowAt y sheet.hidden |> Maybe.withDefault "")
                         in
-                        case rowAt y model.rows of
+                        case rowAt y sheet.rows of
                             Just visible ->
-                                pad model.size.w visible
-                                    |> String.left model.size.w
-                                    |> (\front -> front ++ String.dropLeft model.size.w behind)
+                                pad oldSize.w visible
+                                    |> String.left oldSize.w
+                                    |> (\front -> front ++ String.dropLeft oldSize.w behind)
 
                             Nothing ->
                                 behind
                     )
 
         dW =
-            newSize.w - model.size.w
+            newSize.w - oldSize.w
 
         dH =
-            newSize.h - model.size.h
+            newSize.h - oldSize.h
 
         shiftRow row =
             if not anchor.left then
@@ -1213,13 +1643,17 @@ applySize anchor newSize model =
                             |> String.left newSize.w
                     )
     in
-    { model | size = newSize, rows = cut, hidden = shifted }
+    { sheet | rows = cut, hidden = shifted }
 
 
 {-| undo 1 本ぶんの控え。 -}
-snapshot : Model -> { size : { w : Int, h : Int }, rows : List String, legend : List Entry, hidden : List String }
+snapshot : Model -> Snapshot
 snapshot model =
-    { size = model.size, rows = model.rows, legend = model.legend, hidden = model.hidden }
+    { size = model.size
+    , legend = model.legend
+    , layers = model.layers
+    , layerIndex = model.layerIndex
+    }
 
 
 {-| 押してから離すまでで形を決める道具か。 -}
@@ -1279,7 +1713,7 @@ lineCells ( x0, y0 ) ( x1, y1 ) =
 
 
 {-| 2 点を対角とする四角の枠線のマス。中は塗らない —
-塗り潰しはバケツで一撫でできるので、塗り潰し版の道具を別に増やさない。
+塗り潰しはバケツで一撫でできるので、塗り潰し用の道具を別に増やさない。
 -}
 rectCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
 rectCells ( x0, y0 ) ( x1, y1 ) =
@@ -1494,14 +1928,28 @@ gotList sketches model =
 -- 表示
 
 
+{-| 窓が出ているか(呼び側が Esc の受け口を張るかの判断に使う)。 -}
+isOpen : Model -> Bool
+isOpen model =
+    model.open
+
+
 view : Model -> Html Msg
 view model =
     div [ HA.class "sketch-pad mb-4 rounded-lg border border-edge bg-panel" ]
-        (if model.open then
-            [ viewHeader model, viewBody model ]
+        (viewHeader model
+            :: (if model.open then
+                    [ viewWindow
+                        { title = "🎨 画面のラフを描く"
+                        , hint = "閉じても塗った絵は残ります"
+                        , onClose = Just ToggleOpen
+                        }
+                        (inlineParts model ++ [ viewSaveRow model ])
+                    ]
 
-         else
-            [ viewHeader model ]
+                else
+                    []
+               )
         )
 
 
@@ -1511,32 +1959,54 @@ viewHeader model =
         [ HA.class "sketch-toggle flex w-full cursor-pointer items-center gap-2 p-3 text-left text-xs font-semibold text-ink"
         , HE.onClick ToggleOpen
         ]
-        [ span []
-            [ text
-                (if model.open then
-                    "▾ 画面のラフを描く"
-
-                 else
-                    "▸ 画面のラフを描く"
-                )
-            ]
+        [ span [] [ text "🎨 画面のラフを描く" ]
         , span [ HA.class "text-[10px] font-normal text-ink-faint" ]
             [ text "任意 — 「大体ここに何がある」を塗って AI に伝える" ]
         ]
 
 
-viewBody : Model -> Html Msg
-viewBody model =
-    div [ HA.class "px-3 pb-3" ]
-        (inlineParts model ++ [ viewSaveRow model ])
+{-| 塗り場を浮かせる窓。中身の大きさで決まる幅(画面いっぱいには広げない)で、
+はみ出す分だけ窓の中が動く。
+
+暗幕を押しても閉じない — グリッドの外で指を離す操作が多い塗り場では、
+1 回の押し間違いで塗った絵ごと引っ込む事故になるため。
+
+onClose が Nothing の間は閉じられない(閉じると戻れなくなる仕事を
+窓の中で走らせている、と呼び側が判断したとき)。
+
+-}
+viewWindow : { title : String, hint : String, onClose : Maybe msg } -> List (Html msg) -> Html msg
+viewWindow window body =
+    div [ HA.class "sketch-window-layer fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" ]
+        [ div [ HA.class "sketch-window flex max-h-[92vh] max-w-[min(96vw,64rem)] flex-col rounded-lg border border-edge bg-panel shadow-2xl" ]
+            [ div [ HA.class "flex items-center gap-2 border-b border-edge px-3 py-2" ]
+                [ span [ HA.class "text-xs font-semibold text-ink" ] [ text window.title ]
+                , span [ HA.class "text-[10px] text-ink-faint" ] [ text window.hint ]
+                , span [ HA.class "flex-1" ] []
+                , case window.onClose of
+                    Just close ->
+                        button
+                            [ HA.class "sketch-window-close btn btn-mini"
+                            , HA.title "閉じる(Esc)"
+                            , HE.onClick close
+                            ]
+                            [ text "✕ 閉じる" ]
+
+                    Nothing ->
+                        button [ HA.class "sketch-window-close btn btn-mini", HA.disabled True ]
+                            [ text "✕ 閉じる" ]
+                ]
+            , div [ HA.class "min-h-0 flex-1 overflow-auto p-3" ] body
+            ]
+        ]
 
 
-{-| ヘッダも保存行も持たない埋め込み用の姿。保存先(プロジェクト)がまだ無い
-場所(新しいゲームのラフ札)に置くための形 — 保存は親の仕事になる。
+{-| 保存行を持たない埋め込み用の姿。保存先(プロジェクト)がまだ無い
+場所(新しいゲームのラフのカード)に置くための形 — 保存は親の仕事になる。
 -}
 viewInline : Model -> Html Msg
 viewInline model =
-    div [ HA.class "px-3 pb-3" ] (inlineParts model)
+    div [] (inlineParts model)
 
 
 inlineParts : Model -> List (Html Msg)
@@ -1548,7 +2018,10 @@ inlineParts model =
           ]
         , viewChipEditor model
         , [ viewTools model
-          , viewGridBlock model
+          , div [ HA.class "flex flex-wrap items-start gap-2" ]
+                [ viewGridBlock model
+                , viewLayerPanel model
+                ]
           , viewNote model
           ]
         ]
@@ -1902,6 +2375,156 @@ miniGrid attrs =
         (List.repeat 9 (div [ HA.class "h-1.5 w-1.5 rounded-[1px] bg-ink-soft/50" ] []))
 
 
+{-| レイヤーパネル。一番上の行が一番手前 — イラストソフトと同じ並びにして、
+どちらが前かを覚え直さずに済ませる(model.layers は奥から手前なので裏返す)。
+-}
+viewLayerPanel : Model -> Html Msg
+viewLayerPanel model =
+    let
+        count =
+            List.length model.layers
+    in
+    div [ HA.class "sketch-layers w-48 shrink-0 rounded border border-edge bg-black/20 p-1.5" ]
+        [ div [ HA.class "mb-1 flex items-center justify-between text-[10px] text-ink-faint" ]
+            [ span [] [ text "レイヤー" ]
+            , span [] [ text (String.fromInt count ++ " / " ++ String.fromInt maxLayers) ]
+            ]
+        , div [ HA.class "flex flex-col gap-0.5" ]
+            (model.layers
+                |> List.indexedMap (viewLayerRow model)
+                |> List.reverse
+            )
+        , div [ HA.class "mt-1.5 flex items-center gap-1" ]
+            [ button
+                [ HA.class "sketch-layer-add btn btn-mini"
+                , HA.title "レイヤーを 1 枚足す(一番手前に置きます)"
+                , HA.disabled (count >= maxLayers)
+                , HE.onClick LayerAdded
+                ]
+                [ text "＋ 追加" ]
+            , button
+                [ HA.class "sketch-layer-delete btn btn-ghost btn-mini"
+                , HA.title "選んでいるレイヤーを消す"
+                , HA.disabled (count <= 1)
+                , HE.onClick LayerDeleted
+                ]
+                [ text "削除" ]
+            , button
+                [ HA.class "sketch-layer-up btn btn-ghost btn-mini"
+                , HA.title "1 つ手前へ"
+                , HA.attribute "aria-label" "1 つ手前へ"
+                , HA.disabled (model.layerIndex >= count - 1)
+                , HE.onClick LayerRaised
+                ]
+                [ text "↑" ]
+            , button
+                [ HA.class "sketch-layer-down btn btn-ghost btn-mini"
+                , HA.title "1 つ奥へ"
+                , HA.attribute "aria-label" "1 つ奥へ"
+                , HA.disabled (model.layerIndex <= 0)
+                , HE.onClick LayerLowered
+                ]
+                [ text "↓" ]
+            ]
+        , div [ HA.class "mt-1 text-[9px] leading-snug text-ink-faint" ]
+            [ text "塗るのは選んだ 1 枚だけ。ほかは薄く見えます" ]
+        ]
+
+
+viewLayerRow : Model -> Int -> LayerSheet -> Html Msg
+viewLayerRow model index sheet =
+    let
+        chosen =
+            index == model.layerIndex
+
+        painted =
+            paintedCells sheet
+    in
+    div
+        [ HA.class
+            ("sketch-layer flex cursor-pointer items-center gap-1 rounded border p-1 "
+                ++ (if chosen then
+                        "border-accent bg-accent/15"
+
+                    else
+                        "border-transparent hover:bg-white/5"
+                   )
+            )
+        , HE.onClick (LayerPicked index)
+        ]
+        [ button
+            [ HA.class
+                ("sketch-layer-eye flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded "
+                    ++ (if sheet.visible then
+                            "text-ink-soft hover:text-ink"
+
+                        else
+                            "text-ink-faint"
+                       )
+                )
+            , HA.title
+                (if sheet.visible then
+                    "隠す(畳んだ絵にも入らなくなります)"
+
+                 else
+                    "また見せる"
+                )
+            , HA.attribute "aria-label" "表示・非表示"
+
+            -- 目だけ押したときに塗る先まで動かさない
+            , HE.stopPropagationOn "click" (D.succeed ( LayerVisibilityToggled index, True ))
+            ]
+            [ eyeGlyph sheet.visible ]
+        , Html.input
+            [ HA.class "sketch-layer-name field h-5 min-w-0 flex-1 px-1 text-[11px]"
+            , HA.value sheet.name
+            , HA.placeholder "名前"
+            , HE.onInput (LayerRenamed index)
+
+            -- 名前を打つ間は 1 文字ごとに選び直さない(入力の取り合いになる)
+            , HE.stopPropagationOn "click" (D.succeed ( LayerPicked index, True ))
+            ]
+            []
+        , span [ HA.class "shrink-0 text-[9px] text-ink-faint" ]
+            [ text
+                (if painted == 0 then
+                    "空"
+
+                 else
+                    String.fromInt painted
+                )
+            ]
+        ]
+
+
+{-| 目のしるし。閉じた目は斜線を足すだけにして、開いた目と形を揃える
+(別の絵にすると、並んだ行のどれが隠れているのか見比べにくい)。
+-}
+eyeGlyph : Bool -> Html msg
+eyeGlyph visible =
+    Svg.svg
+        [ SA.viewBox "0 0 16 16"
+        , SA.width "13"
+        , SA.height "13"
+        , SA.fill "none"
+        , SA.stroke "currentColor"
+        , SA.strokeWidth "1.3"
+        , SA.strokeLinecap "round"
+        , SA.strokeLinejoin "round"
+        ]
+        (List.concat
+            [ [ Svg.path [ SA.d "M1.5 8 C3.5 4.5 5.8 3 8 3 C10.2 3 12.5 4.5 14.5 8 C12.5 11.5 10.2 13 8 13 C5.8 13 3.5 11.5 1.5 8 Z" ] []
+              , Svg.circle [ SA.cx "8", SA.cy "8", SA.r "2" ] []
+              ]
+            , if visible then
+                []
+
+              else
+                [ Svg.line [ SA.x1 "2.5", SA.y1 "13.5", SA.x2 "13.5", SA.y2 "2.5" ] [] ]
+            ]
+        )
+
+
 {-| サイズバッジ + マスの大きさスライダー + グリッド + つまみ 6 つ。
 つまみはグリッドの外周に重ねる(マスの中に置くと塗りの mousedown と
 取り合いになる)。グリッドはスクロール箱に入れる — マスを大きくしたり
@@ -1909,7 +2532,7 @@ miniGrid attrs =
 -}
 viewGridBlock : Model -> Html Msg
 viewGridBlock model =
-    div []
+    div [ HA.class "min-w-0 flex-1" ]
         [ div [ HA.class "mb-1 flex flex-wrap items-center gap-3" ]
             [ span
                 [ HA.class
@@ -2027,22 +2650,38 @@ viewGrid model =
 
         previewFill =
             colorOf model.active
+
+        -- 選んでいない表示中のレイヤーを重なり順に畳んだ下敷き。
+        -- 塗る操作はここへ届かない
+        ghostRows =
+            model.layers
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( index, sheet ) -> index /= model.layerIndex && sheet.visible)
+                |> List.map (\( _, sheet ) -> sheet.rows)
+                |> List.foldl (mergeRows model.size) (blankRows model.size)
     in
     div [ HA.class "sketch-grid inline-block cursor-crosshair select-none border border-edge" ]
-        (model.rows
+        (List.map2
+            (\row ghostRow ->
+                List.map2 Tuple.pair (String.toList row) (String.toList ghostRow)
+            )
+            (fitRows model.size (activeRows model))
+            (fitRows model.size ghostRows)
             |> List.indexedMap
-                (\y row ->
+                (\y cells ->
                     div [ HA.class "flex" ]
-                        (row
-                            |> String.toList
-                            |> List.indexedMap (\x char -> viewCell model.cellPx colorOf previewFill previewSet x y char)
+                        (cells
+                            |> List.indexedMap
+                                (\x ( char, ghost ) ->
+                                    viewCell model.cellPx colorOf previewFill previewSet x y char ghost
+                                )
                         )
                 )
         )
 
 
-viewCell : Int -> (Char -> Maybe String) -> Maybe String -> Set ( Int, Int ) -> Int -> Int -> Char -> Html Msg
-viewCell cellSize colorOf previewFill previewSet x y char =
+viewCell : Int -> (Char -> Maybe String) -> Maybe String -> Set ( Int, Int ) -> Int -> Int -> Char -> Char -> Html Msg
+viewCell cellSize colorOf previewFill previewSet x y char ghost =
     let
         fillOf maybeFill =
             case maybeFill of
@@ -2059,7 +2698,22 @@ viewCell cellSize colorOf previewFill previewSet x y char =
                     ++ [ HA.style "box-shadow" "inset 0 0 0 1px rgba(255,255,255,0.5)" ]
 
             else
-                fillOf (colorOf char)
+                case colorOf char of
+                    Just fill ->
+                        [ HA.style "background-color" fill ]
+
+                    Nothing ->
+                        -- ほかのレイヤーの塗りは薄く敷くだけ。同じ濃さで出すと、
+                        -- どのマスが今の一筆で動くのか分からなくなる
+                        case colorOf ghost of
+                            Just fill ->
+                                [ HA.class "sketch-cell-ghost"
+                                , HA.style "background-color" fill
+                                , HA.style "opacity" "0.3"
+                                ]
+
+                            Nothing ->
+                                [ HA.class "bg-black/20" ]
     in
     div
         ([ HA.class "sketch-cell shrink-0 border border-black/10"

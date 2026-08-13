@@ -31,7 +31,7 @@ java -XstartOnFirstThread \
 `Task.Debug` を 2 段に分ける:
 
 1. **コンパイル段**: `java -Xss16m -XX:MaxRAMPercentage=50 -Dstdout.encoding=UTF-8
-   -Dstderr.encoding=UTF-8 -jar flix.jar build` — 窓なし。終わったら JVM ごと死ぬ
+   -Dstderr.encoding=UTF-8 -jar flix.jar build` — ウィンドウなし。終わったら JVM ごと死ぬ
 2. **実行段**: `java [-XstartOnFirstThread(mac のみ)] -Dstdout.encoding=UTF-8
    -Dstderr.encoding=UTF-8 -cp <組んだ classpath> Main` — env は今と同じ
    （DEBUG=true・DEBUG_HTTP_PORT）。ヒープ指定は不要（ゲームだけなら既定で足りる）
@@ -54,7 +54,7 @@ classpath の組み立て（サーバ側）:
 
 - **段 1 が落ちるゲーム**（肥大テストの MethodTooLarge 等）: 段 1 失敗時は従来の
   `flix run`（1 JVM）へフォールバックし、ログに一言残す。フォールバックは常設
-- `build/class` の配置と入口名 `Main` は flix の実装詳細: flix の版を上げるときの
+- `build/class` の配置と入口名 `Main` は flix の実装詳細: flix のバージョンを上げるときの
   確認項目に足す
 - 起動時間は今と同等（コンパイルはどのみち走る）+ JVM 起動 1 回ぶん
 - 保存即反映（watchFile）・リモートデバッグはゲーム側の機構なので変わらない

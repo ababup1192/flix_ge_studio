@@ -14,8 +14,8 @@ mod Genesis {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JBool}
 
-    /// ジャンル 1 枚ぶんの札。starter は公式テンプレート (templates/ 相対) があるときだけ非空。
-    pub type alias Family = {
+    /// ジャンル 1 枚ぶんのカード。starter は公式テンプレート (templates/ 相対) があるときだけ非空。
+    pub type alias Genre = {
         id = String,
         name = String,
         verb = String,
@@ -25,10 +25,10 @@ mod Genesis {
         starter = String
     }
 
-    /// 10 枚の札。並びは仕様 (client は並べ替えない) — 先頭は blank(まっさらの
+    /// 10 枚のカード。並びは仕様 (client は並べ替えない) — 先頭は blank(まっさらの
     /// 入口)、以降はジャンルの人気順、末尾は free(言葉からの受け皿)。
     /// 説明に実在のゲーム名は使わない (借り物なしで通じる言葉だけ)。
-    pub def families(): List[Family] =
+    pub def genres(): List[Genre] =
           { id = "blank",   name = "空のプロジェクト",
             verb = "まっさらから育てる",
             includes = "最小の骨組みだけ(主人公が歩くだけ)",
@@ -91,11 +91,11 @@ mod Genesis {
             starter = "" }
        :: Nil
 
-    /// GET /genesis/families の応答。並び順ごと返す。
-    pub def familiesJson(): Json =
-        JObject(Map#{"families" => JArray(families() |> List.map(famJson) |> List.toVector)})
+    /// GET /genesis/genres の応答。並び順ごと返す。
+    pub def genresJson(): Json =
+        JObject(Map#{"genres" => JArray(genres() |> List.map(genreJson) |> List.toVector)})
 
-    def famJson(f: Family): Json =
+    def genreJson(f: Genre): Json =
         JObject(Map#{
             "id"       => JString(f#id),
             "name"     => JString(f#name),
@@ -105,15 +105,15 @@ mod Genesis {
             "starter"  => JString(f#starter)
         })
 
-    /// GET /prompt/genesis?family=…&world=…&hero=…&essence=…(&direction=… は free 用)。
+    /// GET /prompt/genesis?genre=…&world=…&hero=…&essence=…(&direction=… は free 用)。
     /// ジャンルは必須。free だけは direction (どんなゲームかの言葉) が必須。
     /// world/hero/essence は空なら例文プレースホルダのまま出す — 依頼文は
     /// ユーザーが書き換える前提の下書きなので、空欄でも 200 で返す。
     pub def promptJson(params: Map[String, String]): (Int32, Json) =
-        match Map.get("family", params) {
-            case None => (400, failJson("family を指定してください"))
+        match Map.get("genre", params) {
+            case None => (400, failJson("genre を指定してください"))
             case Some(id) =>
-                match List.filter(f -> f#id == id, families()) |> List.head {
+                match List.filter(f -> f#id == id, genres()) |> List.head {
                     case None => (400, failJson("知らないジャンルです: ${id}"))
                     case Some(f) =>
                         if (f#id == "free")
@@ -122,20 +122,20 @@ mod Genesis {
                                 case Some(direction) => (200, promptOk(freePrompt(direction)))
                             }
                         else
-                            (200, promptOk(familyPrompt(f, params)))
+                            (200, promptOk(genrePrompt(f, params)))
                 }
         }
 
     /// path が登録済みの公式テンプレートか (new-game の複製元の白名簿)。
     pub def isStarter(path: String): Bool =
-        path != "" and (families() |> List.exists(f -> f#starter == path))
+        path != "" and (genres() |> List.exists(f -> f#starter == path))
 
-    /// GET /genesis/title?family=… — ジャンルカードの絵。公式テンプレートの
+    /// GET /genesis/title?genre=… — ジャンルカードの絵。公式テンプレートの
     /// golden/title.png のバイト列。テンプレート無し・絵無し・engine 不在は None
     /// (呼び手が 404 = 絵なしカードに倒す)。
     pub def titleBytes(params: Map[String, String]): Option[Array[Int8, Static]] \ IO =
-        let starter = Map.get("family", params)
-            |> Option.flatMap(id -> List.filter(f -> f#id == id, families()) |> List.head)
+        let starter = Map.get("genre", params)
+            |> Option.flatMap(id -> List.filter(f -> f#id == id, genres()) |> List.head)
             |> Option.map(f -> f#starter)
             |> Option.filter(path -> path != "");
         match starter {
@@ -151,7 +151,7 @@ mod Genesis {
         }
 
     /// golden/ の中の絵。title.png が無い starter でも最初の .png（名前順）を顔にして、
-    /// 空絵に倒れないための安全網（新テンプレで title.png を焼き忘れても札が絵を持つ）。
+    /// 空絵に倒れないための安全網（新テンプレで title.png を焼き忘れてもカードが絵を持つ）。
     /// 名前取り出し（getName は IO）は先に済ませ、並べ替えは純粋な文字列で行う。
     def firstGoldenPng(dir: String): Option[JFile] \ IO =
         let entries = new JFile(dir).listFiles();
@@ -177,7 +177,7 @@ mod Genesis {
 
     /// ジャンルの公式プロンプト。上半分 = 焼き込み(骨格・規約・完了条件)、
     /// 下半分 = あなたの言葉(書き換えて詳細を詰める欄)。
-    pub def familyPrompt(f: Family, params: Map[String, String]): String =
+    pub def genrePrompt(f: Genre, params: Map[String, String]): String =
         String.unlines(
             "新しいゲームのテンプレートを作ってください。"
             :: "土台: templates/game-starter を変形(ゼロから書かない)"

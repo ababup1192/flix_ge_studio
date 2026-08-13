@@ -91,7 +91,7 @@ mod Scaffold {
         }
 
     /// 産み方を選んで裏で起こす。starter 指定はテンプレ名だけ違い、W/H はテンプレの
-    /// 既定 (トークン札が無いので書き換え自体が空振りして無害)。
+    /// 既定 (プレースホルダが無いので書き換え自体が空振りして無害)。
     def launchCreate(state: Runner.State, engine: String, gameDir: String, name: String, title: String, w: Int32, h: Int32, starter: String): (Int32, Json) \ IO =
         let busy = "新しいゲームを作っている最中です";
         match EngineTasks.exec() {

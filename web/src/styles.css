@@ -514,7 +514,7 @@ sl-alert.notice::part(message) {
   fill: color-mix(in oklab, var(--color-accent) 55%, transparent);
 }
 
-/* 掴む縁。線・丸・札はまとめて置き、当たり判定は器(.sfx-wave)が持つ */
+/* 掴む縁。線・丸・ラベルはまとめて置き、当たり判定は器(.sfx-wave)が持つ */
 .sfx-grip {
   position: absolute;
   top: 0;

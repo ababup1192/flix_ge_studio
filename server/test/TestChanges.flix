@@ -1,9 +1,9 @@
-// TestChanges — 基準の自動追随のルールを固定する: 退避の名前づけ・版番号・記録の読み書き。
+// TestChanges — 基準の自動追随のルールを固定する: 退避の名前づけ・バージョン番号・記録の読み書き。
 // 実ファイルのコピーと自動焼きの起動は通し確認に任せ、ここは純粋な判定だけを見る。
 
 mod TestChanges {
 
-    /// 退避の名前: 拡張子の手前に vN。場面名から版番号を読み戻せる。
+    /// 退避の名前: 拡張子の手前に vN。場面名からバージョン番号を読み戻せる。
     /// 別の場面の退避や、v が数字でない名前は読まない。
     @Test
     def testVersionName(): Unit \ Assert =
@@ -14,7 +14,7 @@ mod TestChanges {
              Changes.verIfVersionOf("over.v3.png", "title.png"),
              Changes.verIfVersionOf("title.vx.png", "title.png")))
 
-    /// 次の版番号: その場面の退避の最大 + 1。無ければ 1。歯抜けでも最大基準。
+    /// 次のバージョン番号: その場面の退避の最大 + 1。無ければ 1。歯抜けでも最大基準。
     @Test
     def testNextVer(): Unit \ Assert =
         Assert.assertEq(

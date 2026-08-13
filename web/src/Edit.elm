@@ -46,7 +46,7 @@ type alias Payload =
     , path : List Seg
 
     -- BatchSet では中身の編集列({op,path,value,intField} の配列)を encode 済みで持つ。
-    -- path はその時「フィールドの場所」で、洪水を最新 1 件に畳む鍵にだけ使う
+    -- path はその時「フィールドの場所」で、洪水を最新 1 件に畳むキーにだけ使う
     , value : E.Value
     , isInt : Bool
     }
@@ -62,7 +62,7 @@ encodeSeg seg =
             E.int i
 
 
-{-| パスの 1 行表記。画面の開閉状態の鍵や、履歴の見出しに使う
+{-| パスの 1 行表記。画面の開閉状態のキーや、履歴の見出しに使う
 (同じ場所を指すパスは必ず同じ文字になる)。
 -}
 pathKey : List Seg -> String

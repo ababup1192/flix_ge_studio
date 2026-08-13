@@ -1875,7 +1875,7 @@ viewSwatch doc model swatch =
         selected =
             model.tool /= Eraser && activeBrush doc model == Terrain swatch.ch
     in
-    -- 名前は札の中に出す。色と 1 文字だけでは「どれが何か」が分からず、
+    -- 名前はボタンの中に出す。色と 1 文字だけでは「どれが何か」が分からず、
     -- 名前を当てるのに 1 つずつ指を乗せて確かめることになる。
     button
         [ HA.classList

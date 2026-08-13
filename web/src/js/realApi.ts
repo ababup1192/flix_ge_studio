@@ -238,6 +238,9 @@ export function realApi(base: string): Api {
           return sendJsonReason("POST", `${base}/annotations/comment`, payload);
         case "annotationsArchive":
           return sendJsonReason("POST", `${base}/annotations/archive`, payload);
+        case "annotationsCreate":
+          // ラフと見比べて気づいた事を、遊んでいて切った物と同じ棚へ足す
+          return sendJsonReason("POST", `${base}/annotations/create`, payload);
         case "runnerLog":
           // プレビューの描き出しのログ(進捗パネルの末尾数行の材料)
           return getJson(`${base}/runner/log`);
@@ -307,12 +310,14 @@ export function realApi(base: string): Api {
           }
           return res.json();
         }
+        // Elm 側の port 名の付け替え中なので新旧どちらのタグでも受ける
+        case "genesisGenres":
         case "genesisFamilies":
           // ジャンル一覧。404(旧サーバ)は Elm 側がプリセット入力に倒す
-          return getJson(`${base}/genesis/families`);
+          return getJson(`${base}/genesis/genres`);
         case "promptGenesis": {
           // 公式プロンプト。free だけ direction 必須(400 は日本語の理由が契約)
-          const q = new URLSearchParams({ family: String(payload.family) });
+          const q = new URLSearchParams({ genre: String(payload.genre ?? payload.family) });
           const direction = String(payload.direction ?? "");
           if (direction !== "") q.set("direction", direction);
           return getJson(`${base}/prompt/genesis?${q}`);
@@ -331,7 +336,7 @@ export function realApi(base: string): Api {
         case "gameStatus":
           return getJson(`${base}/game/status`);
         case "gameStart": {
-          // 409(既に走っている)は失敗ではなく「走っている」の便り
+          // 409(既に走っている)は失敗ではなく「走っている」のメッセージ
           const url = `${base}/game/start`;
           const res = await fetch(url, { method: "POST" });
           if (res.status === 409) return { running: true };

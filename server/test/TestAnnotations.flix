@@ -98,4 +98,60 @@ mod TestAnnotations {
              Annotations.isSafeId("a/b"),
              Annotations.isSafeId("a\\b"),
              Annotations.isSafeId("archive")))
+
+    // ── ラフと見比べて切るチケット ────────────────────────
+
+    /// 置き場の名前は「日時 + 見比べた絵 + 印」。頭が日時なので降順がそのまま新しい順。
+    @Test
+    def testTicketDirName(): Unit \ Assert =
+        Assert.assertEq(
+            expected = "20260812-140305_title_png_sketch",
+            Annotations.ticketDirName({stamp = "20260812-140305", scene = "title.png"}))
+
+    /// 絵を選ばずに切ったチケットでも名前は空にならない。
+    @Test
+    def testTicketDirNameWithoutScene(): Unit \ Assert =
+        Assert.assertEq(
+            expected = "20260812-140305_rough_sketch",
+            Annotations.ticketDirName({stamp = "20260812-140305", scene = ""}))
+
+    /// 印は末尾だけを見る。engine のチケット (末尾が _f<フレーム>) は遊んで気づいた物のまま。
+    @Test
+    def testIsSketchId(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false),
+            (Annotations.isSketchId("20260812-140305_title_png_sketch"),
+             Annotations.isSketchId("20260812-140305_my_game_f3412")))
+
+    /// 書いた README は engine の物と同じ読み方ができる (見出し・一言が読み戻せる)。
+    @Test
+    def testSketchReadmeRoundtrip(): Unit \ Assert =
+        let readme = Annotations.sketchReadme({
+            title = "ラフと見比べ: title.png ↔ title v3",
+            stamp = "2026-08-12 14:03:05",
+            body = "## 見比べた物\n\n- 生成された絵: gallery/title.png",
+            comment = "空が明るすぎる"
+        });
+        Assert.assertEq(
+            expected = ("ラフと見比べ: title.png ↔ title v3（2026-08-12 14:03:05）", "空が明るすぎる"),
+            (Annotations.titleOf(readme), Annotations.commentOf(readme)))
+
+    /// 一言が空でも engine と同じ空欄の印を置く (後から Studio の入力欄で書ける)。
+    @Test
+    def testSketchReadmeEmptyComment(): Unit \ Assert =
+        let readme = Annotations.sketchReadme({
+            title = "ラフと見比べ", stamp = "2026-08-12 14:03:05", body = "本文", comment = "  "
+        });
+        Assert.assertEq(expected = "", Annotations.commentOf(readme))
+
+    /// 本文 (見比べた物の場所) はコメント欄に飲み込まれず残る。
+    @Test
+    def testSketchReadmeKeepsBody(): Unit \ Assert =
+        let readme = Annotations.sketchReadme({
+            title = "ラフと見比べ", stamp = "2026-08-12 14:03:05",
+            body = "- ラフ: draft/sketch/title/v3.json", comment = "一言"
+        });
+        Assert.assertEq(
+            expected = true,
+            String.contains(substr = "draft/sketch/title/v3.json", readme))
 }

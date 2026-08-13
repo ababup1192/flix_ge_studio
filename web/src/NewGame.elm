@@ -24,6 +24,7 @@ module NewGame exposing
     , sketchFamilyId
     , sketchResizeActive
     , sketchStrokeActive
+    , sketchWindowOpen
     , unavailable
     , update
     , view
@@ -65,7 +66,7 @@ import SketchPad
 {-| つくりの進み。Creating の間だけ Main がログのポーリングを回す。
 
 sketch(ラフ発かどうか)は送信の瞬間に焼き込む — 誕生の知らせが届いた時の
-選択中の札(family)で判定すると、待っている間に他の札へ移っただけで
+選択中のカード(family)で判定すると、待っている間に他のカードへ移っただけで
 誕生の扱いを取り違えるため。
 
 -}
@@ -138,15 +139,15 @@ type alias Model =
     , genesisPrompt : GenesisPrompt
     , genesisCopied : Bool
 
-    -- ラフ札(画面のラフから)の塗り。ゲームの Doc ではないのでここが正本
+    -- ラフのカード(画面のラフから)の塗り。ゲームの Doc ではないのでここが正本
     , sketch : SketchPad.Model
 
-    -- ラフ札の「伝えたいこと(任意)」。絵にできない事(雰囲気・ルールの種)を
+    -- ラフのカードの「伝えたいこと(任意)」。絵にできない事(雰囲気・ルールの種)を
     -- 言葉で添える口。空なら依頼文に節ごと出さない
     , sketchNote : String
 
-    -- ラフ札の誕生情報(作られた先と合成済みの依頼文)。genesisPrompt とは別に
-    -- 持つ — 誕生後に他の札を見て回ると genesisPrompt はその札の下書きに
+    -- ラフのカードの誕生情報(作られた先と合成済みの依頼文)。genesisPrompt とは別に
+    -- 持つ — 誕生後に他のカードを見て回ると genesisPrompt はそのカードの下書きに
     -- 変わるので、そこに合成文を置くと行き来しただけで失われるため。
     -- prompt が空 = 公式文もラフの節も無いまま産まれた(取り直し待ち)
     , born : Maybe { dir : Maybe String, prompt : String }
@@ -175,15 +176,15 @@ init =
     }
 
 
-{-| ラフ札のローカル id。サーバの families には無い名前を使う
-(サーバ側の札と取り違えない)。
+{-| ラフのカードのローカル id。サーバの families には無い名前を使う
+(サーバ側のカードと取り違えない)。
 -}
 sketchFamilyId : String
 sketchFamilyId =
     "sketch"
 
 
-{-| ラフ札の複製元。blank と同じ、いちばん小さい骨組み。 -}
+{-| ラフのカードの複製元。blank と同じ、いちばん小さい骨組み。 -}
 sketchStarter : String
 sketchStarter =
     "templates/game-starter"
@@ -209,6 +210,7 @@ type Msg
     | BornPromptEdited String
     | BornRetryClicked
     | SketchRestartClicked
+    | SketchClosed
 
 
 {-| サーバへ送りたい事(封筒の発行は Main)。 -}
@@ -235,13 +237,13 @@ update msg model =
 
         FamilyChosen id ->
             if isPolling model then
-                -- つくっている最中の札替えは受けない — 押した札を誕生の扱いに
+                -- つくっている最中のカードの選び直しは受けない — 押したカードを誕生の扱いに
                 -- 混ぜてしまう事故(ラフ発なのに自動で飛ぶ等)を入口で断つ
                 ( model, OutNone )
 
             else
             let
-                -- born(誕生情報)はここで消さない — 他の札を見て回って戻った時に
+                -- born(誕生情報)はここで消さない — 他のカードを見て回って戻った時に
                 -- 合成依頼文ごと失われ、作り直し(同名 409)へ誘い込むため
                 m1 =
                     { model | family = Just id, error = Nothing, genesisCopied = False }
@@ -327,7 +329,7 @@ update msg model =
             )
 
         SketchRestartClicked ->
-            -- ここでだけ誕生状態を捨てる — 札の行き来では消さない約束の唯一の例外。
+            -- ここでだけ誕生状態を捨てる — カードの行き来では消さない約束の唯一の例外。
             -- 「新しいラフでもう一度」は人の明示の意思なので、塗りごと白紙に戻す
             ( { model
                 | sketch = SketchPad.init
@@ -383,6 +385,15 @@ update msg model =
                 _ ->
                     -- OutSave は来ない(保存行を出さない埋め込みの姿だけ使う)
                     ( next, OutNone )
+
+        SketchClosed ->
+            if isPolling model then
+                -- つくっている最中は閉じない(Esc も同じ関所を通す)
+                ( model, OutNone )
+
+            else
+                -- 外すのは選択だけ。塗り・補足・誕生情報は残すので、開き直せば続きから
+                ( { model | family = Nothing }, OutNone )
 
         SketchNoteEdited text_ ->
             ( { model | sketchNote = text_ }, OutNone )
@@ -546,7 +557,7 @@ familiesUnavailable model =
 
 {-| GET /prompt/genesis 成功。届いた下書きは編集可になる。
 
-誕生画面(ラフ札で born あり)に居る間の門番:
+誕生画面(ラフのカードで born あり)に居る間の門番:
 遅れて届いた応答で合成依頼文を黙って上書きしない。人が手直しした文が
 音もなく消える事故を防ぐ。例外は born.prompt が空の時だけ — それは
 「取り直し待ち」なので、届いた土台をラフと合成し直して埋める。
@@ -568,7 +579,7 @@ gotGenesisPrompt prompt model =
                     model
 
             else
-                -- 他の札を見ている間の応答はその札の下書き(合成文は born が守る)
+                -- 他のカードを見ている間の応答はそのカードの下書き(合成文は born が守る)
                 { model | genesisPrompt = GenesisReady prompt, genesisCopied = False }
 
         Nothing ->
@@ -582,7 +593,7 @@ genesisPromptFailed message model =
 
 
 {-| いま画面の下書きに映っている依頼文(テストの覗き窓)。
-ラフ札の誕生画面では合成済みの born.prompt が映っている(空は取り直し導線)。
+ラフのカードの誕生画面では合成済みの born.prompt が映っている(空は取り直し導線)。
 -}
 shownGenesisPrompt : Model -> Maybe String
 shownGenesisPrompt model =
@@ -612,7 +623,7 @@ shownDraftPrompt model =
             Nothing
 
 
-{-| いま選んでいるジャンルの札。 -}
+{-| いま選んでいるジャンルのカード。 -}
 selectedFamily : Model -> Maybe Family
 selectedFamily model =
     case ( model.families, model.family ) of
@@ -708,10 +719,10 @@ gotLog log model =
             else
                 case log.exitCode of
                     Just 0 ->
-                        -- ラフ発かは phase に焼き込んだ印で見る — 今の選択札で見ると、
-                        -- 待ち中に他の札を眺めただけで誕生の扱いを取り違える
+                        -- ラフ発かは phase に焼き込んだ印で見る — 今選んでいるカードで見ると、
+                        -- 待ち中に他のカードを眺めただけで誕生の扱いを取り違える
                         if creating.sketch then
-                            -- ラフ札はここで飛ばない — 依頼文を差し出したままにして、
+                            -- ラフのカードはここで飛ばない — 依頼文を差し出したままにして、
                             -- 開く(コピー)は人のひと押しに乗せる。
                             -- 名前・題名はここで空に戻す — 残すと「もう一度うむ」で
                             -- 同名 409 へまっすぐ落ちるため
@@ -743,7 +754,7 @@ gotLog log model =
             ( model, LogContinue )
 
 
-{-| ラフ札の依頼文。並びは
+{-| ラフのカードの依頼文。並びは
 公式文(「あなたの言葉」節は抜く) → ラフの節 → あなたから → インタビューの催促。
 
 世界・主人公・エッセンスの節は依頼文から外す — インタビュー後の会話で
@@ -847,6 +858,12 @@ sketchResizeActive model =
     SketchPad.resizeActive model.sketch
 
 
+{-| ラフを塗る窓が出ているか(Main がこの間だけ Esc を購読する)。 -}
+sketchWindowOpen : Model -> Bool
+sketchWindowOpen model =
+    model.open && model.family == Just sketchFamilyId
+
+
 {-| GET /projects/new/log。欠けは既定値に倒す(fail-open)。 -}
 logDecoder : D.Decoder Log
 logDecoder =
@@ -935,8 +952,10 @@ viewGenesis families model =
     , div [ HA.class "newgame-confirm mt-3 border-t border-edge pt-3" ]
         (case selectedFamily model of
             Nothing ->
-                if model.family == Just sketchFamilyId then
-                    viewSketchConfirm model
+                if sketchWindowOpen model then
+                    [ div [ HA.class "text-[11px] text-ink-faint" ]
+                        [ text "🎨 ラフを塗る窓をひらいています" ]
+                    ]
 
                 else
                     [ div [ HA.class "text-[11px] text-ink-faint" ]
@@ -951,9 +970,35 @@ viewGenesis families model =
                 viewConfirm family model
         )
     ]
+        ++ (if sketchWindowOpen model then
+                -- 一覧と同じ幅の中では塗り場が潰れるので、窓へ浮かせて広さを取る
+                [ SketchPad.viewWindow
+                    { title = "🎨 画面のラフから"
+                    , hint =
+                        if isPolling model then
+                            "つくり終わるまで閉じられません"
+
+                        else
+                            "閉じるとカードの選択が外れます(塗った絵は残ります)"
+
+                    -- つくっている間は閉じさせない — 選択が外れると、
+                    -- つくり終わるまでカードを選び直せず進み具合が見えなくなる
+                    , onClose =
+                        if isPolling model then
+                            Nothing
+
+                        else
+                            Just SketchClosed
+                    }
+                    (viewSketchConfirm model)
+                ]
+
+            else
+                []
+           )
 
 
-{-| ラフ札。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
+{-| ラフのカード。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
 (golden の顔を配る仕組みに乗れない)。
 -}
 viewSketchCard : Bool -> Maybe String -> Html Msg
@@ -965,7 +1010,7 @@ viewSketchCard locked chosen =
             , ( "border-edge", chosen /= Just sketchFamilyId )
             ]
 
-        -- つくっている最中は札替えを受けない(update の関所と二重の守り)
+        -- つくっている最中はカードの選び直しを受けない(update の関所と二重の守り)
         , HA.disabled locked
         , HE.onClick (FamilyChosen sketchFamilyId)
         ]
@@ -988,7 +1033,7 @@ viewFamilyCard locked chosen family =
         , HA.disabled locked
         , HE.onClick (FamilyChosen family.id)
         ]
-        [ -- 公式テンプレートつきのジャンルは、その golden/title.png が札の顔になる
+        [ -- 公式テンプレートつきのジャンルは、その golden/title.png がカードの顔になる
           -- (サーバが配る。テンプレート無しのジャンルは絵なしのまま)
           if family.starter /= "" then
             Html.img
@@ -1057,7 +1102,7 @@ viewStarterForm model =
         ++ viewProgress model
 
 
-{-| なまえ・題名の入力(テンプレート札とラフ札で同じ姿・同じ検証)。 -}
+{-| なまえ・題名の入力(テンプレートのカードとラフのカードで同じ姿・同じ検証)。 -}
 viewNameTitle : Model -> List (Html Msg)
 viewNameTitle model =
     [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
@@ -1085,7 +1130,7 @@ viewNameTitle model =
     ]
 
 
-{-| ラフ札の次の一歩。誕生前は塗り場と名前、誕生後は依頼文の差し出し。 -}
+{-| ラフのカードの次の一歩。誕生前は塗り場と名前、誕生後は依頼文の差し出し。 -}
 viewSketchConfirm : Model -> List (Html Msg)
 viewSketchConfirm model =
     case model.born of
@@ -1098,10 +1143,12 @@ viewSketchConfirm model =
 
 viewSketchDraw : Model -> List (Html Msg)
 viewSketchDraw model =
-        [ div [ HA.class "newgame-sketch mt-2 rounded-lg border border-edge bg-black/10 pt-2" ]
-            [ Html.map SketchMsg (SketchPad.viewInline model.sketch) ]
-        ]
-            ++ viewNameTitle model
+    [ div [ HA.class "newgame-sketch rounded-lg border border-edge bg-black/10 p-2" ]
+        [ Html.map SketchMsg (SketchPad.viewInline model.sketch) ]
+
+    -- 塗り場の広さに引きずられて入力欄まで横に伸びると、打った字が追いにくい
+    , div [ HA.class "mt-3 max-w-xl" ]
+        (viewNameTitle model
             ++ [ -- 説明もプレースホルダも付けない — 例文を見せると、それに寄せた
                  -- 言葉しか出てこなくなるため
                  div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "伝えたいこと(任意)" ]
@@ -1130,6 +1177,8 @@ viewSketchDraw model =
                , viewCreateError model
                ]
             ++ viewProgress model
+        )
+    ]
 
 
 {-| 誕生の後。依頼文は自動でコピーしない — 開くと画面が切り替わるので、
@@ -1273,7 +1322,7 @@ viewGenesisPrompt model =
             ]
 
 
-{-| 依頼文の編集可 textarea(ジャンルの下書きとラフ札の誕生後で共用)。
+{-| 依頼文の編集可 textarea(ジャンルの下書きとラフのカードの誕生後で共用)。
 書き先が違う(下書き / 合成済みの誕生文)ので、送る Msg は呼び手が決める。
 -}
 viewPromptTextarea : (String -> Msg) -> String -> Html Msg

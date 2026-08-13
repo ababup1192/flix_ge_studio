@@ -10,7 +10,7 @@ mod Gallery {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber}
 
-    /// 画像を配ってよいディレクトリの白名前簿。ここに無い dir 指定は断る。
+    /// 画像を配ってよいディレクトリの許可リスト。ここに無い dir 指定は断る。
     pub def imageDirs(): Set[String] = Set#{"gallery", "golden", "golden/archive", "debug"}
 
     /// ブラウザから来るファイル名の門番。区切りや `..` を含む名前はプロジェクトの
@@ -54,7 +54,7 @@ mod Gallery {
 
     // ── 画像・音のバイト列 ────────────────────────────────
 
-    /// GET /gallery/image — dir 指定 (白名前簿) と安全な名前で PNG のバイト列を引く。
+    /// GET /gallery/image — dir 指定 (許可リスト) と安全な名前で PNG のバイト列を引く。
     /// 指定が不正・ファイルが無いは None (呼び手が 404 にする)。
     pub def imageBytes(dir: String, subdir: String, name: String): Option[Array[Int8, Static]] \ IO =
         mediaBytes(dir, subdir, name) |> Option.map(found -> snd(found))
@@ -79,7 +79,7 @@ mod Gallery {
         else
             None
 
-    /// GET /gallery/count — 白名前簿の置き場にある PNG の数。
+    /// GET /gallery/count — 許可リストの置き場にある PNG の数。
     /// 「前回の焼き」を復元した時にコマ数(pngFrames)を取り戻すのに使う
     /// (GIF の存在確認だけではコマ送りの目盛りが引けない)。
     pub def pngCount(dir: String, subdir: String): Int32 \ IO =

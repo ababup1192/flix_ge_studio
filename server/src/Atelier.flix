@@ -23,7 +23,7 @@ mod Atelier {
     pub def isSlotPath(path: String): Bool =
         isUnder(prefix = "assets/", path)
 
-    /// アーカイブ札の経路の門番: `atelier/archive/` 直下の安全な 1 語のみ。
+    /// アーカイブされたファイルの経路の門番: `atelier/archive/` 直下の安全な 1 語のみ。
     pub def isArchivedPath(path: String): Bool =
         isUnder(prefix = "atelier/archive/", path)
 
@@ -428,7 +428,7 @@ mod Atelier {
     /// 応答 (status, body)。経路の門番 → 実在 → 互換、の順に全部検分してから初めて書く。
     /// 手順: 候補の中身を読む → スロットの中身を atelier/archive/ のバージョン (vN) へ退避 →
     /// 候補の中身をスロットへ書く → atelier/ 直下の候補は消す (名前ごとスロットへ移った =
-    /// 採用)。アーカイブの札からの昇格 (復元) は履歴なので消さない — 何も捨てない。
+    /// 採用)。アーカイブされたファイルからの昇格 (復元) は履歴なので消さない — 何も捨てない。
     pub def promote(dir: String, bodyText: String): (Int32, Json) \ IO =
         let fields = DocJson.parse(bodyText)
             |> Option.flatMap(JsonCodec.expectObject)
@@ -467,7 +467,7 @@ mod Atelier {
         copyFile("${dir}/${slot}", "${dir}/${retired}");
         writeBytes("${dir}/${slot}", candBytes);
         // atelier/ 直下の候補は名前ごとスロットへ移った (= 採用) ので消す。
-        // アーカイブの札からの復元は履歴なので消さない — 何も捨てない。
+        // アーカイブされたファイルからの復元は履歴なので消さない — 何も捨てない。
         if (isCandidatePath(candidate))
             discard new JFile("${dir}/${candidate}").delete()
         else ();
@@ -476,7 +476,7 @@ mod Atelier {
             "retired" => JString(retired)
         }))
 
-    /// 次の版番号 (このスロットの札の最大 + 1)。archive/ が無ければ 1。
+    /// 次のバージョン番号 (このスロットのアーカイブの最大 + 1)。archive/ が無ければ 1。
     def nextVer(dir: String, slotName: String): Int32 \ IO =
         let entries = new JFile("${dir}/atelier/archive").listFiles();
         let names = if (Object.isNull(entries)) Nil
@@ -540,7 +540,7 @@ mod Atelier {
                 }
         }
 
-    /// POST /atelier/restore (body: {file}) — アーカイブの札を候補の列へ戻す。
+    /// POST /atelier/restore (body: {file}) — アーカイブされたファイルを候補の列へ戻す。
     pub def restore(dir: String, bodyText: String): (Int32, Json) \ IO =
         match fieldString("file", topFields(bodyText)) {
             case None => (400, failJson("body は {file} の JSON で指定してください"))

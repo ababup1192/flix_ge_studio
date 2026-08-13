@@ -129,7 +129,7 @@ mod Game {
     // ── 起動 (POST /game/start) ───────────────────────────
 
     /// 応答 (status, body)。すでに走っていれば 409。起動は debug タスクを投げっぱなしで
-    /// 走らせる (GL 窓はゲーム側が開く)。ログは GET /game/log (Runner.logJson と同じ形)。
+    /// 走らせる (GL ウィンドウはゲーム側が開く)。ログは GET /game/log (Runner.logJson と同じ形)。
     /// 空きポートを選んで DEBUG_HTTP_PORT で渡し、起動できたときだけ覚える —
     /// 以後の自動検査の焼きは、この命令口 (POST /bake) に頼めるようになる。
     /// 起動した Process は手元記録に収め、pid を書き残す (次の server が引き継げるように)。

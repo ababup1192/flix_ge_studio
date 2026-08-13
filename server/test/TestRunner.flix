@@ -3,7 +3,7 @@
 
 mod TestRunner {
 
-    /// make 対象は白名前簿の 4 つだけ。似た名前や空・任意コマンドは通さない。
+    /// make 対象は許可リストの 4 つだけ。似た名前や空・任意コマンドは通さない。
     @Test
     def testIsAllowedTarget(): Unit \ Assert =
         Assert.assertEq(

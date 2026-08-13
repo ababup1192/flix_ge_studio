@@ -228,7 +228,7 @@ type alias ResourceGroup =
     -- 焼き係の起こし方(中身は server が読む。画面は有無だけを見る)
     , bakeCmd : Maybe String
 
-    -- 実機(ゲームの窓)の口。宣言があれば「実機で再生」を出す
+    -- 実機(ゲームのウィンドウ)の口。宣言があれば「実機で再生」を出す
     , performUrl : Maybe String
 
     -- 宣言の照合パターン("assets/*.map.json" 等)。新しいファイルの置き場と

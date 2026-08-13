@@ -26,7 +26,7 @@ mod Editor {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
 
-    /// /health の version に載せる自分の版 (flix.toml の version と揃える)。
+    /// /health の version に載せる自分のバージョン (flix.toml の version と揃える)。
     def version(): String = "0.1.0"
 
     /// 環境変数 EDITOR_DIR (起動時に選んでおく編集対象)。未設定・空なら None (未選択で起動)。
@@ -134,9 +134,9 @@ mod Editor {
             case ("GET", "/workspace") => sendJson(200, workspaceJson(), exchange)
             case ("POST", "/workspace") => handleSetWorkspace(readBody(exchange), exchange)
             case ("GET", "/running-games") => sendJson(200, Game.runningGamesJson(), exchange)
-            // 「新しいゲームをはじめる」の家族一覧と公式プロンプト。
+            // 「新しいゲームをはじめる」のジャンル一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
-            case ("GET", "/genesis/families") => sendJson(200, Genesis.familiesJson(), exchange)
+            case ("GET", "/genesis/genres") => sendJson(200, Genesis.genresJson(), exchange)
             case ("GET", "/prompt/genesis") => {
                 let (status, json) = Genesis.promptJson(params);
                 sendJson(status, json, exchange)
@@ -272,6 +272,11 @@ mod Editor {
                 })
             case ("POST", "/annotations/comment") => withProject(selection, exchange, dir -> {
                 let (status, json) = Annotations.setComment(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            // ラフと見比べて気づいた事も同じ棚へ (置き場の名前の末尾が印になる)。
+            case ("POST", "/annotations/create") => withProject(selection, exchange, dir -> {
+                let (status, json) = Annotations.create(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("POST", "/annotations/archive") => withProject(selection, exchange, dir -> {
@@ -733,7 +738,7 @@ mod Editor {
     /// PUT /file (body: {path, content, ifMtime?}) — dir 相対パスへ書き込む。
     /// プロジェクト外・親ディレクトリ不在は拒否する。
     /// ifMtime (GET /file が返した mtime) 付きなら、ディスクの現 mtime と違うとき 409 を返す —
-    /// 別の窓・別プロセスが先に保存した内容を黙って上書きしない(最後の書き手勝ちの事故防止)。
+    /// 別のウィンドウ・別プロセスが先に保存した内容を黙って上書きしない(最後の書き手勝ちの事故防止)。
     /// 省略時は従来どおり無条件で書く(後方互換)。
     /// 見た目に効き得る素材の保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、

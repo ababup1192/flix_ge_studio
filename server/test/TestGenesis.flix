@@ -1,35 +1,35 @@
-// TestGenesis — 家族の札と公式プロンプトのルールを固定する。
+// TestGenesis — ジャンルのカードと公式プロンプトのルールを固定する。
 // 文言そのものは仕様ではない (id・並び・必須パラメータ・骨格が運ばれる事だけを見る)。
 
 mod TestGenesis {
 
     def ids(): List[String] =
-        Genesis.families() |> List.map(f -> f#id)
+        Genesis.genres() |> List.map(f -> f#id)
 
-    /// 札は 10 枚で、先頭は blank(まっさらの入口 = 左上)、
-    /// 末尾は free(家族に当てはまらない受け皿)。並びは仕様。
+    /// カードは 10 枚で、先頭は blank(まっさらの入口 = 左上)、
+    /// 末尾は free(どのジャンルにも当てはまらない受け皿)。並びは仕様。
     @Test
-    def testFamiliesShape(): Unit \ Assert =
+    def testGenresShape(): Unit \ Assert =
         Assert.assertEq(
             expected = (10, Some("blank"), Some("free")),
             (List.length(ids()), List.head(ids()), List.last(ids())))
 
-    /// family は必須・未知の家族は断る。free は direction が必須。
+    /// genre は必須・未知のジャンルは断る。free は direction が必須。
     @Test
     def testPromptGates(): Unit \ Assert =
         let status = params -> { let (s, _) = Genesis.promptJson(params); s };
         Assert.assertEq(
             expected = (400, 400, 400, 200),
             (status(Map#{}),
-             status(Map#{"family" => "villageSim"}),
-             status(Map#{"family" => "free"}),
-             status(Map#{"family" => "free", "direction" => "猫が魚を集める"})))
+             status(Map#{"genre" => "villageSim"}),
+             status(Map#{"genre" => "free"}),
+             status(Map#{"genre" => "free", "direction" => "猫が魚を集める"})))
 
     /// 公式テンプレートの登録: action / novel / rpg / puzzle / blank は starter 持ち、
     /// free は持たない。
     @Test
     def testStarters(): Unit \ Assert =
-        let starterOf = id -> Genesis.families()
+        let starterOf = id -> Genesis.genres()
             |> List.filter(f -> f#id == id) |> List.head
             |> Option.map(f -> f#starter != "");
         Assert.assertEq(
@@ -52,13 +52,13 @@ mod TestGenesis {
     /// 公式プロンプトは骨格と土台(テンプレート変形)を必ず運ぶ。
     /// あなたの言葉(world 等)はパラメータで埋まり、空なら欄が残る。
     @Test
-    def testFamilyPromptCarriesSkeleton(): Unit \ Assert =
-        let rpg = Genesis.families() |> List.filter(f -> f#id == "rpg") |> List.head;
+    def testGenrePromptCarriesSkeleton(): Unit \ Assert =
+        let rpg = Genesis.genres() |> List.filter(f -> f#id == "rpg") |> List.head;
         match rpg {
             case None => Assert.assertEq(expected = true, false)
             case Some(f) =>
-                let filled = Genesis.familyPrompt(f, Map#{"world" => "夜の温泉街"});
-                let blank = Genesis.familyPrompt(f, Map#{});
+                let filled = Genesis.genrePrompt(f, Map#{"world" => "夜の温泉街"});
+                let blank = Genesis.genrePrompt(f, Map#{});
                 Assert.assertEq(
                     expected = (true, true, true, true),
                     (String.contains(substr = f#skeleton, filled),

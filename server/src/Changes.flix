@@ -135,7 +135,7 @@ mod Changes {
         else
             "${name}.v${n}"
 
-    /// name が scene の退避版なら、その版番号。
+    /// name が scene の退避バージョンなら、そのバージョン番号。
     pub def verIfVersionOf(name: String, scene: String): Option[Int32] =
         let base = if (String.endsWith(suffix = ".png", scene)) String.dropRight(4, scene) else scene;
         let prefixText = "${base}.v";
@@ -146,7 +146,7 @@ mod Changes {
             else None
         } else None
 
-    /// 次の版番号 (この場面の退避の最大 + 1、無ければ 1)。
+    /// 次のバージョン番号 (この場面の退避の最大 + 1、無ければ 1)。
     pub def nextVerFrom(names: List[String], scene: String): Int32 =
         (names |> List.filterMap(name -> verIfVersionOf(name, scene))
                |> List.foldLeft(Int32.max, 0)) + 1

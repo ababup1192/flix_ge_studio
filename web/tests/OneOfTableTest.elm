@@ -1,8 +1,8 @@
 module OneOfTableTest exposing (suite)
 
 {-| oneOf セクション(カットの表 等)専用の #/カット/内容 の行モデルの純ロジック。
-「勝っている鍵」の優先順(宣言順で最初に存在する物・添え鍵は候補から外す)と、
-値の型から汎用に組む要約(object の {x,y}・文字列の省略・添え鍵の札)を固定する。
+「勝っているキー」の優先順(宣言順で最初に存在する物・補助キーは候補から外す)と、
+値の型から汎用に組む要約(object の {x,y}・文字列の省略・補助キーのバッジ)を固定する。
 -}
 
 import Expect
@@ -28,9 +28,9 @@ schemaFixture =
         "jump":   { "type": "object", "label": "別の部屋へ移す", "order": 3 },
         "say":    { "type": {"list": "text"}, "label": "言葉", "order": 4 },
         "lookBack": { "type": "bool", "label": "カメラを戻す", "order": 5 },
-        "run":    { "type": "bool", "label": "走る(添え鍵)", "order": 6 },
-        "noWait": { "type": "bool", "label": "待たない(添え鍵)", "order": 7 },
-        "pan":    { "type": "float", "label": "見回す速さ(添え鍵)", "order": 8 },
+        "run":    { "type": "bool", "label": "走る(補助キー)", "order": 6 },
+        "noWait": { "type": "bool", "label": "待たない(補助キー)", "order": 7 },
+        "pan":    { "type": "float", "label": "見回す速さ(補助キー)", "order": 8 },
         "only":   { "type": "text", "label": "持っている時だけ", "order": 9 },
         "unless": { "type": "text", "label": "持っている時は黙る", "order": 10 }
       }
@@ -77,7 +77,7 @@ cutRows =
 suite : Test
 suite =
     describe "OneOfTable — oneOf セクションの #/カット/内容 の純ロジック"
-        [ test "rows — 勝っている鍵は宣言順で最初に存在する物(添え鍵は候補から外す)" <|
+        [ test "rows — 勝っているキーは宣言順で最初に存在する物(補助キーは候補から外す)" <|
             \_ ->
                 cutRows
                     |> List.map .kind
@@ -93,14 +93,14 @@ suite =
                     |> List.map .summary
                     |> List.head
                     |> Expect.equal (Just "1.5")
-        , test "rows — {x,y} は (x, y)。添え鍵(run/noWait)は札になって続く" <|
+        , test "rows — {x,y} は (x, y)。補助キー(run/noWait)はバッジになって続く" <|
             \_ ->
                 cutRows
                     |> List.drop 1
                     |> List.head
                     |> Maybe.map .summary
                     |> Expect.equal (Just "(35, 4) [run] [待たない]")
-        , test "rows — 文字列の列は先頭を短く。only は「◯◯のみ」の定型札" <|
+        , test "rows — 文字列の列は先頭を短く。only は「◯◯のみ」の定型バッジ" <|
             \_ ->
                 cutRows
                     |> List.drop 2
@@ -114,7 +114,7 @@ suite =
                     |> List.head
                     |> Maybe.map .summary
                     |> Expect.equal (Just "hall2 (3, 5) down")
-        , test "rows — アクション鍵が無い行はカット '?'。unless は「◯◯なら黙る」の定型札" <|
+        , test "rows — アクションキーが無い行はカット '?'。unless は「◯◯なら黙る」の定型バッジ" <|
             \_ ->
                 cutRows
                     |> List.drop 4
@@ -124,11 +124,11 @@ suite =
                             { rowId = ByIdx 4
                             , idText = "#4"
                             , kind = "?"
-                            , kindTitle = "この行はアクション鍵を持ちません"
+                            , kindTitle = "この行はアクションキーを持ちません"
                             , summary = "[torch なら黙る]"
                             }
                         )
-        , test "rows — bool の勝ち鍵は内容が空(カット名が既に言っている)。添え鍵 pan は「pan 値」" <|
+        , test "rows — bool の勝ちキーは内容が空(カット名が既に言っている)。補助キー pan は「pan 値」" <|
             \_ ->
                 cutRows
                     |> List.drop 5

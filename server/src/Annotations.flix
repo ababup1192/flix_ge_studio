@@ -4,7 +4,10 @@
 
 mod Annotations {
     import java.io.{File => JFile}
+    import java.io.FileOutputStream
     import java.nio.file.Files
+    import java.time.LocalDateTime
+    import java.time.format.DateTimeFormatter
 
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JBool}
@@ -17,6 +20,12 @@ mod Annotations {
 
     /// engine が README のコメント欄に置く空欄の印。これしか無ければ「未記入」と読む。
     def commentPlaceholder(): String = "（ここに修正指示を書いてください）"
+
+    /// Studio で切ったチケット (ラフと見比べて気づいた事) の印。engine のチケットは
+    /// "_f<フレーム>" で終わるので取り違えない。
+    // WhyNot: 中に印のファイルを置かない — 名前だけで分かる方が、チケットを手で
+    // 移し替えた時に印だけ取り残されない。
+    def sketchSuffix(): String = "_sketch"
 
     // ── 純粋なルール (README の節の読み書き) ──────────────
 
@@ -51,6 +60,29 @@ mod Annotations {
         id != "" and id != "." and id != ".." and id != archiveDirName()
             and not String.contains(substr = "/", id)
             and not String.contains(substr = "\\", id)
+
+    /// ラフと見比べて切ったチケットか。一覧で印を分けるためだけに使う。
+    pub def isSketchId(id: String): Bool =
+        String.endsWith(suffix = sketchSuffix(), id)
+
+    /// Studio が切るチケットの置き場の名前。頭が日時なので、名前の降順がそのまま新しい順になる。
+    pub def ticketDirName(args: {stamp = String, scene = String}): String =
+        let label = args#scene
+            |> String.map(c -> if (Char.isLetter(c) or Char.isDigit(c)) c else '_')
+            |> String.takeLeft(40);
+        let named = if (args#scene == "") "rough" else label;
+        "${args#stamp}_${named}${sketchSuffix()}"
+
+    /// Studio が切るチケットの README 全文。engine の物と同じ形 (見出し + 絵 + 本文 +
+    /// コメント欄) にして、同じ棚で同じように読めるようにする。
+    pub def sketchReadme(args: {title = String, stamp = String, body = String, comment = String}): String =
+        let written = String.trim(args#comment);
+        let comment = if (written == "") commentPlaceholder() else written;
+        "# ${args#title}（${args#stamp}）\n\n"
+            + "![screenshot](screenshot.png)\n\n"
+            + "${args#body}\n\n"
+            + "## コメント\n\n"
+            + "${comment}\n"
 
     /// コメント節の見出し行。
     def commentHeader(): String = "## コメント"
@@ -100,7 +132,8 @@ mod Annotations {
             "id"      => JString(id),
             "title"   => JString(titleOf(readme)),
             "comment" => JString(commentOf(readme)),
-            "hasShot" => JBool(Option.nonEmpty(shotFile(dir, id)))
+            "hasShot" => JBool(Option.nonEmpty(shotFile(dir, id))),
+            "kind"    => JString(if (isSketchId(id)) "sketch" else "play")
         })
 
     /// GET /annotations/shot?id=… — チケットのスクショ (赤枠つき優先)。無ければ None = 404。
@@ -166,6 +199,53 @@ mod Annotations {
                 }
         }
 
+    /// POST /annotations/create {title, comment, body, scene} — ラフと見比べて気づいた事を、
+    /// 遊んでいて切ったチケットと同じ棚へ足す。中身は engine の物と同じ素の README + PNG。
+    // WhyNot: 送られた言葉を組み直さない — 見出しも本文も Studio が組んだ物をそのまま置く。
+    // ここで文面を作ると、画面に見えている言葉と棚に残る言葉が別々に育つ。
+    pub def create(dir: String, bodyText: String): (Int32, Json) \ IO =
+        match parseCreate(bodyText) {
+            case None => (400, failJson("body は {title, comment, body, scene} の JSON で指定してください"))
+            case Some(fields) =>
+                if (String.trim(fields#title) == "")
+                    (400, failJson("見出しが空です"))
+                else {
+                    let now = LocalDateTime.now();
+                    let id = ticketDirName({
+                        stamp = now.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")),
+                        scene = fields#scene
+                    });
+                    let ticketDir = new JFile("${dir}/${ticketsRoot()}/${id}");
+                    discard ticketDir.mkdirs();
+                    if (not ticketDir.isDirectory())
+                        (500, failJson("チケットの置き場を作れませんでした: ${id}"))
+                    else {
+                        let readme = sketchReadme({
+                            title = fields#title,
+                            stamp = now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+                            body = fields#body,
+                            comment = fields#comment
+                        });
+                        match FileIndex.writeInside(str = readme, dir, "${ticketsRoot()}/${id}/README.md") {
+                            case Err(message) => (500, failJson("チケットを書けませんでした: ${message}"))
+                            case Ok(_)        =>
+                                copyScene(dir, fields#scene, "${dir}/${ticketsRoot()}/${id}/screenshot.png");
+                                (200, JObject(Map#{"ok" => JBool(true), "id" => JString(id)}))
+                        }
+                    }
+                }
+        }
+
+    /// 見比べていた絵をチケットの中へ写す。一覧のサムネイルは engine のチケットと同じ
+    /// screenshot.png を見るので、写さないと絵の無いチケットになる。
+    def copyScene(dir: String, scene: String, destPath: String): Unit \ IO =
+        let source = new JFile("${dir}/gallery/${scene}");
+        if (Gallery.isSafeName(scene) and source.isFile()) {
+            let out = new FileOutputStream(destPath);
+            out.write(Files.readAllBytes(source.toPath()));
+            out.close()
+        } else ()
+
     // ── 中身の読み取り ────────────────────────────────────
 
     /// debug/annotations 直下のチケットディレクトリ名たち (archive は除く)。置き場が無ければ空。
@@ -185,6 +265,20 @@ mod Annotations {
                 id      <- Map.get("id", obj) |> Option.flatMap(JsonCodec.expectString);
                 comment <- Map.get("comment", obj) |> Option.flatMap(JsonCodec.expectString)
             ) yield (id, comment))
+
+    /// body {title, comment, body, scene} の取り出し。title 以外は無くてよい。
+    def parseCreate(bodyText: String): Option[{title = String, comment = String, body = String, scene = String}] =
+        DocJson.parse(bodyText)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.map(obj -> {
+                title   = stringField("title", obj),
+                comment = stringField("comment", obj),
+                body    = stringField("body", obj),
+                scene   = stringField("scene", obj)
+            })
+
+    def stringField(name: String, obj: Map[String, Json]): String =
+        Map.get(name, obj) |> Option.flatMap(JsonCodec.expectString) |> Option.getWithDefault("")
 
     /// body {id} の取り出し。形が違えば None。
     def parseId(bodyText: String): Option[String] =

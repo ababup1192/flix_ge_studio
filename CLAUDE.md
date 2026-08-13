@@ -87,8 +87,8 @@ server が裏で叩く engine は `EDITOR_ENGINE`。`.app` では app が同梱 
 
 ### ジャンルとテンプレ（Genesis）
 
-「新しいゲーム」のジャンル 9 枚は `server/src/Genesis.flix` の families。`starter` が非空の
-ジャンルは複製で始まり（`templates/<name>` を engine の `make new-game`）、札のサムネは
+「新しいゲーム」のジャンル 9 枚は `server/src/Genesis.flix` の genres。`starter` が非空の
+ジャンルは複製で始まり（`templates/<name>` を engine の `make new-game`）、カードのサムネは
 その `golden/title.png`（無ければ golden の最初の絵に倒れる安全網あり）。テンプレを足す
 全手順は engine の CLAUDE.md「テンプレートを足す・更新する」に集約。足したら Studio 側で
 `starter` を差して **`make swap-jar`**。
@@ -108,7 +108,7 @@ server はゲームへの仕事 (実機再生・check・test・焼き・アト�
   (`~/.flix_ge_studio/games.json`)。server 再起動でも生きているゲームを引き継ぐ。
   停止は `POST /game/stop` (ミニプレイヤーの「■ 止める」)。
 - 裏の仕事の失敗はトースト + topbar の「⚠ ログ」バッジ → モーダルで全文が読める。
-  窓なしの仕事は 10 分で打ち切る見張り番つき。子プロセスの出力は UTF-8 固定 (文字化け対策)。
+  ウィンドウなしの仕事は 10 分で打ち切る見張り番つき。子プロセスの出力は UTF-8 固定 (文字化け対策)。
 - **flix を呼ぶときは必ず `-Xss16m`**（タスク表の argv と CI の両方）。Flix の型検査は式の
   深さぶん再帰するので、スレッドの既定スタックが 1MB の Windows では少し大きいコードで
   `StackOverflowError` になる。macOS/arm64 は既定 2MB なので手元では気づけない

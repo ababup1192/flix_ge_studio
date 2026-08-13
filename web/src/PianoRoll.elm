@@ -135,7 +135,7 @@ type alias Handlers msg =
     }
 
 
-{-| 譜 1 枚。playheadKey は再生位置の線の合鍵(波形と同じ物を渡すと、
+{-| 譜 1 枚。playheadKey は再生位置の線の照合キー(波形と同じ物を渡すと、
 1 回の再生で両方の線が動く)。
 -}
 view :
