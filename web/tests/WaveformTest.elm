@@ -68,7 +68,7 @@ suite =
                     |> Waveform.pressAt 0.2
                     |> Waveform.selection
                     |> Expect.equal Nothing
-        , test "負の秒は 0 に丸める(器の左端より外を押しても頭から)" <|
+        , test "負の秒は 0 に丸める(コンテナの左端より外を押しても頭から)" <|
             \_ ->
                 Waveform.init |> Waveform.pressAt -0.3 |> Waveform.playFrom |> Expect.equal 0
         ]

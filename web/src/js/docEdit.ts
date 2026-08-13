@@ -1,4 +1,4 @@
-// 正本(中央 textarea のテキスト)への最小テキスト編集。
+// 元データ(中央 textarea のテキスト)への最小テキスト編集。
 // jsonc-parser の modify/applyEdits は触ったキーの周りしか書き換えないので、
 // キー順・インデント・"//" 注釈キーが保たれる(全体を stringify し直さない)。
 
@@ -24,7 +24,7 @@ export function valueAt(text: string, path: PathSeg[]): { found: boolean; value:
   return { found: true, value: getNodeValue(node) };
 }
 
-// path が指す場所の文字の範囲(キーごと)。フォームで触っている欄が、正本の
+// path が指す場所の文字の範囲(キーごと)。フォームで触っている欄が、元データの
 // どの行なのかを画面に示すために使う。見つからなければ null。
 export function rangeAt(text: string, path: PathSeg[]): { from: number; to: number } | null {
   const root = parseTree(text);

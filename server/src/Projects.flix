@@ -15,7 +15,7 @@ mod Projects {
     // 可変の入れ物にならないので、Caches と同じく Java の Map を器として借りる。
     pub type alias Selection = JMap[String, String]
 
-    /// 器を作る。initial (起動時の EDITOR_DIR) があれば選択済みで始める。
+    /// コンテナを作る。initial (起動時の EDITOR_DIR) があれば選択済みで始める。
     pub def makeSelection(initial: Option[String]): Selection \ IO =
         let selection: Selection = new JMap();
         match initial {
@@ -32,10 +32,10 @@ mod Projects {
     pub def switchTo(dir: String, selection: Selection): Unit \ IO =
         discard selection.put("dir", dir)
 
-    /// 選択の関所 (純関数): 開けるプロジェクトを指しているときだけ選択を保つ。
+    /// 選択のゲート (純関数): 開けるプロジェクトを指しているときだけ選択を保つ。
     /// 消えた・移動した (exists が false) 選択は未選択 (None) に倒す — 幽霊を指したまま
     /// 全 API が黙って空振りし続けるより、選び直しの画面へ戻す (fail-open)。
-    /// 起動時の EDITOR_DIR と、リクエスト毎の現在選択の両方がこの関所を通る。
+    /// 起動時の EDITOR_DIR と、リクエスト毎の現在選択の両方がこのゲートを通る。
     pub def keepIfAlive(exists: String -> Bool \ ef, current: Option[String]): Option[String] \ ef =
         Option.filter(exists, current)
 
@@ -43,7 +43,7 @@ mod Projects {
     pub def clearSelection(selection: Selection): Unit \ IO =
         discard selection.remove("dir")
 
-    /// いまの選択 (関所つき)。選択中でも project.json が消えていれば未選択へ戻して None。
+    /// いまの選択 (ゲートつき)。選択中でも project.json が消えていれば未選択へ戻して None。
     pub def currentLiveDir(selection: Selection): Option[String] \ IO =
         match keepIfAlive(dir -> hasProjectJson(dir), currentDir(selection)) {
             case Some(dir) => Some(dir)

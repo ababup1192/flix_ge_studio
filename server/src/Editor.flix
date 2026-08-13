@@ -231,7 +231,7 @@ mod Editor {
                 handleGalleryImage(dir, params, exchange))
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
-            // 前回の焼きのコマ数の復元(dir はコマ別 PNG の置き場)
+            // 前回の焼きのフレーム数の復元(dir はフレーム別 PNG の置き場)
             case ("GET", "/gallery/count") => withProject(selection, exchange, dir ->
                 sendJson(200, JObject(Map#{
                     "ok"    => JBool(true),
@@ -262,7 +262,7 @@ mod Editor {
                 let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
             })
-            // 注釈チケット (ゲーム内 F8)。一覧・スクショ・一言の保存・アーカイブ。
+            // アノテーションチケット (ゲーム内 F8)。一覧・スクショ・一言の保存・アーカイブ。
             case ("GET", "/annotations/list") => withProject(selection, exchange, dir ->
                 sendJson(200, Annotations.listJson(dir), exchange))
             case ("GET", "/annotations/shot") => withProject(selection, exchange, dir ->
@@ -334,7 +334,7 @@ mod Editor {
                 sendJson(status, json, exchange)
             })
             case ("GET", "/game/log") => sendJson(200, Runner.logJson(game#state), exchange)
-            // こまったときの掃除。lock はプロジェクトの持ち物、フォントの焼き置きは
+            // こまったときの掃除。lock はプロジェクトの持ち物、フォントのキャッシュは
             // 全ゲーム共有 (どのプロジェクトから捨てても同じ 1 か所)。
             case ("POST", "/maintenance/clean-locks") => withProject(selection, exchange, dir -> {
                 let (status, json) = Maintenance.cleanLocks(dir);
@@ -351,7 +351,7 @@ mod Editor {
 
     /// 選択中プロジェクトが要るエンドポイントの門番。未選択は 200 の ok:false で理由を返す
     /// (エディタ画面はこれを見てプロジェクト選択へ誘導する)。
-    // 選択は関所つきで見る — 編集中にプロジェクトが消えた・移動したら、幽霊を指したまま
+    // 選択はゲートつきで見る — 編集中にプロジェクトが消えた・移動したら、幽霊を指したまま
     // IoError や空応答で黙って壊れ続けるより、「未選択」に戻して選び直しへ倒す (fail-open)。
     def withProject(selection: Projects.Selection, exchange: HttpExchange, respond: String -> Unit \ IO): Unit \ IO =
         match Projects.currentLiveDir(selection) {
@@ -403,7 +403,7 @@ mod Editor {
         }
 
     def handleProjects(selection: Projects.Selection, exchange: HttpExchange): Unit \ IO =
-        // current も関所つき — 消えたプロジェクトを「選択中」と見せない
+        // current もゲートつき — 消えたプロジェクトを「選択中」と見せない
         let current = Projects.currentLiveDir(selection);
         // 消えた・移動したプロジェクトは候補に出さない。減っていたら履歴ファイルも掃除する
         let stored = Projects.loadRecent();
@@ -614,7 +614,7 @@ mod Editor {
             |> Option.flatMap(obj -> Map.get("editor", obj))
             |> Option.flatMap(JsonCodec.expectObject)
             |> Option.map(obj -> Map.keysOf(obj) |> Set.toList
-                // "//" 始まりは注釈(文書の流儀と同じ)
+                // "//" 始まりはアノテーション(文書の流儀と同じ)
                 |> List.filter(k -> not (String.startsWith(prefix = "//", k)))
                 |> List.filter(k -> not Set.memberOf(k, known))
                 |> List.map(k -> "editor に未知のキー『${k}』があります(使えるのは resources / dashboards)"))
@@ -703,7 +703,7 @@ mod Editor {
     def handleChanges(dir: String, exchange: HttpExchange): Unit \ IO =
         // 全 JSON を報告する — 開いているファイルの外部変更の検知と、
         // 一覧の増減の追跡(新規・削除ファイル)の両方がこの一覧に乗る。
-        // かつては ui/fx/preview 系だけだったが、それだと素材(map/cutscene 等)の
+        // かつては ui/fx/preview 系だけだったが、それだとアセット(map/cutscene 等)の
         // 外部変更が誰にも見えず、一覧の突き合わせも常に食い違う。
         let all = FileIndex.listAllJson(dir);
         let entries = FileIndex.mtimesOf(dir, all);
@@ -740,7 +740,7 @@ mod Editor {
     /// ifMtime (GET /file が返した mtime) 付きなら、ディスクの現 mtime と違うとき 409 を返す —
     /// 別のウィンドウ・別プロセスが先に保存した内容を黙って上書きしない(最後の書き手勝ちの事故防止)。
     /// 省略時は従来どおり無条件で書く(後方互換)。
-    /// 見た目に効き得る素材の保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
+    /// 見た目に効き得るアセットの保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
     /// この応答が焼きの完了を待つことはない。
     def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, game: Game.Runtime, bodyText: String, exchange: HttpExchange): Unit \ IO =

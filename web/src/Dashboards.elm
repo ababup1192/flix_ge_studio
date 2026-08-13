@@ -21,7 +21,7 @@ module Dashboards exposing
 フレーバーテキスト・min/max 付き数値はメーター・unit は %・weights は重み棒・
 ref はプレビュー。ゲーム固有のプラグインは 2 例目の実需が出るまで作らない。
 
-編集の口は持たない(閲覧まで)。書き換えたい時のジャンプ先(正本ファイルの
+編集の口は持たない(閲覧まで)。書き換えたい時のジャンプ先(元のファイルの
 パスとエントリ)を値に含めるのはそのため。
 
 -}
@@ -427,7 +427,7 @@ peekOf docs target id =
             )
 
 
-{-| スキーマ無しの生の要約行(書いてある順・"//" 注釈は飛ばす)。 -}
+{-| スキーマ無しの生の要約行(書いてある順・"//" アノテーションは飛ばす)。 -}
 rawLines : D.Value -> List ( String, String )
 rawLines entry =
     D.decodeValue (D.keyValuePairs D.value) entry
@@ -446,7 +446,7 @@ stringField name entry =
     D.decodeValue (D.field name D.string) entry |> Result.toMaybe
 
 
-{-| キー→数値のオブジェクトだけ受ける("//" 注釈キーは文書の流儀どおり読み飛ばす)。
+{-| キー→数値のオブジェクトだけ受ける("//" アノテーションキーは文書の流儀どおり読み飛ばす)。
 数値でない値が混ざれば Nothing(Plain に倒す)。
 -}
 weightPairs : String -> D.Value -> Maybe (List ( String, Float ))

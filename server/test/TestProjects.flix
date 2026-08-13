@@ -32,7 +32,7 @@ mod TestProjects {
             (Projects.pruneRecent(dir -> dir != "/b", "/a" :: "/b" :: "/c" :: Nil),
              Projects.pruneRecent(_ -> false, "/a" :: "/b" :: Nil)))
 
-    /// 選択の関所: 開けない (exists が false) 選択は未選択 (None) に倒し、
+    /// 選択のゲート: 開けない (exists が false) 選択は未選択 (None) に倒し、
     /// 開ける選択と未選択はそのまま。起動時 EDITOR_DIR とリクエスト毎の現在選択の共通ルール。
     @Test
     def testKeepIfAlive(): Unit \ Assert =

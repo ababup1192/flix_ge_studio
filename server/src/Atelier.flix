@@ -175,7 +175,7 @@ mod Atelier {
         String.unlines(
             "/atelier-draft を実行してください。"
             :: "対象プロジェクト: ${projectDir}"
-            :: "素材スロット: ${slot} (entityId: ${entityText}, スキーマ: ${schemaPath})"
+            :: "アセットスロット: ${slot} (entityId: ${entityText}, スキーマ: ${schemaPath})"
             :: "案数: ${clampCount(count)} / 方向性: ${directionText}"
             :: "候補は atelier/ に置き、make atelier-preview まで済ませてください。assets/ には書かないこと。"
             :: Nil)
@@ -214,7 +214,7 @@ mod Atelier {
             |> Option.map(decls -> decls#resources)
             |> Option.getWithDefault(Nil)
 
-    /// GET /atelier/slots の本文。assets/ 直下の JSON のうち、素材 (role=material) の
+    /// GET /atelier/slots の本文。assets/ 直下の JSON のうち、アセット (role=material) の
     /// 宣言に当たるものだけを並べる。*.schema.json は仕様書なので除く。
     pub def slotsJson(dir: String): Json \ IO =
         let decls = resourceDecls(dir);
@@ -241,15 +241,15 @@ mod Atelier {
         }
 
     /// GET /prompt/atelier?slot=…&count=…&direction=… の応答 (status, body)。
-    /// スロットは経路の門番と素材宣言の両方に当たって初めて通す。
+    /// スロットは経路の門番とアセット宣言の両方に当たって初めて通す。
     pub def promptAtelierJson(dir: String, params: Map[String, String]): (Int32, Json) \ IO =
         match Map.get("slot", params) {
             case None => (400, failJson("slot を指定してください"))
             case Some(slot) =>
                 if (not isSlotPath(slot))
-                    (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
+                    (400, failJson("不正なアセットスロットの経路です (assets/ 直下のみ): ${slot}"))
                 else match ResourceDecl.materialDeclFor(resourceDecls(dir), slot) {
-                    case None => (400, failJson("素材スロット (role=material) ではありません: ${slot}"))
+                    case None => (400, failJson("アセットスロット (role=material) ではありません: ${slot}"))
                     case Some(decl) =>
                         let entityId = fieldString("entityId", topFields(readText("${dir}/${slot}")));
                         let schemaPath = decl#schemaPath
@@ -287,18 +287,18 @@ mod Atelier {
 
     def copyChecked(dir: String, slot: String, name: String): (Int32, Json) \ IO =
         if (not isSlotPath(slot))
-            (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
+            (400, failJson("不正なアセットスロットの経路です (assets/ 直下のみ): ${slot}"))
         else if (not isCopyBaseName(name))
             (400, failJson("不正な名前です (英数・_ - と途中の . のみ): ${name}"))
         else if (not new JFile("${dir}/${slot}").isFile())
-            (400, failJson("素材スロットがありません: ${slot}"))
+            (400, failJson("アセットスロットがありません: ${slot}"))
         else {
             let slotName = String.dropLeft(String.length("assets/"), slot);
             let target = "atelier/${copyTargetName(slotName, name)}";
             if (new JFile("${dir}/${target}").isFile())
                 (409, failJson("すでにあります: ${target}"))
             else match DocJson.parse(readText("${dir}/${slot}")) |> Option.flatMap(JsonCodec.expectObject) {
-                case None => (400, failJson("素材スロットの JSON が読めません: ${slot}"))
+                case None => (400, failJson("アセットスロットの JSON が読めません: ${slot}"))
                 case Some(obj) => {
                     let stamped = Map.insert("note", JString("自作 (元: ${slot})"), obj);
                     discard new JFile("${dir}/atelier").mkdirs();
@@ -343,7 +343,7 @@ mod Atelier {
                 isCompatible(slot#entityId, slot#name, cand#entityId, cand#name), slots))
             |> List.map(cand -> JObject(Map#{
                 "file"   => JString("atelier/${cand#name}"),
-                "reason" => JString("互換する素材スロットが見つかりません")
+                "reason" => JString("互換するアセットスロットが見つかりません")
             }));
         let baking = maybeAutoBake(runner, dir, candidates, bundles |> List.map(fst));
         JObject(Map#{
@@ -361,7 +361,7 @@ mod Atelier {
             List.exists(cand -> not previewFresh(dir, "atelier/${cand#name}", cand#mtime), candidates)
                 or List.exists(slot -> not previewFresh(dir, "assets/${slot#name}", slot#mtime), slots);
         if (stale and not baking) {
-            let (status, _) = Runner.launchTarget(runner, dir, "atelier-preview", busy = "焼いている最中です");
+            let (status, _) = Runner.launchTarget(runner, dir, "atelier-preview", busy = "描き出している最中です");
             status == 202
         } else
             baking
@@ -442,11 +442,11 @@ mod Atelier {
         if (not (isCandidatePath(candidate) or isArchivedPath(candidate)))
             (400, failJson("不正な候補の経路です (atelier/ か atelier/archive/ 直下のみ): ${candidate}"))
         else if (not isSlotPath(slot))
-            (400, failJson("不正な素材スロットの経路です (assets/ 直下のみ): ${slot}"))
+            (400, failJson("不正なアセットスロットの経路です (assets/ 直下のみ): ${slot}"))
         else if (not new JFile("${dir}/${candidate}").isFile())
             (400, failJson("候補がありません: ${candidate}"))
         else if (not new JFile("${dir}/${slot}").isFile())
-            (400, failJson("素材スロットがありません: ${slot}"))
+            (400, failJson("アセットスロットがありません: ${slot}"))
         else {
             let slotName = String.dropLeft(String.length("assets/"), slot);
             let candName = String.splitOn(substr = "/", candidate)
@@ -454,7 +454,7 @@ mod Atelier {
             let slotEntity = fieldString("entityId", topFields(readText("${dir}/${slot}")));
             let candEntity = fieldString("entityId", topFields(readText("${dir}/${candidate}")));
             if (not isCompatible(slotEntity, slotName, candEntity, candName))
-                (400, failJson("候補と素材スロットの entityId が合いません (互換性がありません)"))
+                (400, failJson("候補とアセットスロットの entityId が合いません (互換性がありません)"))
             else
                 swap(dir, candidate, slot, slotName)
         }

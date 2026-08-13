@@ -186,12 +186,12 @@ suite =
                                 }
                             )
             ]
-        , describe "セクション分け(入口 / 素材 / 調整 / アーカイブ)"
-            [ test "最初は入口(候補があっても勝手に素材へ飛ばない)" <|
+        , describe "セクション分け(入口 / アセット / 調整 / アーカイブ)"
+            [ test "最初は入口(候補があっても勝手にアセットへ飛ばない)" <|
                 \_ ->
                     ( Atelier.showLanding withCandidates, Atelier.showPicks withCandidates )
                         |> Expect.equal ( True, False )
-            , test "素材を開いて「← アトリエ」で入口へ戻れる" <|
+            , test "アセットを開いて「← アトリエ」で入口へ戻れる" <|
                 \_ ->
                     let
                         opened =
@@ -204,7 +204,7 @@ suite =
                     in
                     ( Atelier.showPicks opened, Atelier.showLanding back )
                         |> Expect.equal ( True, True )
-            , test "調整を開くと入口でも素材でもアーカイブでもない" <|
+            , test "調整を開くと入口でもアセットでもアーカイブでもない" <|
                 \_ ->
                     let
                         opened =
@@ -214,7 +214,7 @@ suite =
                     in
                     ( Atelier.showLanding opened, Atelier.showPicks opened, Atelier.showArchiver opened )
                         |> Expect.equal ( False, False, False )
-            , test "アーカイブを開くと第 3 のセクション(入口でも素材でもない)" <|
+            , test "アーカイブを開くと第 3 のセクション(入口でもアセットでもない)" <|
                 \_ ->
                     let
                         opened =
@@ -235,8 +235,8 @@ suite =
                         |> Atelier.hasCandidates
                         |> Expect.equal False
             ]
-        , describe "素材スロットの行(素材を切り替えるの一覧)"
-            [ test "宣言された素材が全部行になり、候補はスロット別に付き、いまの素材の vN はアーカイブ履歴から導く" <|
+        , describe "アセットスロットの行(アセットを切り替えるの一覧)"
+            [ test "宣言されたアセットが全部行になり、候補はスロット別に付き、いまのアセットの vN はアーカイブ履歴から導く" <|
                 \_ ->
                     let
                         model =

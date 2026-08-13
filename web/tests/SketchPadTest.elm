@@ -60,7 +60,7 @@ dragEdge edge ( dx, dy ) model =
         |> Tuple.first
 
 
-{-| 2x2 を 1 マスだけ塗った最小の模型。
+{-| 2x2 を 1 セルだけ塗った最小の模型。
 
     W .        W = 壁(ひとこと付き)
     . .
@@ -156,18 +156,18 @@ suite =
         , describe "promptSection(依頼文の一節)"
             [ test "何も塗らず補足も空なら Nothing(依頼文は今まで通り)" <|
                 \_ -> SketchPad.promptSection SketchPad.init |> Expect.equal Nothing
-            , test "塗りがあれば、凡例(ひとこと付き)・マス目・補足・原本パスが 1 節にまとまる" <|
+            , test "塗りがあれば、凡例(ひとこと付き)・セル目・補足・原本パスが 1 節にまとまる" <|
                 \_ ->
                     SketchPad.promptSection paintedModel
                         |> Expect.equal
                             (Just
                                 (String.join "\n"
-                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1マス。塗りから自動生成）"
+                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1セル。塗りから自動生成）"
                                     , "凡例: W=壁（崩れかけた石壁）  .=空き"
                                     , "W."
                                     , ".."
                                     , "補足: 左が入り口"
-                                    , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
+                                    , "凡例のかっこ内は意図です。ラフなのでセル単位の忠実さは不要です。雰囲気が伝われば十分です。"
                                     , "原本: draft/sketch/stage2/v1.json"
                                     ]
                                 )
@@ -194,7 +194,7 @@ suite =
                         |> Expect.equal "ただの文\n\n## 画面のラフ"
             ]
         , describe "update(一筆と undo)"
-            [ test "押して→なぞって→離す、で 2 マス塗れて undo は一筆 1 本" <|
+            [ test "押して→なぞって→離す、で 2 セル塗れて undo は一筆 1 本" <|
                 \_ ->
                     let
                         ( afterStroke, _ ) =
@@ -223,7 +223,7 @@ suite =
                         |> Expect.equal ( [ "..", ".." ], 0 )
             ]
         , describe "リサイズ(はみ出した塗りの保持と復元)"
-            [ test "角を左上へ 2 マスぶん引くと 4x3 になり、右下の F は見えなくなる" <|
+            [ test "角を左上へ 2 セルぶん引くと 4x3 になり、右下の F は見えなくなる" <|
                 \_ ->
                     let
                         shrunk =
@@ -408,7 +408,7 @@ suite =
                         |> Expect.equal ( cornerModel.size, SketchPad.activeRows cornerModel )
             ]
         , describe "形の道具(直線・矩形・楕円)"
-            [ test "直線: 押して→引いて→離す、で対角 3 マスが塗れて undo は 1 本" <|
+            [ test "直線: 押して→引いて→離す、で対角 3 セルが塗れて undo は 1 本" <|
                 \_ ->
                     let
                         ( after, _ ) =
@@ -458,7 +458,7 @@ suite =
                         |> Tuple.first
                         |> SketchPad.activeRows
                         |> Expect.equal [ "WWWW..", "W..W..", "WWWW..", "......" ]
-            , test "楕円: 確定で始点の列と終点の列にマスが塗られ、undo で戻る" <|
+            , test "楕円: 確定で始点の列と終点の列にセルが塗られ、undo で戻る" <|
                 \_ ->
                     let
                         ( after, _ ) =
@@ -480,7 +480,7 @@ suite =
                         |> Expect.equal ( True, True, blankRows )
             ]
         , describe "ラベルの削除"
-            [ test "削除で凡例から消え、塗ってあったマスは空きに戻り、選択は残りの先頭に移る" <|
+            [ test "削除で凡例から消え、塗ってあったセルは空きに戻り、選択は残りの先頭に移る" <|
                 \_ ->
                     let
                         ( after, _ ) =
@@ -522,7 +522,7 @@ suite =
                     ( List.map .char after.legend, SketchPad.activeRows after )
                         |> Expect.equal ( [ 'W', 'F' ], [ "WF", ".." ] )
             ]
-        , describe "マスの大きさ"
+        , describe "セルの大きさ"
             [ test "32 までは入力どおり" <|
                 \_ ->
                     stepAll [ SketchPad.CellSizeEdited "32" ] cornerModel
@@ -541,7 +541,7 @@ suite =
                         |> Tuple.first
                         |> .cellPx
                         |> Expect.equal 20
-            , test "マスを 10px にすると、右つまみ +45px は round(45/10)=5 列増える(スナップが追随)" <|
+            , test "セルを 10px にすると、右つまみ +45px は round(45/10)=5 列増える(スナップが追随)" <|
                 \_ ->
                     stepAll [ SketchPad.CellSizeEdited "10" ] cornerModel
                         |> Tuple.first
@@ -571,7 +571,7 @@ suite =
                     , String.contains "雰囲気が伝われば十分です。" section
                     )
                         |> Expect.equal ( True, True )
-            , test "段階 4: 見出しに段階名、末尾にマス単位で忠実の注文が出る" <|
+            , test "段階 4: 見出しに段階名、末尾にセル単位で忠実の注文が出る" <|
                 \_ ->
                     let
                         section =
@@ -579,7 +579,7 @@ suite =
                                 |> Maybe.withDefault ""
                     in
                     ( String.contains "再現度: 忠実再現" section
-                    , String.contains "マス単位でできるだけ忠実に再現してください。" section
+                    , String.contains "セル単位でできるだけ忠実に再現してください。" section
                     )
                         |> Expect.equal ( True, True )
             , test "スライダー入力は 1〜4 に丸め、数字でない入力は無視する" <|
@@ -753,7 +753,7 @@ suite =
                     stepAll [ SketchPad.LayerDeleted ] paintedModel
                         |> Tuple.second
                         |> Expect.equal (SketchPad.OutToast "最後の 1 枚は削除できません")
-            , test "残り 1 枚のときの削除は絵を 1 マスも変えない" <|
+            , test "残り 1 枚のときの削除は絵を 1 セルも変えない" <|
                 \_ ->
                     stepAll [ SketchPad.LayerDeleted ] paintedModel
                         |> Tuple.first
@@ -856,19 +856,19 @@ suite =
                         |> Tuple.first
                         |> SketchPad.layerRows 0
                         |> Expect.equal [ "..", "F." ]
-            , test "ラベルを消すと、ほかのレイヤーで塗ったマスも消える" <|
+            , test "ラベルを消すと、ほかのレイヤーで塗ったセルも消える" <|
                 \_ ->
                     stepAll [ SketchPad.ChipDeleted ] { layeredModel | editing = Just 'F' }
                         |> Tuple.first
                         |> SketchPad.layerRows 0
                         |> Expect.equal [ "..", ".." ]
-            , test "レイヤーに分けたラフの依頼文は、レイヤーごとにマス目を 1 枚ずつ書く" <|
+            , test "レイヤーに分けたラフの依頼文は、レイヤーごとにセル目を 1 枚ずつ書く" <|
                 \_ ->
                     SketchPad.promptSection layeredModel
                         |> Expect.equal
                             (Just
                                 (String.join "\n"
-                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1マス。塗りから自動生成）"
+                                    [ "## 画面のラフ（カメラ: 見下ろし、2x2、再現度: 雰囲気再現、1文字=1セル。塗りから自動生成）"
                                     , "凡例: W=壁（崩れかけた石壁）  F=床  .=空き"
                                     , "レイヤー: あとに書いたものほど手前に重なります。レイヤーごとに 1 枚ずつ書きます。"
                                     , "### 1枚目"
@@ -881,7 +881,7 @@ suite =
                                     , ".F"
                                     , ".."
                                     , "補足: 左が入り口"
-                                    , "凡例のかっこ内は意図です。ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
+                                    , "凡例のかっこ内は意図です。ラフなのでセル単位の忠実さは不要です。雰囲気が伝われば十分です。"
                                     , "原本: draft/sketch/stage2/v1.json"
                                     ]
                                 )
@@ -908,7 +908,7 @@ suite =
         ]
 
 
-{-| cornerModel と同じ 6x4 の何も塗っていないマス目。 -}
+{-| cornerModel と同じ 6x4 の何も塗っていないセル目。 -}
 blankRows : List String
 blankRows =
     List.repeat 4 "......"

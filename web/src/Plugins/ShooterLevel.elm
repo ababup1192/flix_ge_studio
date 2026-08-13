@@ -23,7 +23,7 @@ import Json.Encode as E
 
 
 {-| レジストリ(Plugins.plugins)へ渡す束。id は project.json の "plugin" に
-書かれる公開名。型注釈が Plugins.Plugin の写しなのは、alias を import すると
+書かれる公開名。型アノテーションが Plugins.Plugin の写しなのは、alias を import すると
 Plugins(実装一覧を持つ側)⇄ ここ の循環になるため — record は構造的に一致すれば
 同じ型なので、写しでもコンパイラが食い違いを検出してくれる。
 preview を Just 固定にできるのは、壊れた JSON は呼び側がパースの段で弾いていて、
@@ -340,7 +340,7 @@ clampPoint designH point =
     { x = max 0 point.x, y = clamp 0 designH point.y }
 
 
-{-| mouseup で正本へ流す編集列。round は docEdit の isInt=true と対 —
+{-| mouseup で元データへ流す編集列。round は docEdit の isInt=true と対 —
 ドラッグ由来の端数を JSON に書かないため。
 -}
 dragEdits : Float -> Point -> List { field : String, value : Int }

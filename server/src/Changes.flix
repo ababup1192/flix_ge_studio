@@ -1,15 +1,15 @@
 // Changes — 検査と基準の自動追随。ユーザーに儀式は求めない:
-// 変わったら知らせる・見たければ前と今を見比べる・戻すのは素材のバージョン(アーカイブ)。
+// 変わったら知らせる・見たければ前と今を見比べる・戻すのはアセットのバージョン(アーカイブ)。
 //
 // pump が 1 目盛り進める (journey/state と GET /changes が呼ぶ):
-//   1. 素材が絵より新しい (stale) → 走行権が空いていれば焼きを裏で起こす。
+//   1. アセットが絵より新しい (stale) → 走行権が空いていれば焼きを裏で起こす。
 //      このプロジェクトのゲームが走っていて命令口 (DEBUG_HTTP_PORT) を覚えていれば
 //      走行中のゲームに頼み (速い)、それ以外は従来の make bake
 //   2. 焼きたてでリファレンス画像と違う絵がある → 旧いリファレンス画像を reference/archive/ の vN へ退避し、
 //      新しい絵を基準にする (自動追随)。変わった場面を記録し、未読の知らせにする
 //   3. 初めての場面 (基準が無い) は黙って基準になる (知らせない)
 //
-// 記録はサーバの生存中だけ (メモリ)。事故の警報が目的で、台帳ではない —
+// 記録はサーバの生存中だけ (メモリ)。事故の警報が目的で、レジストリではない —
 // 「触っていないのに知らせが来た」を成立させるのが仕事。
 mod Changes {
     import java.util.concurrent.{ConcurrentHashMap => JMap}
@@ -31,7 +31,7 @@ mod Changes {
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingReference") |> List.map(fst);
-        let running = Runner.runningTarget(runner) == Some("bake");
+        let running = Runner.runningTarget(runner) == Some("render");
         let stale = NextStep.staleGalleryOf(dir);
         let baking =
             if (stale and not running) {
@@ -66,7 +66,7 @@ mod Changes {
                     forget = () -> Game.forgetPort(game#ports, dir),
                     busy = "ほかの作業が走っています")
             case None =>
-                Runner.launchTarget(runner, dir, "bake", busy = "ほかの作業が走っています")
+                Runner.launchTarget(runner, dir, "render", busy = "ほかの作業が走っています")
         }
 
     /// POST /changes/seen — 知らせを既読にする。
@@ -120,7 +120,7 @@ mod Changes {
         }
 
     /// この相対パスへの保存が検査 (pump) をその場で蹴る対象か —
-    /// 見た目に効き得る素材 (assets/ の JSON) だけ。stale 判定が見るのも assets/ の
+    /// 見た目に効き得るアセット (assets/ の JSON) だけ。stale 判定が見るのも assets/ の
     /// JSON なので、それに合わせる。gallery/ や reference/ や debug/ への書き込みでは
     /// 蹴らない — 焼きの成果物の保存がまた焼きを呼ぶ、という堂々巡りをここで断つ。
     /// 対象を広めに拾っても pump は冪等 (stale と走行権で守られる) なので安全。

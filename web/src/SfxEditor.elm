@@ -19,7 +19,7 @@ module SfxEditor exposing
 
 {-| 効果音のつまみを、絵を見ながら触る画面。
 
-正本はいつも文書(\*.sfxtune.json)の数値で、ここは「絵の上の操作 → 数値 1 つの
+元データはいつも文書(\*.sfxtune.json)の数値で、ここは「絵の上の操作 → 数値 1 つの
 書き換え」に写すだけ。生の標本は編集しない — 音を作るのはゲーム側なので、
 エディタが波形を直接いじれても保存する場所が無い。
 
@@ -523,7 +523,7 @@ viewToolbar config model shape =
             [ HA.class "sfx-btn sfx-play"
             , HA.type_ "button"
             , HA.disabled model.starting
-            , HA.title "いまのつまみで焼き直して鳴らします"
+            , HA.title "いまのつまみで描き出し直して鳴らします"
             , HE.onClick (PlayPressed config.sound)
             ]
             [ text "▶ 試聴" ]
@@ -564,14 +564,14 @@ viewToolbar config model shape =
                     , span [] [ text "アタック ", Html.b [] [ text (msText (s.ms * e.head)) ] ]
                     , span [] [ text "大きさ ", Html.b [] [ text (pctText (shownLevel config model s)) ] ]
                     , if drifted config model then
-                        span [ HA.class "sfx-flag" ] [ text "仮の絵（保存して焼き直すと本物に）" ]
+                        span [ HA.class "sfx-flag" ] [ text "仮の絵（保存して描き出し直すと本物に）" ]
 
                       else
                         text ""
                     ]
 
                 Nothing ->
-                    [ span [] [ text "まだ焼かれていません" ] ]
+                    [ span [] [ text "まだ描き出されていません" ] ]
             )
         , if model.starting then
             span [ HA.class "sfx-flag" ]

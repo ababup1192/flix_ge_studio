@@ -20,12 +20,12 @@ mod TestEngineTasks {
         Assert.assertEq(
             expected = (
                 ("/jre/bin/java" :: "-XstartOnFirstThread" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
-                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
-                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "Bake.all" :: Nil),
+                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
+                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
                 ("/jre/bin/java" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil)),
             (EngineTasks.argv(exec, true, Task.Debug),
-             EngineTasks.argv(exec, true, Task.Bake),
-             EngineTasks.argv(exec, false, Task.Bake),
+             EngineTasks.argv(exec, true, Task.Render),
+             EngineTasks.argv(exec, false, Task.Render),
              EngineTasks.argv(exec, false, Task.Debug)))
 
     /// java の選び方: EDITOR_JAVA が最優先・無ければ自分の JVM・どちらも無ければ
@@ -56,7 +56,7 @@ mod TestEngineTasks {
                 "check" :: Nil,
                 "test" :: Nil,
                 "run" :: "--entrypoint" :: "Palette.write" :: Nil,
-                "run" :: "--entrypoint" :: "Bake.atelier" :: Nil,
+                "run" :: "--entrypoint" :: "SceneRender.atelier" :: Nil,
                 "run" :: "--entrypoint" :: "SfxPreview.main" :: Nil),
             (EngineTasks.flixArgs(Task.Debug),
              EngineTasks.flixArgs(Task.Check),
@@ -74,7 +74,7 @@ mod TestEngineTasks {
              EngineTasks.isHeadless(Task.Check),
              EngineTasks.isHeadless(Task.Test),
              EngineTasks.isHeadless(Task.Palette),
-             EngineTasks.isHeadless(Task.Bake),
+             EngineTasks.isHeadless(Task.Render),
              EngineTasks.isHeadless(Task.AtelierPreview),
              EngineTasks.isHeadless(Task.EntryPoint("X.y"))))
 
@@ -83,7 +83,7 @@ mod TestEngineTasks {
     def testEnvOf(): Unit \ Assert =
         Assert.assertEq(
             expected = (("DEBUG", "true") :: Nil, (Nil: List[(String, String)])),
-            (EngineTasks.envOf(Task.Debug), EngineTasks.envOf(Task.Bake)))
+            (EngineTasks.envOf(Task.Debug), EngineTasks.envOf(Task.Render)))
 
     /// studioTasks 宣言の読み方: 名前の一致した仕事の entrypoint だけ返す。
     /// 宣言が無い・別の仕事・形が壊れている、は None (宣言なしに倒す)。

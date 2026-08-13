@@ -1,5 +1,5 @@
 // Maintenance — こまったときの掃除。ビルドの詰まり (lib/cache に残った *.lock) と
-// フォントの焼き置き (全ゲーム共有のキャッシュ) を、画面のボタンから捨てられるようにする。
+// フォントのキャッシュ (全ゲーム共有のキャッシュ) を、画面のボタンから捨てられるようにする。
 // 遊んでいるときの重さを直す係ではない — 「始まらない・固まる・字が乱れる」への手当て。
 
 mod Maintenance {
@@ -16,7 +16,7 @@ mod Maintenance {
         let removed = removeLocksUnder(new JFile("${dir}/lib/cache"));
         (200, JObject(Map#{"ok" => JBool(true), "removed" => JNumber(JsonCodec.intToBd(removed))}))
 
-    /// フォントの焼き置き (全ゲーム共有) を捨てる。壊れた焼き置きで字が乱れたときの手。
+    /// フォントのキャッシュ (全ゲーム共有) を捨てる。壊れたキャッシュで字が乱れたときの手。
     /// 次の起動は焼き直しになるぶん遅い — だから自動では消さず、ボタンにだけ置く。
     pub def clearFontCache(): (Int32, Json) \ IO =
         let custom = System.getenv("FLIX_GE_CACHE_DIR");
@@ -27,7 +27,7 @@ mod Maintenance {
 
     // ── 純粋なルール (ここだけテストする) ──────────────────
 
-    /// 焼き置きの場所。ゲーム側 (render_gl の FontCache) と同じ決まりに揃える:
+    /// キャッシュの場所。ゲーム側 (render_gl の FontCache) と同じ決まりに揃える:
     /// FLIX_GE_CACHE_DIR があればそこ、無ければ ~/.cache/flix_game_engine/font。
     /// 空白だけの指定は「無し」と同じに扱う (空の環境変数で家の外を消さないため)。
     pub def fontCacheDir(custom: Option[String], home: {home = String}): String =

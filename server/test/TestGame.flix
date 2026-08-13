@@ -3,7 +3,7 @@
 
 mod TestGame {
 
-    /// 覚え書きの値の解釈: 数値の記録だけがポート。無記録 (器の get が null = None) と
+    /// 覚え書きの値の解釈: 数値の記録だけがポート。無記録 (コンテナの get が null = None) と
     /// 数値でない記録は None = 命令口は知らない (従来の make bake へ倒れる)。
     @Test
     def testPortFromRecord(): Unit \ Assert =

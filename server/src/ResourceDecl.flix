@@ -19,7 +19,7 @@ mod ResourceDecl {
         schemaPath = Option[String],    // 入力フォームの形を決めるスキーマファイル
         plugin = Option[String],        // 専用の編集画面プラグイン名。無ければ汎用フォームで編集する
         builtin = Bool,                 // true = サーバ組み込み (ui / hitbox)。project.json 由来は false
-        role = Option[String],          // "material" (素材 = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
+        role = Option[String],          // "material" (アセット = アトリエの対象) / "tuning" (調整値)。無指定は tuning 扱い
         bakeUrl = Option[String],       // 焼き係 (ゲーム側の常駐サーバ) の URL。宣言があれば画面に「焼く」が出る
         bakeCmd = Option[String],       // 焼き係の起こし方。繋がらない時だけ、この手をプロジェクトの根で撃つ
         performCmd = Option[String],    // 実機で演じさせる手 (画面はまだ使わない — 素通しだけ)
@@ -27,11 +27,11 @@ mod ResourceDecl {
     }
 
     /// アトリエ (つくる) の対象か。role の明示的な "material" だけを通す —
-    /// role 欠落は "tuning" 扱い (fail-open: 古い project.json は素材ゼロになるだけ)。
+    /// role 欠落は "tuning" 扱い (fail-open: 古い project.json はアセットゼロになるだけ)。
     pub def isMaterial(decl: Decl): Bool =
         decl#role == Some("material")
 
-    /// path が素材 (role=material) のどの宣言に当たるかを選ぶ (純粋)。最初の一致を返す。
+    /// path がアセット (role=material) のどの宣言に当たるかを選ぶ (純粋)。最初の一致を返す。
     pub def materialDeclFor(decls: List[Decl], path: String): Option[Decl] =
         decls |> List.find(decl -> isMaterial(decl)
             and not List.isEmpty(matchFiles(decl#pattern, path :: Nil)))

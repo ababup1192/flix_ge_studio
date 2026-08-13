@@ -1,7 +1,7 @@
 module DashboardFlowTest exposing (suite)
 
 {-| ダッシュボード(C2.5)の配線フロー:
-宣言 → 一覧の節 → uses 全ファイルの読み込み → のぞき窓 → ジャンプ(dirty 関所込み)。
+宣言 → 一覧の節 → uses 全ファイルの読み込み → のぞき窓 → ジャンプ(dirty ゲート込み)。
 封筒の出し入れの作法は FlowTest と同じ(elm-program-test+模擬ポート)。
 -}
 
@@ -314,7 +314,7 @@ suite =
                     |> respondOk 9 "getFile" (fileBody "assets/weapons.schema.json" weaponsSchemaText)
                     |> ProgramTest.expectView
                         (Query.find [ class "entry-id" ] >> Query.has [ text "claw" ])
-        , test "dirty のままのぞき窓ジャンプ: 関所が出て、破棄を選ぶと開く" <|
+        , test "dirty のままのぞき窓ジャンプ: ゲートが出て、破棄を選ぶと開く" <|
             \() ->
                 booted
                     |> ProgramTest.clickButton "assets/enemies.json"

@@ -124,7 +124,7 @@ suite =
                         |> Expect.equal False
             ]
         , describe "ラフの中身"
-            [ test "読めた中身はマスの並びとして持つ" <|
+            [ test "読めた中身はセルの並びとして持つ" <|
                 \_ ->
                     ready
                         |> SketchCompare.selectSketch "battle"
@@ -170,19 +170,19 @@ suite =
                         |> SketchCompare.selectedScene
                         |> Expect.equal (Just "title.png")
             ]
-        , describe "マスを指す"
-            [ test "押したマスを指す" <|
+        , describe "セルを指す"
+            [ test "押したセルを指す" <|
                 \_ ->
                     picked
                         |> SketchCompare.pickedCell
                         |> Expect.equal (Just { x = 2, y = 1 })
-            , test "同じマスをもう一度押したら指すのをやめる" <|
+            , test "同じセルをもう一度押したら指すのをやめる" <|
                 \_ ->
                     picked
                         |> SketchCompare.pickCell { x = 2, y = 1 }
                         |> SketchCompare.pickedCell
                         |> Expect.equal Nothing
-            , test "別のバージョンへ移ったら指した場所は忘れる(マスの数が変わる)" <|
+            , test "別のバージョンへ移ったら指した場所は忘れる(セルの数が変わる)" <|
                 \_ ->
                     ready
                         |> SketchCompare.selectSketch "title"
@@ -193,7 +193,7 @@ suite =
                         |> Expect.equal Nothing
             ]
         , describe "やること一覧へ並べる"
-            [ test "マスを指してひとことを書けば並べられる" <|
+            [ test "セルを指してひとことを書けば並べられる" <|
                 \_ ->
                     picked
                         |> SketchCompare.setNote "空が明るすぎる"
@@ -205,7 +205,7 @@ suite =
                         |> SketchCompare.setNote "   "
                         |> SketchCompare.canSubmit
                         |> Expect.equal False
-            , test "マスを指していなければ並べられない" <|
+            , test "セルを指していなければ並べられない" <|
                 \_ ->
                     ready
                         |> SketchCompare.selectScene "title.png"
@@ -242,7 +242,7 @@ suite =
                         [ True, True, True, True ]
                         [ String.contains "gallery/title.png" body
                         , String.contains "draft/sketch/battle/v1.json" body
-                        , String.contains "左から 3 マス目・上から 2 マス目" body
+                        , String.contains "左から 3 セル目・上から 2 セル目" body
                         , String.contains "壁" body
                         ]
             , test "並べ終わったらひとことは画面から消える(同じ言葉を二度並べない)" <|
@@ -264,7 +264,7 @@ suite =
         ]
 
 
-{-| 絵とラフを選び、中身が届いて、マスを 1 つ指した状態。 -}
+{-| 絵とラフを選び、中身が届いて、セルを 1 つ指した状態。 -}
 picked : SketchCompare.Model
 picked =
     ready

@@ -23,7 +23,7 @@ mod EngineTasks {
         /// パレット (色の対応表) を書き出す。焼きの前段。
         case Palette
         /// 絵と音を焼き出す。
-        case Bake
+        case Render
         /// アトリエの試し焼き。
         case AtelierPreview
         /// 任意の入口を指名して走らせる (project.json の studioTasks 宣言が使う)。
@@ -42,8 +42,8 @@ mod EngineTasks {
             case Task.Check            => "check" :: Nil
             case Task.Test             => "test" :: Nil
             case Task.Palette          => "run" :: "--entrypoint" :: "Palette.write" :: Nil
-            case Task.Bake             => "run" :: "--entrypoint" :: "Bake.all" :: Nil
-            case Task.AtelierPreview   => "run" :: "--entrypoint" :: "Bake.atelier" :: Nil
+            case Task.Render           => "run" :: "--entrypoint" :: "SceneRender.all" :: Nil
+            case Task.AtelierPreview   => "run" :: "--entrypoint" :: "SceneRender.atelier" :: Nil
             case Task.EntryPoint(name) => "run" :: "--entrypoint" :: name :: Nil
         }
 

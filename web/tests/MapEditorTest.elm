@@ -1,6 +1,6 @@
 module MapEditorTest exposing (suite)
 
-{-| マップの手直しのルールだけを検査する: 文書の読み取り(x,y 持ちの機械検出)・
+{-| マップのクイック編集のルールだけを検査する: 文書の読み取り(x,y 持ちの機械検出)・
 広げる・配置の移動・地形パレットの fail-open。見た目(色の見え方・印の描画)は
 テストしない。
 -}
@@ -42,7 +42,7 @@ mapDoc =
     MapEditor.fromDoc [] Nothing (parse mapJson)
 
 
-{-| kaidan の triggers と同じ形: マスを見ない行(on:enter)と、マスを踏む行が
+{-| kaidan の triggers と同じ形: セルを見ない行(on:enter)と、セルを踏む行が
 1 つの配列に混ざる。
 -}
 mixedJson : String
@@ -99,7 +99,7 @@ suite =
                     shape doc =
                         doc |> Maybe.map (.groups >> List.map (\g -> ( g.key, marks g.kind )))
 
-                    -- マスを見ない行だけの配列(kaidan の musicroom)も件数として残る
+                    -- セルを見ない行だけの配列(kaidan の musicroom)も件数として残る
                     enterOnly =
                         MapEditor.fromDoc [] Nothing
                             (parse """{ "rows": [ "..", ".." ], "triggers": [ { "on": "enter", "says": [ "…" ] } ] }""")
@@ -120,7 +120,7 @@ suite =
                             ( m1, _ ) =
                                 MapEditor.update doc (MapEditor.PlaceChosen "triggers") MapEditor.init
 
-                            -- 先頭の印(元の添字 1)を選び、別のマスへ
+                            -- 先頭の印(元の添字 1)を選び、別のセルへ
                             ( m2, _ ) =
                                 MapEditor.update doc (MapEditor.CellPressed 1 1 0) m1
                         in
@@ -130,7 +130,7 @@ suite =
                                 (MapEditor.Edited
                                     (MapEditor.PointMoved { key = "triggers", index = Just 1, x = 3, y = 1 })
                                 )
-        , test "追加(雛形) — スキーマ宣言のある配列は空きマスのクリックで足せる。宣言が無ければ足さない" <|
+        , test "追加(雛形) — スキーマ宣言のある配列は空きセルのクリックで足せる。宣言が無ければ足さない" <|
             \_ ->
                 let
                     clickEmpty doc =
@@ -418,7 +418,7 @@ addLabel add =
             "no"
 
 
-{-| 印(元の添字つき)と、マスに置かれていない行の数。
+{-| 印(元の添字つき)と、セルに置かれていない行の数。
 -}
 marks : MapEditor.GroupKind -> ( List ( Int, ( Int, Int ) ), Int )
 marks kind =
@@ -430,7 +430,7 @@ marks kind =
             ( many.points |> List.map (\mark -> ( mark.index, mark.at )), List.length many.offRows )
 
 
-{-| マスを見ない行(添字と見出し)。 -}
+{-| セルを見ない行(添字と見出し)。 -}
 offRows : MapEditor.GroupKind -> List ( Int, String )
 offRows kind =
     case kind of

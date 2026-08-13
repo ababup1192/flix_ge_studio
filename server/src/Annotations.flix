@@ -1,4 +1,4 @@
-// Annotations — ゲーム内で切った「注釈チケット」(debug/annotations/) を Studio に見せる窓口。
+// Annotations — ゲーム内で切った「アノテーションチケット」(debug/annotations/) を Studio に見せる窓口。
 // チケットの中身 (world.json 等) は解釈しない — 読むのは README のタイトル行とコメント欄だけで、
 // あとはパスを運ぶ。ゲームの言葉を Studio に持ち込まないための線引き。
 
@@ -12,7 +12,7 @@ mod Annotations {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JBool}
 
-    /// チケットの置き場 (プロジェクト相対)。engine の F8 注釈がここへ書き出す。
+    /// チケットの置き場 (プロジェクト相対)。engine の F8 アノテーションがここへ書き出す。
     def ticketsRoot(): String = "debug/annotations"
 
     /// 済んだチケットの移動先 (ticketsRoot の下の archive/)。

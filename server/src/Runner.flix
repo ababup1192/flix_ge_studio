@@ -33,25 +33,25 @@ mod Runner {
     // またいで生きる可変の入れ物にならないので、Projects と同じく Java の Map を借りる。
     pub type alias State = JMap[String, String]
 
-    /// 器を作る (何も走っていない状態)。
+    /// コンテナを作る (何も走っていない状態)。
     pub def make(): State \ IO = new JMap()
 
     // ── 純粋なルール (ここだけテストする) ──────────────────
 
     /// 走らせてよい make 対象の許可リスト。ここに無い対象は 400 で断る。
     pub def isAllowedTarget(target: String): Bool =
-        Set.memberOf(target, Set#{"bake", "gallery-prologue", "gallery-sounds", "atelier-preview"})
+        Set.memberOf(target, Set#{"render", "gallery-prologue", "gallery-sounds", "atelier-preview"})
 
     /// 「焼く」の許可リスト (この順で配る)。atelier-preview は試作の窓口なのでここには入れない。
     pub def bakeTargets(): List[String] =
-        "bake" :: "gallery-prologue" :: "gallery-sounds" :: Nil
+        "render" :: "gallery-prologue" :: "gallery-sounds" :: Nil
 
     /// Makefile の本文に実在する焼き対象だけを選ぶ (純粋)。行頭が「<対象>:」の行が
     /// あれば実在とみなす (許可リストの中しか見ないので安い走査で足りる)。
-    /// 本文が空 (Makefile が無い・読めない) は "bake" だけに倒す (fail-open)。
+    /// 本文が空 (Makefile が無い・読めない) は "render" だけにする (fail-open)。
     pub def targetsFromMakefileText(text: String): List[String] =
         if (text == "")
-            "bake" :: Nil
+            "render" :: Nil
         else {
             let lines = String.lines(text);
             bakeTargets() |> List.filter(target ->
@@ -81,7 +81,7 @@ mod Runner {
     pub def taskOfTarget(target: String): Option[EngineTasks.Task] =
         match target {
             case "debug"           => Some(EngineTasks.Task.Debug)
-            case "bake"            => Some(EngineTasks.Task.Bake)
+            case "render"          => Some(EngineTasks.Task.Render)
             case "atelier-preview" => Some(EngineTasks.Task.AtelierPreview)
             case _                 => None
         }
@@ -115,14 +115,14 @@ mod Runner {
     /// ゲームの生死の見立て (alive) と覚え書きの消去 (forget) を関数で受け取るのは、
     /// make の器としての Runner を Game へ依存させないため。
     pub def launchRemoteBake(state: State, dir: String, port: Int32, alive: {alive = Unit -> Bool \ IO}, forget: {forget = Unit -> Unit \ IO}, busy: {busy = String}): (Int32, Json) \ IO =
-        launchJob(state, "bake", () -> runRemoteBake(state, dir, port, alive, forget), busy)
+        launchJob(state, "render", () -> runRemoteBake(state, dir, port, alive, forget), busy)
 
     /// 走行権を取れたら任意の仕事を裏で走らせ、返ってきた終了コードを記録する
     /// (NewGame が使う)。取れなければ 409。
     pub def launchWork(state: State, target: String, work: Unit -> Int32 \ IO, busy: {busy = String}): (Int32, Json) \ IO =
         launchJob(state, target, () -> finish(state, work()), busy)
 
-    /// ログへ 1 行足す (他の係が同じ器へ進み具合を書けるように)。
+    /// ログへ 1 行足す (他の係が同じコンテナへ進み具合を書けるように)。
     pub def logLine(state: State, line: String): Unit \ IO = appendLine(state, line)
 
     /// タスク表の 1 仕事をその場で走らせ、出力をログへ流して終了コードを返す
@@ -161,7 +161,7 @@ mod Runner {
         let targetVal: String = state.get("target");
         if (Object.isNull(runningVal) or Object.isNull(targetVal)) None else Some(targetVal)
 
-    /// 通し番号を 1 進めて返す (器が新品なら 1 から)。
+    /// 通し番号を 1 進めて返す (コンテナが新品なら 1 から)。
     def nextRunId(state: State): Int32 \ IO =
         let prev: String = state.get("runId");
         let runId = if (Object.isNull(prev)) 1
@@ -216,10 +216,10 @@ mod Runner {
     /// 同じ順・同じ厳しさ)。持たないゲームでは前段を丸ごと飛ばす — 必ず失敗する
     /// 1 コンパイルを毎回の焼きに足さない。
     def runTask(state: State, dir: String, exec: EngineTasks.Exec, task: EngineTasks.Task, envVars: List[(String, String)], onStart: Process -> Unit \ IO): Unit \ IO =
-        if (task == EngineTasks.Task.Bake and EngineTasks.hasPalette(dir)) {
+        if (task == EngineTasks.Task.Render and EngineTasks.hasPalette(dir)) {
             let paletteExit = runProcess(state, dir, exec, EngineTasks.Task.Palette, Nil, _ -> checked_ecast(()));
             if (paletteExit != 0) {
-                appendLine(state, "[runner] パレットが書けなかったので焼きを中止します");
+                appendLine(state, "[runner] パレットが書けなかったので描き出しを中止します");
                 finish(state, paletteExit)
             } else
                 finish(state, runProcess(state, dir, exec, task, envVars, onStart))
@@ -327,10 +327,10 @@ mod Runner {
     def runRemoteBake(state: State, dir: String, port: Int32, alive: {alive = Unit -> Bool \ IO}, forget: {forget = Unit -> Unit \ IO}): Unit \ IO =
         if (not (alive#alive)()) {
             (forget#forget)();
-            appendLine(state, "[runner] ゲームが走っていないので make bake で焼きます");
-            runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
+            appendLine(state, "[runner] ゲームが走っていないので make render で描き出します");
+            runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
         } else {
-            appendLine(state, "[runner] 走行中のゲームに焼きを頼みます (POST 127.0.0.1:${port}/bake)");
+            appendLine(state, "[runner] 走行中のゲームに描き出しを頼みます (POST 127.0.0.1:${port}/render)");
             match postBake(port) {
                 case Ok(raw) =>
                     let body = bodyOfHttpText(raw);
@@ -339,13 +339,13 @@ mod Runner {
                         finish(state, 0)
                     } else {
                         (forget#forget)();
-                        appendLine(state, "[runner] ゲームが焼けなかったので make bake で焼きます: ${headLineOf(body)}");
-                        runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
+                        appendLine(state, "[runner] ゲームが描き出せなかったので make render で描き出します: ${headLineOf(body)}");
+                        runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
                     }
                 case Err(message) => {
                     (forget#forget)();
-                    appendLine(state, "[runner] ゲームに繋がらなかったので make bake で焼きます: ${message}");
-                    runTarget(state, dir, "bake", Nil, _ -> checked_ecast(()))
+                    appendLine(state, "[runner] ゲームに繋がらなかったので make render で描き出します: ${message}");
+                    runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
                 }
             }
         }
@@ -363,7 +363,7 @@ mod Runner {
             let socket = new Socket();
             socket.connect(new InetSocketAddress("127.0.0.1", port), 2000);
             socket.setSoTimeout(15000);
-            let request = "POST /bake HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let request = "POST /render HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             socket.getOutputStream().write(request.getBytes("UTF-8"));
             socket.getOutputStream().flush();
             let bytes = socket.getInputStream().readAllBytes();

@@ -156,7 +156,7 @@ locLabel sectionKey target =
             sectionKey ++ " #" ++ String.fromInt i
 
 
-{-| "//" 始まりは注釈キー(スキーマ・文書共通の流儀)なので検査対象にしない。 -}
+{-| "//" 始まりはアノテーションキー(スキーマ・文書共通の流儀)なので検査対象にしない。 -}
 entryKeys : D.Value -> List String
 entryKeys entry =
     D.decodeValue (D.keyValuePairs D.value) entry

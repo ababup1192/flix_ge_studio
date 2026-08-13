@@ -27,7 +27,7 @@ entryPairs : String -> D.Value -> List ( String, D.Value )
 entryPairs key doc =
     D.decodeValue (D.field key (D.keyValuePairs D.value)) doc
         |> Result.withDefault []
-        -- 文書側も "//" キーは注釈(スキーマと同じ流儀)
+        -- 文書側も "//" キーはアノテーション(スキーマと同じ流儀)
         |> List.filter (\( name, _ ) -> not (String.startsWith "//" name))
 
 

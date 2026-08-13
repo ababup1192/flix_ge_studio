@@ -43,12 +43,12 @@ module SketchCompare exposing
 どの絵がどのラフから来たかは絵に書かれていないので、機械では結び付けない —
 左の 2 つの一覧から人が 1 枚ずつ指し、並べるか重ねるかで見比べるだけ。
 
-「違いを塗る」は入れない。ラフはマスの塗り絵で、生成された絵と画素の位置が
+「違いを塗る」は入れない。ラフはセルの塗り絵で、生成された絵と画素の位置が
 そもそも合わないため、色の差を出しても読み取れる物にならない。
 
 塗るための操作(Msg)は持たない。ラフの絵は読み取り専用にここで描く。
 
-見比べて気づいた事は、マスを 1 つ指してひとことを添え、遊んでいて切った物と
+見比べて気づいた事は、セルを 1 つ指してひとことを添え、遊んでいて切った物と
 同じやること一覧へ並べる(ここ専用の一覧は作らない)。書けるのは見た目の話だけ。
 
 -}
@@ -97,7 +97,7 @@ type alias Model =
     -- 重ねの透過(0 = 生成された絵だけ・1 = ラフだけ)
     , opacity : Float
 
-    -- 指したマス(ラフの左上から数えた 0 始まりの位置)
+    -- 指したセル(ラフの左上から数えた 0 始まりの位置)
     , cell : Maybe { x : Int, y : Int }
     , note : String
     , post : Post
@@ -254,7 +254,7 @@ selectVersion version model =
     forgetCell { model | version = Just version, draft = DraftLoading }
 
 
-{-| 指したマスを忘れる。マスの数はラフごと・バージョンごとに違うので、
+{-| 指したセルを忘れる。セルの数はラフごと・バージョンごとに違うので、
 別のラフへ移った後も同じ位置を指したままだと、別の場所を指してしまう。
 -}
 forgetCell : Model -> Model
@@ -313,7 +313,7 @@ loadFailed reason model =
 -- ひとことをやること一覧へ並べる
 
 
-{-| ラフのマスを 1 つ指す。同じマスをもう一度押したら指すのをやめる
+{-| ラフのセルを 1 つ指す。同じセルをもう一度押したら指すのをやめる
 (押した所が合っているか、消して確かめられるように)。
 -}
 pickCell : { x : Int, y : Int } -> Model -> Model
@@ -361,7 +361,7 @@ submitFailed reason model =
     { model | post = PostFailed reason }
 
 
-{-| 並べられるのは、絵とラフとマスが揃っていて、ひとことが書いてあるときだけ。 -}
+{-| 並べられるのは、絵とラフとセルが揃っていて、ひとことが書いてあるときだけ。 -}
 canSubmit : Model -> Bool
 canSubmit model =
     model.post /= PostSending && buildTicket model /= Nothing
@@ -379,7 +379,7 @@ buildTicket model =
                     String.trim model.note
 
                 where_ =
-                    "左から " ++ String.fromInt (cell.x + 1) ++ " マス目・上から " ++ String.fromInt (cell.y + 1) ++ " マス目"
+                    "左から " ++ String.fromInt (cell.x + 1) ++ " セル目・上から " ++ String.fromInt (cell.y + 1) ++ " セル目"
             in
             if note == "" || model.sketch == Nothing then
                 Nothing
@@ -395,8 +395,8 @@ buildTicket model =
                             , ""
                             , "- 生成された絵: gallery/" ++ scene
                             , "- ラフ: " ++ (pathOf model |> Maybe.withDefault "")
-                            , "- 指した場所: " ++ where_ ++ "(ラフ全体は " ++ String.fromInt pad.size.w ++ "×" ++ String.fromInt pad.size.h ++ " マス)"
-                            , "- そのマスにラフで置いてあった物: " ++ cellName pad cell
+                            , "- 指した場所: " ++ where_ ++ "(ラフ全体は " ++ String.fromInt pad.size.w ++ "×" ++ String.fromInt pad.size.h ++ " セル)"
+                            , "- そのセルにラフで置いてあった物: " ++ cellName pad cell
                             , ""
                             , "見た目の話だけを書いています(遊んでみないと分からない事はここに書きません)。"
                             ]
@@ -420,7 +420,7 @@ draftName model =
             "ラフ"
 
 
-{-| 指したマスにラフで塗ってあった物の名前(凡例の名前)。塗っていなければ「何も置いていない」。 -}
+{-| 指したセルにラフで塗ってあった物の名前(凡例の名前)。塗っていなければ「何も置いていない」。 -}
 cellName : SketchPad.Model -> { x : Int, y : Int } -> String
 cellName pad cell =
     SketchPad.flatRows pad
@@ -645,7 +645,7 @@ draftLabel model =
 
 
 {-| ラフの絵(塗れない)。重ねたとき生成された絵と縦横の割合がずれないよう、
-横幅いっぱいに伸ばしてマスの縦横比で高さを決める。マスを押すと場所を指せる。
+横幅いっぱいに伸ばしてセルの縦横比で高さを決める。セルを押すと場所を指せる。
 -}
 viewDraft : Handlers msg -> Model -> Html msg
 viewDraft handlers model =
@@ -686,7 +686,7 @@ viewDraft handlers model =
 viewDraftCell : Handlers msg -> Model -> (Char -> Maybe String) -> { x : Int, y : Int } -> Char -> Html msg
 viewDraftCell handlers model colorOf cell char =
     let
-        -- 空きマスは塗らない。重ねたとき塗っていない所で下の絵を隠さないため
+        -- 空きセルは塗らない。重ねたとき塗っていない所で下の絵を隠さないため
         fill =
             case colorOf char of
                 Just color ->
@@ -695,7 +695,7 @@ viewDraftCell handlers model colorOf cell char =
                 Nothing ->
                     []
 
-        -- 指したマスは内側の枠で示す。塗りつぶすと、そのマスのラフの色が見えなくなる
+        -- 指したセルは内側の枠で示す。塗りつぶすと、そのセルのラフの色が見えなくなる
         picked =
             if model.cell == Just cell then
                 [ HA.style "box-shadow" "inset 0 0 0 2px #f43f5e" ]
@@ -729,7 +729,7 @@ viewNote handlers model =
         , button
             [ HA.class "sketch-compare-submit btn btn-primary text-xs"
             , HA.disabled (not (canSubmit model))
-            , HA.title "指したマスとひとことを、遊んでいて切った物と同じやること一覧へ並べます"
+            , HA.title "指したセルとひとことを、遊んでいて切った物と同じやること一覧へ並べます"
             , HE.onClick handlers.onSubmit
             ]
             [ text (submitLabel model) ]
@@ -746,10 +746,10 @@ pickLabel : Model -> String
 pickLabel model =
     case model.cell of
         Just cell ->
-            "指した場所: 左から " ++ String.fromInt (cell.x + 1) ++ " ・上から " ++ String.fromInt (cell.y + 1) ++ " マス目"
+            "指した場所: 左から " ++ String.fromInt (cell.x + 1) ++ " ・上から " ++ String.fromInt (cell.y + 1) ++ " セル目"
 
         Nothing ->
-            "ラフのマスを押して場所を指してください"
+            "ラフのセルを押して場所を指してください"
 
 
 submitLabel : Model -> String

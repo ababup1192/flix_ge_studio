@@ -27,7 +27,7 @@ type alias Row =
     , control : Control
 
     -- enabledWhen 宣言の評価材料。currentText は兄弟フィールドの今の値
-    -- (無ければ default)を比較用文字列にした物。draft(打ちかけ)を優先する
+    -- (無ければ default)を比較用文字列にした物。draft(下書き)を優先する
     -- 最終判定は activeDraft を知る描画側の仕事
     , condition : Maybe Condition
     }
@@ -471,7 +471,7 @@ isObject raw =
         |> (/=) Nothing
 
 
-{-| キー→数値のオブジェクトだけ受ける("//" 注釈キーは文書の流儀どおり読み飛ばす)。
+{-| キー→数値のオブジェクトだけ受ける("//" アノテーションキーは文書の流儀どおり読み飛ばす)。
 1 つでも数値でない値が混ざれば Nothing — 黙って行を落とすと編集で消えたように見える。
 -}
 weightEntries : D.Value -> Maybe (List ( String, Float ))

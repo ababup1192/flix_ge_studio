@@ -213,7 +213,7 @@ suite =
                         |> pushed "sprites.json" Nothing (set [ KeySeg "b" ] (E.int 2)) (EditHistory.Value (Just (E.int 1)))
                         |> (\h -> ( h.file, EditHistory.depth h ))
                         |> Expect.equal ( Just "sprites.json", ( 1, 0 ) )
-            , test "外から正本が入れ替わったら、戻すもやり直すも全部捨てる" <|
+            , test "外から元データが入れ替わったら、戻すもやり直すも全部捨てる" <|
                 \() ->
                     EditHistory.empty
                         |> pushed "level.json" Nothing (set [ KeySeg "a" ] (E.int 2)) (EditHistory.Value (Just (E.int 1)))

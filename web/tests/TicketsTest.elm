@@ -1,6 +1,6 @@
 module TicketsTest exposing (suite)
 
-{-| 注釈チケットの規則のテスト。
+{-| アノテーションチケットの規則のテスト。
 
 守るのは規則だけ: 依頼文が一言とチケット内ファイルの場所を運ぶこと、
 一言が空のうちは報告できないこと、書きかけの保存はフォーカスが外れた時だけ起きること。
@@ -16,7 +16,7 @@ import Tickets
 sample : Tickets.Ticket
 sample =
     { id = "20260812-140312_my_game_f3412"
-    , title = "注釈: my_game — frame 3412(2026-08-12 14:03)"
+    , title = "アノテーション: my_game — frame 3412(2026-08-12 14:03)"
     , comment = ""
     , hasShot = True
     , isSketch = False

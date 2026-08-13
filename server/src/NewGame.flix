@@ -207,7 +207,7 @@ mod NewGame {
                     else 0;
                 if (paletteExit != 0) paletteExit
                 else {
-                    let bakeExit = Runner.runTaskLogged(state, request#gameDir, EngineTasks.Task.Bake);
+                    let bakeExit = Runner.runTaskLogged(state, request#gameDir, EngineTasks.Task.Render);
                     if (bakeExit == 0)
                         Runner.logLine(state, "🎉 新しいゲームが産まれました: ${request#gameDir}")
                     else ();
@@ -277,7 +277,7 @@ mod NewGame {
             Runner.logLine(state, "[new-game] Maven の種が同梱されていません — 初回ビルドで lwjgl を取り寄せます (回線によっては数分かかります)")
 
     /// git init を試す。git が無い環境 (Windows のポータブル配布など) では
-    /// 1 行残して続行 — 産むのに git は必須ではない。init が通ったら pre-commit 関所の
+    /// 1 行残して続行 — 産むのに git は必須ではない。init が通ったら pre-commit ゲートの
     /// 配線 (core.hooksPath) も追試する — clone ごとの make hooks を産まれた瞬間の 1 回で済ませる。
     def gitInit(state: Runner.State, gameDir: String): Unit \ IO =
         let ok = try {
@@ -292,7 +292,7 @@ mod NewGame {
             } catch {
                 case _: Exception => false
             };
-            if (not wired) Runner.logLine(state, "[new-game] pre-commit 関所の配線に失敗しました (あとで make hooks でどうぞ)") else ()
+            if (not wired) Runner.logLine(state, "[new-game] pre-commit ゲートの配線に失敗しました (あとで make hooks でどうぞ)") else ()
         }
 
     /// git をゲームのフォルダで走らせる (終了 0 = 成功)。git 不在の例外は呼び手が受ける。
@@ -316,7 +316,7 @@ mod NewGame {
     /// CLI 入口 (--sync-agents <engine> <game>)。HTTP を立てずに配布だけして終わる。
     /// Makefile の check-agents-parity が engine の bin/sync-agents.py との一致検査に使う。
     /// 失敗は 1 行 + 非 0 終了 — 黙って 0 で帰ると、呼び手のシェルが壊れた配布を
-    /// 「成功」と誤読する (server 内の配布と違い、ここにはログの器が無い)。
+    /// 「成功」と誤読する (server 内の配布と違い、ここにはログのコンテナが無い)。
     pub def distributeCli(engine: String, gameDir: String): Unit \ IO =
         try {
             if (not new JFile(gameDir).isDirectory()) {

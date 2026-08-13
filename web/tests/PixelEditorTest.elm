@@ -1,6 +1,6 @@
 module PixelEditorTest exposing (suite)
 
-{-| ドット絵の手直しのルールだけを検査する: rows の書き換え・バケツの連結・
+{-| ドット絵のクイック編集のルールだけを検査する: rows の書き換え・バケツの連結・
 スポイト・legend からのパレット導出。見た目(色の見え方・描画タイミング)は
 テストしない。
 -}
@@ -16,7 +16,7 @@ import Test.Html.Query as Query
 import Test.Html.Selector as Selector
 
 
-{-| legend は hex とテーマ名の混在。壊れたコマ(行の長さ不揃い)と壊れた絵
+{-| legend は hex とテーマ名の混在。壊れたフレーム(行の長さ不揃い)と壊れた絵
 (空 rows)・コメント名は黙って除かれる、が fixture の狙い。
 -}
 docFixture : Maybe PixelEditor.Doc
@@ -68,7 +68,7 @@ suite =
                 , PixelEditor.pickAt ( 9, 9 ) rows
                 )
                     |> Expect.equal ( Just 'h', Just '.', Nothing )
-        , test "legend→パレット — 並びのまま・hex は素通し・透明は実データの '.'。壊れた絵とコマは除く" <|
+        , test "legend→パレット — 並びのまま・hex は素通し・透明は実データの '.'。壊れた絵とフレームは除く" <|
             \_ ->
                 case docFixture of
                     Nothing ->

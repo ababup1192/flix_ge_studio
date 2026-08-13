@@ -15,7 +15,7 @@
 
 ## 済んだ物（2026-08-13 昼・言葉づかい）
 
-- 「札」「版」などの独自語を業界の言葉へ（ボタン / カード / バージョン）。
+- 独自語を業界の言葉へ（ボタン / カード / ラベル / バージョン）。
   engine 側では `AGENTS.md` の言葉づかいの節そのものを書き換えた（単語は業界の言葉・
   説明は平易に、の 2 段構え）+ 名前の付け方の節を新設 + `bin/lint-jargon.py` で
   コミット時に止める仕組みを入れた
@@ -26,9 +26,9 @@
   `reference-*` クラス・`.studio/reference-diff.json`・server 内部の `missingReference`。
   UI 文言は「リファレンス画像を更新」に統一。
   **触っていない物**: `PixelEditor.goldenHue`（黄金角）と `TestRunner` の否定例の文字列 `"golden"`
-- `bless`（祝福）→ `update`。`POST /reference/update`・`Reference.update`・
+- `bless` → `update`。`POST /reference/update`・`Reference.update`・
   Elm の `ReferenceUpdated` / `referenceUpdate` / `onUpdate`・CSS の `reference-update`。
-  日本語の「祝福」も「更新」へ
+  日本語も「更新」へ
 
 ## （旧）ラフ 3 点は実装済み（2026-08-13 朝）
 
@@ -131,7 +131,7 @@
   古いサーバは fail-open。**NewGame には流さない**（まだ無いプロジェクトなので必ず v1 から）
 - server 144/0・elm 614/0・vitest 19/0。docs/plan-sketch-roundtrip.md に節を追記
 
-設計の正本（第 3 版・人と合意済み）:
+設計の元データ（第 3 版・人と合意済み）:
 https://claude.ai/code/artifact/c592edd2-0190-4e1b-b29a-a61498942db5
 
 ## 調べて分かっている前提（次の人が調べ直さなくていい）

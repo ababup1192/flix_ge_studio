@@ -139,7 +139,7 @@ type alias Model =
     , genesisPrompt : GenesisPrompt
     , genesisCopied : Bool
 
-    -- ラフのカード(画面のラフから)の塗り。ゲームの Doc ではないのでここが正本
+    -- ラフのカード(画面のラフから)の塗り。ゲームの Doc ではないのでここが元データ
     , sketch : SketchPad.Model
 
     -- ラフのカードの「伝えたいこと(任意)」。絵にできない事(雰囲気・ルールの種)を
@@ -388,7 +388,7 @@ update msg model =
 
         SketchClosed ->
             if isPolling model then
-                -- つくっている最中は閉じない(Esc も同じ関所を通す)
+                -- つくっている最中は閉じない(Esc も同じゲートを通す)
                 ( model, OutNone )
 
             else
@@ -431,7 +431,7 @@ update msg model =
                     ( model, OutNone )
 
 
-{-| 送信前の関所。名前・サイズが規則に合わない限り封筒は飛ばない。 -}
+{-| 送信前のゲート。名前・サイズが規則に合わない限り封筒は飛ばない。 -}
 submit : Model -> ( Model, Out )
 submit model =
     let
@@ -558,7 +558,7 @@ familiesUnavailable model =
 {-| GET /prompt/genesis 成功。届いた下書きは編集可になる。
 
 誕生画面(ラフのカードで born あり)に居る間の門番:
-遅れて届いた応答で合成依頼文を黙って上書きしない。人が手直しした文が
+遅れて届いた応答で合成依頼文を黙って上書きしない。人がクイック編集した文が
 音もなく消える事故を防ぐ。例外は born.prompt が空の時だけ — それは
 「取り直し待ち」なので、届いた土台をラフと合成し直して埋める。
 
@@ -999,7 +999,7 @@ viewGenesis families model =
 
 
 {-| ラフのカード。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
-(リファレンス画像の顔を配る仕組みに乗れない)。
+(リファレンス画像の顔を配るメカニクスに乗れない)。
 -}
 viewSketchCard : Bool -> Maybe String -> Html Msg
 viewSketchCard locked chosen =
@@ -1010,7 +1010,7 @@ viewSketchCard locked chosen =
             , ( "border-edge", chosen /= Just sketchFamilyId )
             ]
 
-        -- つくっている最中はカードの選び直しを受けない(update の関所と二重の守り)
+        -- つくっている最中はカードの選び直しを受けない(update のゲートと二重の守り)
         , HA.disabled locked
         , HE.onClick (FamilyChosen sketchFamilyId)
         ]

@@ -60,7 +60,7 @@ mod Gallery {
         mediaBytes(dir, subdir, name) |> Option.map(found -> snd(found))
 
     /// 出せる置き場か。定番の 4 つに加えて、焼き上がりの場面が住む
-    /// debug/cutscene の下 (grid の定規つき画像・コマ別 PNG) を許す。
+    /// debug/cutscene の下 (grid の定規つき画像・フレーム別 PNG) を許す。
     /// ".." を含む指定は通さない (プロジェクトの外を指せてしまうため)。
     def allowedDir(subdir: String): Bool =
         not String.contains(substr = "..", subdir)
@@ -80,8 +80,8 @@ mod Gallery {
             None
 
     /// GET /gallery/count — 許可リストの置き場にある PNG の数。
-    /// 「前回の焼き」を復元した時にコマ数(pngFrames)を取り戻すのに使う
-    /// (GIF の存在確認だけではコマ送りの目盛りが引けない)。
+    /// 「前回の焼き」を復元した時にフレーム数(pngFrames)を取り戻すのに使う
+    /// (GIF の存在確認だけではフレーム送りの目盛りが引けない)。
     pub def pngCount(dir: String, subdir: String): Int32 \ IO =
         if (not allowedDir(subdir))
             0

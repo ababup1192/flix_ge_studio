@@ -349,7 +349,7 @@ viewTrail : String -> Html msg
 viewTrail sid =
     let
         -- 生まれたて(launch / arrange)は「遊ぶ → アレンジ → 反映」の一巡、
-        -- それ以外は素材の一巡(候補 → 使う → 知らせ)
+        -- それ以外はアセットの一巡(候補 → 使う → 知らせ)
         ( steps, current ) =
             case sid of
                 "launch" ->

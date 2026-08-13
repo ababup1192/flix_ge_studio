@@ -8,23 +8,23 @@ mod TestRunner {
     def testIsAllowedTarget(): Unit \ Assert =
         Assert.assertEq(
             expected = (true, true, true, true, false, false, false),
-            (Runner.isAllowedTarget("bake"),
+            (Runner.isAllowedTarget("render"),
              Runner.isAllowedTarget("gallery-prologue"),
              Runner.isAllowedTarget("gallery-sounds"),
              Runner.isAllowedTarget("atelier-preview"),
              Runner.isAllowedTarget("golden"),
-             Runner.isAllowedTarget("bake; rm -rf /"),
+             Runner.isAllowedTarget("render; rm -rf /"),
              Runner.isAllowedTarget("")))
 
     /// Makefile に実在する焼き対象だけ配る: 行頭の「対象:」だけが実在の印
-    /// (字下げ・コメント・似た名前は数えない)。空の本文 (読めない) は bake だけに倒す。
+    /// (字下げ・コメント・似た名前は数えない)。空の本文 (読めない) は render だけにする。
     @Test
     def testTargetsFromMakefileText(): Unit \ Assert =
         Assert.assertEq(
-            expected = (Runner.bakeTargets(), "bake" :: "gallery-sounds" :: Nil, "bake" :: Nil, "bake" :: Nil),
-            (Runner.targetsFromMakefileText("bake: all\ngallery-prologue:\ngallery-sounds: bake\n"),
-             Runner.targetsFromMakefileText("bake:\n\t@echo hi\n# gallery-prologue:\n\tgallery-prologue: x\ngallery-sounds:\n"),
-             Runner.targetsFromMakefileText("bake:\nrebake: bake\nbakery:\n"),
+            expected = (Runner.bakeTargets(), "render" :: "gallery-sounds" :: Nil, "render" :: Nil, "render" :: Nil),
+            (Runner.targetsFromMakefileText("render: all\ngallery-prologue:\ngallery-sounds: render\n"),
+             Runner.targetsFromMakefileText("render:\n\t@echo hi\n# gallery-prologue:\n\tgallery-prologue: x\ngallery-sounds:\n"),
+             Runner.targetsFromMakefileText("render:\nrerender: render\nrenderer:\n"),
              Runner.targetsFromMakefileText("")))
 
     /// ログは尻尾 cap 行だけ残す。cap 以内なら丸ごと残る。

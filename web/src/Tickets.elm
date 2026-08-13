@@ -12,7 +12,7 @@ module Tickets exposing
     , view
     )
 
-{-| 注釈チケット — ゲーム内で切った注釈(debug/annotations/)に一言を添えて AI に運ぶパネル。
+{-| アノテーションチケット — ゲーム内で切ったアノテーション(debug/annotations/)に一言を添えて AI に運ぶパネル。
 
 チケットの中身(world.json 等)は解釈しない。読むのはタイトルと一言だけで、あとはパスを運ぶ。
 サーバ往復は Main の仕事(Out で頼む)。
@@ -62,7 +62,7 @@ init =
 
 
 {-| 一覧が届いた。サーバの内容と同じになった書きかけは捨てる(保存済みの印)。
-まだ違う書きかけは残す — 取得と入力が重なっても打ちかけを失わない。
+まだ違う書きかけは残す — 取得と入力が重なっても下書きを失わない。
 -}
 gotList : List Ticket -> Model -> Model
 gotList tickets model =
@@ -168,13 +168,13 @@ buildTicketPrompt info =
         ( lead, clues ) =
             if info.isSketch then
                 ( "【見た目の直し】生成された絵をラフと見比べて気になった所があります。"
-                , [ "- " ++ dir ++ "/README.md(見比べた 2 枚の置き場と、指したマス)"
+                , [ "- " ++ dir ++ "/README.md(見比べた 2 枚の置き場と、指したセル)"
                   , "- " ++ dir ++ "/screenshot.png(見比べていた生成された絵)"
                   ]
                 )
 
             else
-                ( "【注釈チケットの直し】遊んでいて気になった所があります。"
+                ( "【アノテーションチケットの直し】遊んでいて気になった所があります。"
                 , [ "- " ++ dir ++ "/README.md(囲った場所と、そこに描かれていた物の一覧)"
                   , "- " ++ dir ++ "/highlighted.png(気になる場所を赤枠で囲ったスクショ)"
                   , "- " ++ dir ++ "/world.json(その瞬間のゲーム状態のダンプ)"
@@ -199,7 +199,7 @@ buildTicketPrompt info =
 
 
 {-| 見出しを本体と日時の 2 行に分ける。engine の自動タイトルは
-「注釈: <題名> — frame N（日時）」の形なので、丸かっこの中身を日時の行にする。
+「アノテーション: <題名> — frame N（日時）」の形なので、丸かっこの中身を日時の行にする。
 形が違う見出し(手で直した等)はそのまま 1 行目に全部出す。
 -}
 titleLines : String -> { head : String, stamp : Maybe String }
@@ -253,7 +253,7 @@ view ctx model =
             [ div [ HA.class "rounded-lg border border-edge bg-panel p-5" ]
                 (div [ HA.class "flex items-baseline gap-2" ]
                     [ span [ HA.class "text-sm font-semibold text-ink" ]
-                        [ text ("🎫 注釈チケット(" ++ String.fromInt (List.length model.tickets) ++ ")") ]
+                        [ text ("🎫 アノテーションチケット(" ++ String.fromInt (List.length model.tickets) ++ ")") ]
                     , span [ HA.class "text-[11px] text-ink-faint" ]
                         [ text "ゲーム内で一時停止 → 矩形で囲うと増えます" ]
                     ]
@@ -275,7 +275,7 @@ viewTicket ctx model ticket =
     div [ HA.class "mt-3 flex gap-3 rounded-md border border-edge p-3" ]
         [ viewShot ctx ticket
         , div [ HA.class "min-w-0 flex-1" ]
-            [ -- 見出しは「どこの注釈か」と「いつ切ったか」の 2 行に分けて全文を見せる
+            [ -- 見出しは「どこのアノテーションか」と「いつ切ったか」の 2 行に分けて全文を見せる
               div [ HA.class "flex min-w-0 items-baseline gap-1.5" ]
                 [ viewMark ticket
                 , div [ HA.class "min-w-0 truncate text-xs font-semibold text-ink", HA.title ticket.title ]
@@ -307,7 +307,7 @@ viewTicket ctx model ticket =
                             "✓ コピーしました"
 
                          else
-                            "📋 注釈チケットを報告"
+                            "📋 アノテーションチケットを報告"
                         )
                     ]
                 , button

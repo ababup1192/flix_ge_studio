@@ -20,12 +20,12 @@ module PixelEditor exposing
     , view
     )
 
-{-| ドット絵(*.sprite.json)の手直し。
+{-| ドット絵(*.sprite.json)のクイック編集。
 
 左に道具(ペン・消しゴム・バケツ・スポイト・戻す/やり直す)、中央にセルの
 グリッド、右にパレット(legend から導く)。
 
-文書の正本はここに置かない — 描画は毎回親から渡される Doc(パース済み
+文書の元データはここに置かない — 描画は毎回親から渡される Doc(パース済み
 docText)から導き、一筆(pointerdown〜up)の途中だけ作業コピー(working)が
 表示に勝つ。一筆の確定は rows 丸ごと 1 本の Edit として親へ返し、親の
 編集直列(docEdit → dirty → 保存)に乗せる — 並行の保存経路は作らない。
@@ -76,7 +76,7 @@ defaultGroup =
     "その他"
 
 
-{-| 編集 1 件 = 1 コマの rows 丸ごと。 -}
+{-| 編集 1 件 = 1 フレームの rows 丸ごと。 -}
 type alias Edit =
     { sprite : String
     , frame : String
@@ -86,7 +86,7 @@ type alias Edit =
 
 {-| パース済み sprite Doc の読み取り。legend が読めない・絵が 1 枚も残らない
 文書は Nothing — 呼び側は従来のフォーム/コード表示へ倒す(壊さない)。
-崩れた rows(空・行の長さ不揃い)はコマ単位で黙って除く。
+崩れた rows(空・行の長さ不揃い)はフレーム単位で黙って除く。
 -}
 fromDoc : D.Value -> Maybe Doc
 fromDoc value =
@@ -209,7 +209,7 @@ type alias Model =
     -- いまの色(legend の文字)。Nothing は「まだ選んでいない」= legend の先頭
     , color : Maybe Char
 
-    -- 選択中の絵とコマ。文書から消えていたら先頭へ倒す(view/update で毎回解決)
+    -- 選択中の絵とフレーム。文書から消えていたら先頭へ倒す(view/update で毎回解決)
     , spriteKey : Maybe String
     , frameKey : Maybe String
     , cellPx : Int
@@ -223,7 +223,7 @@ type alias Model =
     , undo : List Snapshot
     , redo : List Snapshot
 
-    -- コマ送りで動きを見せている最中か。編集を始めたら止める
+    -- フレーム送りで動きを見せている最中か。編集を始めたら止める
     , playing : Bool
     }
 
@@ -258,13 +258,13 @@ release model =
     { model | stroke = Nothing, working = Nothing, hover = Nothing, playing = False }
 
 
-{-| コマ送り中か(親が時計を購読する間だけ True)。 -}
+{-| フレーム送り中か(親が時計を購読する間だけ True)。 -}
 isPlaying : Model -> Bool
 isPlaying model =
     model.playing
 
 
-{-| いまの絵の次のコマ。最後まで来たら先頭へ戻る。 -}
+{-| いまの絵の次のフレーム。最後まで来たら先頭へ戻る。 -}
 nextFrameKey : Doc -> Model -> Maybe String
 nextFrameKey doc model =
     case selectedSprite doc model of
@@ -359,7 +359,7 @@ update doc msg model =
             ( { model | playing = not model.playing }, Silent )
 
         PlayTicked ->
-            -- 次のコマへ。最後まで来たら先頭へ戻る(輪にして動きとして見せる)
+            -- 次のフレームへ。最後まで来たら先頭へ戻る(輪にして動きとして見せる)
             ( { model | frameKey = nextFrameKey doc model, working = Nothing }, Silent )
 
         FrameChosen name ->
@@ -384,7 +384,7 @@ update doc msg model =
             ( { model | hover = Nothing }, Silent )
 
         CellPressed x y buttonId ->
-            -- 動いている絵に描くと狙いが外れるので、描き始めたらコマ送りを止める
+            -- 動いている絵に描くと狙いが外れるので、描き始めたらフレーム送りを止める
             press doc ( x, y ) buttonId { model | playing = False }
 
         StrokeEnded ->
@@ -490,7 +490,7 @@ commitRows grid rows model =
         )
 
 
-{-| 戻す/やり直すの適用。対象のコマへ選択も移す — どの絵が戻ったのか見えるように。 -}
+{-| 戻す/やり直すの適用。対象のフレームへ選択も移す — どの絵が戻ったのか見えるように。 -}
 applySnapshot : List String -> Model -> Snapshot -> ( Model, Out )
 applySnapshot rows model snap =
     ( { model
@@ -919,7 +919,7 @@ viewCenter colors doc model grid =
         ]
 
 
-{-| 絵の名前チップ列(+コマが複数ある絵はコマのチップ列)。 -}
+{-| 絵の名前チップ列(+フレームが複数ある絵はフレームのチップ列)。 -}
 viewChips : Doc -> Model -> Edit -> Html Msg
 viewChips doc model grid =
     let
@@ -941,7 +941,7 @@ viewChips doc model grid =
         (div [ HA.class "flex flex-col gap-1" ] (groupsOf doc |> List.map groupRow)
             :: (if List.length frameChips > 1 then
                     [ div [ HA.class "mt-1 flex flex-wrap items-center gap-1" ]
-                        (span [ HA.class "w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text "コマ" ]
+                        (span [ HA.class "w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text "フレーム" ]
                             :: (frameChips
                                     |> List.map (\( name, _ ) -> chip (name == grid.frame) (FrameChosen name) name)
                                )
@@ -979,7 +979,7 @@ groupsOf doc =
         |> List.reverse
 
 
-{-| コマ送りの入/切。動きは 1 コマずつ眺めても分からないので、並べて見るのではなく
+{-| フレーム送りの入/切。動きは 1 フレームずつ眺めても分からないので、並べて見るのではなく
 実際に回して確かめられるようにする。編集を始めたら自動で止まる。
 -}
 viewPlayButton : Model -> Html Msg
@@ -989,7 +989,7 @@ viewPlayButton model =
             [ ( "chip btn rounded-full", True )
             , ( "border-transparent bg-accent text-white hover:bg-accent", model.playing )
             ]
-        , HA.title "コマ送りで動きを確かめる"
+        , HA.title "フレーム送りで動きを確かめる"
         , HE.onClick PlayToggled
         ]
         [ text

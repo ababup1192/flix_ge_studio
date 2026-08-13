@@ -194,7 +194,7 @@ suite =
                             )
             ]
         , describe "/bake/proxy(焼き応答)"
-            [ test "コマ送りの総数は間引き後の枚数(演じた総コマではない)" <|
+            [ test "フレーム送りの総数は間引き後の枚数(演じた総フレームではない)" <|
                 \_ ->
                     let
                         body =
@@ -202,7 +202,7 @@ suite =
                     in
                     D.decodeString Api.bakeResultDecoder body
                         |> Result.map (\result -> ( result.frames, Api.pngFrameCount result ))
-                        -- 30fps で 679 コマ演じ、PNG は stride=2 の 340 枚
+                        -- 30fps で 679 フレーム演じ、PNG は stride=2 の 340 枚
                         |> Expect.equal (Ok ( 679, 340 ))
             ]
         , describe "/resources"

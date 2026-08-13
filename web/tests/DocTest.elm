@@ -18,7 +18,7 @@ docFixture =
 {
   "meta": { "scrollSpeed": 60 },
   "routes": {
-    "//": "注釈は一覧に出さない",
+    "//": "アノテーションは一覧に出さない",
     "slow": { "type": "straight", "speed": 60 },
     "wavy": { "type": "sine", "speed": 85 }
   },
@@ -41,7 +41,7 @@ suite =
                     |> Dict.get "wavy"
                     |> Maybe.andThen (\v -> D.decodeValue (D.field "speed" D.float) v |> Result.toMaybe)
                     |> Expect.equal (Just 85)
-        , test "catalogKeys — 文書に書いた順(辞書順にしない)。注釈キーは出さない" <|
+        , test "catalogKeys — 文書に書いた順(辞書順にしない)。アノテーションキーは出さない" <|
             \_ ->
                 Doc.catalogKeys "routes" docFixture
                     |> Expect.equal [ "slow", "wavy" ]

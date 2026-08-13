@@ -62,7 +62,7 @@ mod BakeHost {
     pub def preview(state: State, dir: String, name: String, body: String):
             (Int32, Result[Json, Array[Int8, Static]]) \ IO =
         if (not canHost(dir))
-            (501, Err(failJson("このゲームには焼き係の口 (make ${target()}) がありません")))
+            (501, Err(failJson("このゲームには描き出しサーバの入口 (make ${target()}) がありません")))
         else match aliveePort(state, dir) {
             case Some(port) => match post(port, name, body) {
                 case Some(bytes) => (200, Ok(bytes))
@@ -81,7 +81,7 @@ mod BakeHost {
 
     def startingJson(): Json =
         JObject(Map#{ "ok" => JBool(false), "starting" => JBool(true),
-                      "message" => JString("焼き係を立ち上げています（初回だけ 1〜2 分）") })
+                      "message" => JString("描き出しサーバを立ち上げています（初回だけ 1〜2 分）") })
 
     def failJson(message: String): Json =
         JObject(Map#{ "ok" => JBool(false), "message" => JString(message) })
@@ -183,7 +183,7 @@ mod BakeHost {
                 if (EngineTasks.isWindows())
                     // canHost は宣言を見て true と言ったのに flix.jar が無い = 同梱の破損。
                     // 黙って何もしないと「永遠の準備中」になるので、理由をログに書き残す。
-                    note(dir, "engine の bin/flix.jar が見つからないため焼き係を起こせません (同梱が壊れています)")
+                    note(dir, "engine の bin/flix.jar が見つからないため描き出しサーバを起こせません (同梱が壊れています)")
                 else launchWith(dir, port, "make" :: target() :: Nil, withEngine = true)
         }
 

@@ -1,6 +1,6 @@
 module Draft exposing (NumberSpec, format, parse, step)
 
-{-| 打ちかけ(draft)の文字列を数値として確定・増減する純ロジック。
+{-| 下書き(draft)の文字列を数値として確定・増減する純ロジック。
 
 int 丸め・min/max clamp・浮動小数の桁ゴミ払いを view/update に散らすと
 場所ごとに挙動がずれるので、ここへ 1 箇所に集める。
@@ -16,7 +16,7 @@ type alias NumberSpec =
     }
 
 
-{-| 打ちかけを確定値へ。パース不能は Nothing — 呼び側はそのとき文書を触らない。
+{-| 下書きを確定値へ。パース不能は Nothing — 呼び側はそのとき文書を触らない。
 int 欄の小数は弾かず四捨五入で受ける(打った意図に一番近い値が残る)。
 -}
 parse : NumberSpec -> String -> Maybe Float
@@ -27,7 +27,7 @@ parse spec text =
 
 {-| ↑↓ の 1 回分。Shift は ×10。
 空欄からは 0 起点 — 「触れば動く」の方が何も起きないより手に馴染む。
-数字になっていない打ちかけからは動かさない(どこ起点か決めようがない)。
+数字になっていない下書きからは動かさない(どこ起点か決めようがない)。
 -}
 step : NumberSpec -> { dir : Int, shift : Bool } -> String -> Maybe Float
 step spec arg text =

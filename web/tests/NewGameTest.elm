@@ -320,7 +320,7 @@ suite =
                             (NewGame.OutCreate
                                 { name = "rough_game", title = "ラフのゲーム", w = 0, h = 0, starter = "templates/game-starter" }
                             )
-            , test "規則に合わない名前では封筒が飛ばない(ラフのカードも同じ関所)" <|
+            , test "規則に合わない名前では封筒が飛ばない(ラフのカードも同じゲート)" <|
                 \_ ->
                     sketchChosen
                         |> step (NewGame.NameEdited "Abc")
@@ -610,7 +610,7 @@ sketchFilled =
         |> step (NewGame.TitleEdited "ラフのゲーム")
 
 
-{-| さらに 1 マス塗った状態(map プリセットの先頭ラベルで)。 -}
+{-| さらに 1 セル塗った状態(map プリセットの先頭ラベルで)。 -}
 sketchPainted : ( NewGame.Model, NewGame.Out )
 sketchPainted =
     sketchFilled
@@ -618,7 +618,7 @@ sketchPainted =
         |> step (NewGame.SketchMsg SketchPad.StrokeEnded)
 
 
-{-| パネルを開いてラフのカードを選び、1 マス塗った状態(窓が出ている)。 -}
+{-| パネルを開いてラフのカードを選び、1 セル塗った状態(窓が出ている)。 -}
 sketchWindowPainted : NewGame.Model
 sketchWindowPainted =
     begin

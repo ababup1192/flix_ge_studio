@@ -36,7 +36,7 @@ type alias Point =
   - sectionKey: 盤面クリック・ドラッグが選ぶ表のセクション(hitTest の添字の意味)
   - dragRects: サーバが返した rects から掴める (添字, 矩形) だけを取り出す
   - dragPoint: 表示 px の移動量 → design 座標(clamp 込み)
-  - dragEdits: ドラッグ確定で正本へ流す編集列
+  - dragEdits: ドラッグ確定で元データへ流す編集列
 
 -}
 type alias Plugin =

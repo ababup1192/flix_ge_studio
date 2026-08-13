@@ -157,7 +157,7 @@ type PendingAction
 
 
 {-| 右ペインの絵の枠に「カットの瞬間」と「焼き上がりの通し」のどちらを出すか。
-行を選んで瞬間が更新されたら ShotPreview に、動かす/シーク/コマ送りをしたら
+行を選んで瞬間が更新されたら ShotPreview に、動かす/シーク/フレーム送りをしたら
 FilmPreview に倒す(最後に指した方が勝つ)。
 -}
 type PreviewMode
@@ -194,7 +194,7 @@ type alias DeleteConfirmState =
     }
 
 
-{-| フォーカス中フィールドの打ちかけ。view はこの path の欄にだけ text を出し、
+{-| フォーカス中フィールドの下書き。view はこの path の欄にだけ text を出し、
 他の欄には文書の値を出す — docEdit のエコー・プレビュー往復・将来の /changes
 追従のどれが挟まっても、フォーカス中の欄に整形済みの値が流し込まれない。
 フォーカスは常に 1 箇所なので Dict でなく Maybe 1 個で足りる。
@@ -466,7 +466,7 @@ type alias Model =
     , tab : Tab
     , journey : Journey.Model
 
-    -- 注釈チケット(ゲーム内 F8 で切った注釈に一言を添えて AI へ運ぶ窓)
+    -- アノテーションチケット(ゲーム内 F8 で切ったアノテーションに一言を添えて AI へ運ぶ窓)
     , tickets : Tickets.Model
 
     -- 見た目の自動検査(/journey/changes)。baking = エンジンが全場面を
@@ -565,7 +565,7 @@ type alias Model =
     -- 応答の行き先が違うので別に控える
     , sketchSaveReq : Maybe Int
 
-    -- ラフ札から産まれた直後の「開けたら 1 回だけラフを書き残す」控え。
+    -- ラフのカードから産まれた直後の「開けたら 1 回だけラフを書き残す」控え。
     -- PUT /file はプロジェクト選択が前提なので、selectProject の成功を待つ。
     -- dir を添えるのは、途中で別プロジェクトを選んだ時に書き間違えないため
     , pendingSketchSave : Maybe { dir : String, path : String, content : String }
@@ -582,12 +582,12 @@ type alias Model =
 
     -- 開いているファイルがディスクで変わった印(Just = 今ディスクに居る版の mtime)。
     -- 保存時の 409 は最後の砦で、こちらは「編集を始める前に気付く」ための見張り。
-    -- 打ちかけが無ければ黙って読み直し、あるときだけ帯を出して知らせる(読み直す手は無い —
-    -- 保存は ifMtime の 409 で守られるので、勝手に打ちかけを捨てる操作は置かない)
+    -- 下書きが無ければ黙って読み直し、あるときだけ帯を出して知らせる(読み直す手は無い —
+    -- 保存は ifMtime の 409 で守られるので、勝手に下書きを捨てる操作は置かない)
     , staleMtime : Maybe Int
 
     -- 開いているファイルが見張り(changes)からいなくなった(ディスクから消えた
-    -- とみられる)印。打ちかけがあれば閉じずに知らせるだけ、無ければ安全に閉じる
+    -- とみられる)印。下書きがあれば閉じずに知らせるだけ、無ければ安全に閉じる
     , currentMissing : Bool
 
     -- changes 応答が持つ集計値(どれか 1 つの mtime 変化・増減で必ず別の値になる)。
@@ -619,27 +619,27 @@ type alias Model =
     -- docText が変わるたびの再計算が構造で保証され、陳腐化のしようがない
     , problemsOpen : Bool
 
-    -- フォーカス中フィールドの打ちかけ(Nothing = 打ちかけ無し)
+    -- フォーカス中フィールドの下書き(Nothing = 下書き無し)
     , activeDraft : Maybe ActiveDraft
 
     -- 右の JSON ペインを開いているか(つまみ系 Doc の 2 ペインでだけ効く)。
     -- 端末に覚える — 「常に JSON が邪魔」な人に毎回畳ませない
     , jsonPaneOpen : Bool
 
-    -- いま鳴らしている音(Nothing = 鳴っていない)。止める札を出すためだけ
+    -- いま鳴らしている音(Nothing = 鳴っていない)。止めるボタンを出すためだけ
     , playingSound : Maybe String
 
-    -- 波形の帯(再生位置・範囲選択)。秒で持つので、器の幅が変わってもずれない
+    -- 波形の帯(再生位置・範囲選択)。秒で持つので、コンテナの幅が変わってもずれない
     , wave : Waveform.Model
     , soundLooping : Bool
 
-    -- マスを選ぶポップオーバー(開いている欄の書き戻し先)。
+    -- セルを選ぶポップオーバー(開いている欄の書き戻し先)。
     -- 背景は焼いた定規つきの部屋の絵
     , tilePicker : Maybe { path : List Seg, room : String }
 
     -- 焼き(ゲーム側の常駐サーバ)の進行と、その結果。
     -- 進行中も編集は止めない(焼きは 20〜70 秒かかる)。
-    -- bakeFile はどの脚本を焼いているか(切り替えても焼き自体は続くので、
+    -- bakeFile はどのスクリプトを焼いているか(切り替えても焼き自体は続くので、
     -- 戻った時・別ファイルにいる時に取り違えないための道しるべ)
     , bakeReq : Maybe Int
     , bakeFile : Maybe String
@@ -670,19 +670,19 @@ type alias Model =
     , reference : ReferenceView.Model
 
     -- 生成された絵とラフの見比べ。ラフの中身の往復は id で見分ける
-    -- (ファイルを開く道と同じ "getFile" の口を使うので、札を分けないと取り違える)
+    -- (ファイルを開く道と同じ "getFile" の口を使うので、ラベルを分けないと取り違える)
     , sketchCompare : SketchCompare.Model
     , sketchDraftReq : Maybe Int
 
     -- 焼き上がりの拡大(ライトボックス)と、その中で動く絵を出しているか。
-    -- GIF は止められないので、止める = その時のコマを 1 枚出す
+    -- GIF は止められないので、止める = その時のフレームを 1 枚出す
     , bakeZoom : Bool
     , bakePlaying : Bool
 
-    -- 拡大で 1 枚だけ見せている絵(Nothing = 焼き上がりのコマ送り)
+    -- 拡大で 1 枚だけ見せている絵(Nothing = 焼き上がりのフレーム送り)
     , bakeZoomShot : Maybe String
 
-    -- 出しているのが「前回の焼き」(今の脚本で焼いた物ではない)か
+    -- 出しているのが「前回の焼き」(今のスクリプトで焼いた物ではない)か
     , bakeStale : Bool
 
     -- 復元した焼き上がり(pastBake)の GIF の mtime(サーバが X-Mtime ヘッダで返す)。
@@ -695,7 +695,7 @@ type alias Model =
     -- 「前回の焼き」を探している最中の置き場
     , bakeProbe : Maybe String
 
-    -- pastBake(前回の焼き)はコマ数(pngFrames)が分からないので、その場でコマ別
+    -- pastBake(前回の焼き)はフレーム数(pngFrames)が分からないので、その場でフレーム別
     -- PNG の置き場を数え直す要求。追い越し対策に id を覚える
     , mediaCountReq : Maybe Int
 
@@ -755,7 +755,7 @@ type alias Model =
     , verbTarget : Maybe { path : String, open : Bool }
 
     -- 元に戻す / やり直すの履歴(編集はすべて queueEdit を通るので、そこで積む)。
-    -- editSeq は「1 回のやり取り」の通し番号 — 打ちかけ・ドラッグの間に出る
+    -- editSeq は「1 回のやり取り」の通し番号 — 下書き・ドラッグの間に出る
     -- 編集の洪水を 1 手に畳む鍵にする
     , history : EditHistory.History
     , editSeq : Int
@@ -777,7 +777,7 @@ type alias Model =
     -- docEdit を出さない — 焼き直しは mouseup 後の反映 1 回に任せる
     , drag : Maybe DragState
 
-    -- ドット絵の手直し(*.sprite.json のビジュアル編集)。文書の正本は持たず、
+    -- ドット絵のクイック編集(*.sprite.json のビジュアル編集)。文書の元データは持たず、
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
     , sfx : SfxEditor.Model
@@ -822,7 +822,7 @@ type alias Model =
     , pendingRename : Maybe RenameRequest
 
     -- dirty のまま移動(ファイル切替・プロジェクト切替・ウィザード)しようと
-    -- した先(Just = 破棄確認ダイアログ表示中)。黙って編集を捨てないための関所
+    -- した先(Just = 破棄確認ダイアログ表示中)。黙って編集を捨てないためのゲート
     , pendingNav : Maybe NavTarget
 
     -- 作業モードの選択。実際に出すモードは effectiveMode(スキーマ無し等で
@@ -1464,7 +1464,7 @@ update msg model =
                         m1
 
                 Atelier.OutEditFile file ->
-                    -- 候補カードの「✏️ 手直し」— 調整(エディタ)でそのまま開く
+                    -- 候補カードの「✏️ クイック編集」— 調整(エディタ)でそのまま開く
                     openFile file m1
 
                 Atelier.OutArchive candidate ->
@@ -1578,7 +1578,7 @@ update msg model =
         ProjectPickerOpened ->
             -- 上のバーの右端から選択画面へ。編集状態(model)は捨てない —
             -- 「← いまのゲームに戻る」の戻り道と、実際に別プロジェクトを
-            -- 選んだ時の dirty 関所(selectProject)がそのまま生きるため。
+            -- 選んだ時の dirty ゲート(selectProject)がそのまま生きるため。
             -- 封筒は起動時の未選択フォールバックと同じ 2 通
             let
                 ( m1, c1 ) =
@@ -1640,7 +1640,7 @@ update msg model =
                     showToast message m1
 
                 NewGame.OutCopyPromptAndOpen info ->
-                    -- ラフ札の「コピーして開く」。ラフの写しは今は書けない
+                    -- ラフのカードの「コピーして開く」。ラフの写しは今は書けない
                     -- (PUT /file は選択が前提)ので、選択の成功まで控えに持つ
                     let
                         ( m2, copyFx ) =
@@ -1699,7 +1699,7 @@ update msg model =
                 openFile path model
 
         DashboardClicked id ->
-            -- 開くだけなら編集は消えない(current・docText は据え置き)ので関所は不要
+            -- 開くだけなら編集は消えない(current・docText は据え置き)のでゲートは不要
             case model.dashboards |> List.filter (\d -> d.id == id) |> List.head of
                 Just decl ->
                     openDashboard decl model
@@ -1716,7 +1716,7 @@ update msg model =
             )
 
         DashJumped jump ->
-            -- ジャンプはファイル切替なので、既存の関所(dirty 確認)に乗せる
+            -- ジャンプはファイル切替なので、既存のゲート(dirty 確認)に乗せる
             if model.dirty then
                 ( { model | pendingNav = Just (NavJump jump) }, Effect.none )
 
@@ -1728,7 +1728,7 @@ update msg model =
                 Just target ->
                     let
                         -- 破棄=開いた時の本文へ戻す(ReloadChosen と同じ意味論)。
-                        -- dirty を消さないと移動のやり直しが再びこの関所に阻まれる
+                        -- dirty を消さないと移動のやり直しが再びこのゲートに阻まれる
                         m1 =
                             withDoc model.current model.openedText
                                 { model
@@ -1786,7 +1786,7 @@ update msg model =
             reloadCurrent model
 
         ReloadClicked ->
-            -- 手で読み直す。ディスクの版を素直に取り直すだけ(打ちかけは捨てる)
+            -- 手で読み直す。ディスクの版を素直に取り直すだけ(下書きは捨てる)
             reloadCurrent model
 
         StaleDismissed ->
@@ -1804,7 +1804,7 @@ update msg model =
             sendPut (model.conflict |> Maybe.andThen .currentMtime) { model | conflict = Nothing }
 
         ModeChosen mode ->
-            -- 打ちかけは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)。
+            -- 下書きは欄ごと画面から消え得るので、確定せず破棄する(文書は無傷)。
             -- ドット絵の作業コピーも手放す — テキスト側で文書が動き得るため。
             -- ビジュアルへ戻る時は legend 実色表も取り直す(テキスト側で legend や
             -- テーマが変わっていても、古い色で描き続けない)
@@ -1881,7 +1881,7 @@ update msg model =
             ( { model | tilePicker = Nothing }, Effect.none )
 
         TilePicked path x y ->
-            -- マスの値は {x, y} を丸ごと 1 本の set で書く(欄の形をそのまま保つ)
+            -- セルの値は {x, y} を丸ごと 1 本の set で書く(欄の形をそのまま保つ)
             queueEdit
                 { op = SetOp
                 , path = path
@@ -2012,7 +2012,7 @@ update msg model =
             ( { model | bakeZoom = True, bakePlaying = True, bakeZoomShot = Nothing }, Effect.none )
 
         BakeZoomShot url ->
-            -- 1 枚焼きの拡大(コマ送りではなく、その 1 枚を大きく見る)
+            -- 1 枚焼きの拡大(フレーム送りではなく、その 1 枚を大きく見る)
             ( { model | bakeZoom = True, bakeZoomShot = Just url }, Effect.none )
 
         BakeZoomClosed ->
@@ -2030,7 +2030,7 @@ update msg model =
                 ( { model | bakeSeconds = model.bakeSeconds + 1 }, Effect.none )
 
         BakeFrameChanged text_ ->
-            -- コマを指したら動く絵は止める(動いている上でコマは指せない)。
+            -- フレームを指したら動く絵は止める(動いている上でフレームは指せない)。
             -- 絵の枠は通し(Film)へ倒す
             ( { model
                 | bakeFrame = String.toInt text_ |> Maybe.withDefault model.bakeFrame
@@ -2041,7 +2041,7 @@ update msg model =
             )
 
         FilmAdvanced ->
-            -- 「▶ 動かす」の間、コマを 1 つ進める。最後まで行ったら 0 に戻してループ
+            -- 「▶ 動かす」の間、フレームを 1 つ進める。最後まで行ったら 0 に戻してループ
             case model.bake of
                 Just result ->
                     let
@@ -2293,7 +2293,7 @@ update msg model =
             ( { model | deleteConfirm = Nothing }, Effect.none )
 
         EntryClicked sel ->
-            -- 改名の打ちかけは選び直しで破棄(別エントリの id に化けさせない)。
+            -- 改名の下書きは選び直しで破棄(別エントリの id に化けさせない)。
             -- 別の音を選んだら、波形の選択と再生位置も持ち越さない
             let
                 ( m1, shapeFx ) =
@@ -2587,7 +2587,7 @@ update msg model =
             -- 触り始めた欄を、右の JSON でも指し示す(2 ペインで開いている時だけ)
             highlightJson seed.path <|
                 case model.activeDraft of
-                -- 同じ欄への focus 再入(確定失敗の赤を直しに戻った等)は打ちかけを消さない
+                -- 同じ欄への focus 再入(確定失敗の赤を直しに戻った等)は下書きを消さない
                 Just d ->
                     if d.path == seed.path then
                         ( model, Effect.none )
@@ -2609,7 +2609,7 @@ update msg model =
                             else
                                 { model | activeDraft = Just (draftFrom seed text_) }
 
-                        -- focus を経ない入力(Esc 直後に打ち直した等)でも打ちかけとして拾う
+                        -- focus を経ない入力(Esc 直後に打ち直した等)でも下書きとして拾う
                         Nothing ->
                             { model | activeDraft = Just (draftFrom seed text_) }
             in
@@ -2986,7 +2986,7 @@ decodedPick body =
 selectProject : String -> Model -> ( Model, Effect )
 selectProject dir model =
     if model.dirty then
-        -- 切替は開いていた編集を丸ごと消すので、ファイル切替と同じ関所を通す
+        -- 切替は開いていた編集を丸ごと消すので、ファイル切替と同じゲートを通す
         ( { model | pendingNav = Just (NavProject dir) }, Effect.none )
 
     else if model.picker.busy /= Nothing then
@@ -3762,7 +3762,7 @@ sendWizardProjectGet w model =
 
 
 {-| 取ってきた project.json へ "editor"."resources" 追記を jsonc 最小編集
-(docEdit ポート)で当てる。全文の再直列化はしない — キー順・注釈を保つため。
+(docEdit ポート)で当てる。全文の再直列化はしない — キー順・アノテーションを保つため。
 -}
 sendWizardProjectEdit : String -> WizardState -> Model -> ( Model, Effect )
 sendWizardProjectEdit projectText w model =
@@ -4343,7 +4343,7 @@ warmSfxIfNeeded model =
 
 
 {-| ドット絵の一筆(または戻す/やり直す)1 件を docEdit の編集に翻訳する。
-書き戻しは sprites.<名前>.frames.<コマ> の rows 丸ごと 1 本 — 既存の編集直列
+書き戻しは sprites.<名前>.frames.<フレーム> の rows 丸ごと 1 本 — 既存の編集直列
 (dirty・自動保存・衝突検知・保存後の焼き)にそのまま乗る。
 -}
 pixelPayload : PixelEditor.Edit -> EditPayload
@@ -4426,10 +4426,10 @@ selectAddedEntry before edit model =
             model
 
 
-{-| 空きマスのクリックで 1 行足せる配列。スキーマに list セクションの
+{-| 空きセルのクリックで 1 行足せる配列。スキーマに list セクションの
 宣言があり、x と y を宣言している物だけ — 雛形(default 済み)の x,y を
 クリック先へ差し替えれば、欠けの無い行がその場で作れる。
-room = x,y が必須でない配列(triggers 型)。マスを見ない行(on:enter)も作れる。
+room = x,y が必須でない配列(triggers 型)。セルを見ない行(on:enter)も作れる。
 -}
 mapAddableKeys : Model -> List MapEditor.Addable
 mapAddableKeys model =
@@ -4462,7 +4462,7 @@ declaresXy section =
     has "x" && has "y"
 
 
-{-| x,y が必須のセクション(props/exits 型)。必須なら「マスを見ない行」は
+{-| x,y が必須のセクション(props/exits 型)。必須なら「セルを見ない行」は
 そもそも書けない宣言なので、部屋の行の追加は出さない。
 -}
 requiresXy : Schema.Section -> Bool
@@ -4485,7 +4485,7 @@ mapSection model key =
             Nothing
 
 
-{-| クリックしたマスに置く新しい行。スキーマの雛形(default で埋めた全フィールド)の
+{-| クリックしたセルに置く新しい行。スキーマの雛形(default で埋めた全フィールド)の
 x,y だけクリック先で上書きする。並びは宣言順のまま — 手で書いた行と同じ形で入る。
 -}
 mapNewEntry : Schema.Section -> Int -> Int -> E.Value
@@ -4504,8 +4504,8 @@ mapNewEntry section x y =
         )
 
 
-{-| マスを見ない行(部屋ぜんたいの仕掛け)の雛形。x,y は**書かない** —
-書くとマスの行として読まれる。発火の欄(enum に "enter" がある物)は "enter"。
+{-| セルを見ない行(部屋ぜんたいの仕掛け)の雛形。x,y は**書かない** —
+書くとセルの行として読まれる。発火の欄(enum に "enter" がある物)は "enter"。
 -}
 mapRoomEntry : Schema.Section -> E.Value
 mapRoomEntry section =
@@ -4816,7 +4816,7 @@ opPayload op =
 
 
 
--- 打ちかけ(draft)の確定・増減
+-- 下書き(draft)の確定・増減
 
 
 draftFrom : DraftSeed -> String -> ActiveDraft
@@ -4825,7 +4825,7 @@ draftFrom seed text_ =
 
 
 {-| ↑↓ の増減。draft を先に増減後の文字へ差し替えてから確定を流す —
-docEdit のエコーが返っても欄の表示は draft 側が勝つので打ちかけが消えない。
+docEdit のエコーが返っても欄の表示は draft 側が勝つので下書きが消えない。
 増減はスライダー同様「操作=意図が明確」なので blur を待たず即確定する。
 -}
 stepDraft : DraftSeed -> { dir : Int, shift : Bool } -> Model -> ( Model, Effect )
@@ -5111,7 +5111,7 @@ commitFileRename model =
                             }
 
 
-{-| 検索結果から飛ぶ。開くのは既存のジャンプ経路(dirty の関所も通る)で、
+{-| 検索結果から飛ぶ。開くのは既存のジャンプ経路(dirty のゲートも通る)で、
 そのうえで「どの欄か」を控えておき、届いた後に画面をそこまで送る。
 -}
 jumpToHit : Api.SearchHit -> Model -> ( Model, Effect )
@@ -5516,7 +5516,7 @@ ownUndoFront model =
         && (mapDocCurrent model /= Nothing || spriteDocCurrent model /= Nothing)
 
 
-{-| 1 手のまとまり。欄に打ちかけがある間・盤面をドラッグしている間に出る編集は
+{-| 1 手のまとまり。欄に下書きがある間・盤面をドラッグしている間に出る編集は
 洪水になるので、その 1 回のやり取り(editSeq)を 1 手に畳む。押しただけの操作
 (行の並べ替え・追加・削除)は 1 つずつ別の手。
 -}
@@ -5536,7 +5536,7 @@ startInteraction model =
 
 
 {-| 戻す / やり直す。逆操作は履歴に積まない道で既存の書き戻しへ流す。
-打ちかけは畳む — 戻した値の上に古い打ちかけを残さない。
+下書きは畳む — 戻した値の上に古い下書きを残さない。
 
 1 手が開いている文書の中で閉じているなら、いつもの編集直列(queueEdit)へ。
 ファイルをまたぐ手(横断置換)は、開いていないファイルへの直列(CrossEdit)で
@@ -5891,7 +5891,7 @@ enginePreviewKind model =
 
 
 {-| エンジン焼きプレビューのリクエストを導く。本文 doc をインラインで送るのは
-未保存の編集も絵に出すため。パースが通らない打ちかけの間は送らない(前の絵を
+未保存の編集も絵に出すため。パースが通らない下書きの間は送らない(前の絵を
 出したまま) — タイピング途中の壊れた JSON で枠を赤くしない。
 -}
 enginePreviewRequest : Model -> Maybe ( String, E.Value )
@@ -6111,9 +6111,9 @@ handleOkByKind env model =
             -- 見張りは 2 本立て。(1) 一覧の増減: mtime 一覧のキー集合を今の
             -- ファイル一覧と比べ、違えば files/resources を取り直す(サイドバーだけに
             -- 効かせる — 選択・スクロール・編集中の文書には触らない)。
-            -- (2) 開いているファイルの鮮度: 変わっていて打ちかけが無ければ黙って
-            -- 読み直す。打ちかけがあるときだけ帯で知らせる(保存は 409 が最後の砦)。
-            -- 一覧から消えていれば、打ちかけが無ければ閉じる・あれば知らせるだけ。
+            -- (2) 開いているファイルの鮮度: 変わっていて下書きが無ければ黙って
+            -- 読み直す。下書きがあるときだけ帯で知らせる(保存は 409 が最後の砦)。
+            -- 一覧から消えていれば、下書きが無ければ閉じる・あれば知らせるだけ。
             -- token(集計値)・最大 mtime はここで常に最新へ更新する — 「焼く」
             -- ボタンの無効化(bakedTokens・restoredGifMtime との突き合わせ)が使う
             case D.decodeValue diskMtimesDecoder env.body of
@@ -6280,7 +6280,7 @@ handleOkByKind env model =
             )
 
         "atelierRestore" ->
-            -- 札が候補の列へ戻った。両方の一覧を取り直す
+            -- カードが候補の列へ戻った。両方の一覧を取り直す
             let
                 ( m1, toastFx ) =
                     showToast "↩ 候補に戻しました"
@@ -6383,7 +6383,7 @@ handleOkByKind env model =
                 model
 
         "clearFontCache" ->
-            showToast "フォントの焼き置きを捨てました — 次の起動は焼き直しで少し待ちます" model
+            showToast "フォントのキャッシュを捨てました — 次の起動は作り直しで少し待ちます" model
 
         "gameLog" ->
             case D.decodeValue Atelier.gameLogDecoder env.body of
@@ -6439,7 +6439,7 @@ handleOkByKind env model =
             ( { model | atelier = Atelier.promoted retired model.atelier }, Effect.none )
 
         "genesisFamilies" ->
-            -- ジャンルえらびの札。読めない応答は従来のプリセット入力に倒す(fail-open)
+            -- ジャンルえらびのカード。読めない応答は従来のプリセット入力に倒す(fail-open)
             case D.decodeValue NewGame.familiesDecoder env.body of
                 Ok families ->
                     ( { model | newGame = NewGame.gotFamilies families model.newGame }, Effect.none )
@@ -6506,7 +6506,7 @@ handleOkByKind env model =
                             ( m3, Effect.batch [ toastFx, requestInfo "projects", selectFx ] )
 
                         NewGame.LogSketchBorn ->
-                            -- ラフ札の誕生。ここでは開かない — パネルが依頼文を
+                            -- ラフのカードの誕生。ここでは開かない — パネルが依頼文を
                             -- 差し出したままにして、開く(コピー)は人のひと押しに乗せる
                             let
                                 ( m2, toastFx ) =
@@ -6628,7 +6628,7 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
 
-                        -- ラフ札から産まれた直後だけ、ラフの写しをこのタイミングで書く
+                        -- ラフのカードから産まれた直後だけ、ラフの写しをこのタイミングで書く
                         -- (PUT /file は選択が前提なので、これより早くは書けない)。
                         -- dir が違えば黙って捨てる — 別プロジェクトへ書き込まないため
                         ( m3, sketchFx ) =
@@ -6708,7 +6708,7 @@ handleOkByKind env model =
                                         , mtime = fc.mtime
 
                                         -- 読み込み(開く・読み直し・外で変わった)で
-                                        -- 正本が入れ替わる → 古い逆操作は当たらない
+                                        -- 元データが入れ替わる → 古い逆操作は当たらない
                                         , history = EditHistory.cutOnExternalChange model.history
                                         , notice = Nothing
                                         , conflict = Nothing
@@ -6774,7 +6774,7 @@ handleOkByKind env model =
                                     Nothing ->
                                         ( m6, Effect.none )
 
-                            -- 前に焼いた物が残っていれば出す(今の脚本と同じ保証は無いので札つき)
+                            -- 前に焼いた物が残っていれば出す(今のスクリプトと同じ保証は無いので注意書きつき)
                             ( m8, bakedFx ) =
                                 lookForBaked m7
                         in
@@ -6876,7 +6876,7 @@ handleOkByKind env model =
 
                 Err _ ->
                     -- 成功の封筒なのに file の形でない(未選択エラー等が 200 で返った)。
-                    -- 要求札を畳まないと「スキーマを探しています…」が永久に残る
+                    -- 要求の控えを消さないと「スキーマを探しています…」が永久に残る
                     if Just env.id == model.schemaReq then
                         ( { model | schemaReq = Nothing, schemaState = SchemaMissing }, Effect.none )
 
@@ -6884,7 +6884,7 @@ handleOkByKind env model =
                         ( { model | loadReq = Nothing, notice = Just "file 応答が読めませんでした" }, Effect.none )
 
                     else if Just env.id == model.sketchDraftReq then
-                        -- 札を畳まないと「読み込んでいます…」が窓に残り続ける
+                        -- 控えを消さないと「読み込んでいます…」が窓に残り続ける
                         ( { model
                             | sketchDraftReq = Nothing
                             , sketchCompare = SketchCompare.loadFailed "ラフを読めませんでした" model.sketchCompare
@@ -6991,7 +6991,7 @@ handleOkByKind env model =
                             sendPerform from path { m1 | waking = False }
 
                 else if needsCmd then
-                    showToast "焼き係の起こし方が宣言されていません(project.json の宣言に bakeCmd を書いてください)"
+                    showToast "描き出しサーバの起こし方が宣言されていません(project.json の宣言に bakeCmd を書いてください)"
                         { m1 | waking = False }
 
                 else
@@ -7097,11 +7097,11 @@ handleOkByKind env model =
                                 )
 
                             else
-                                showToast "焼き係に繋がりません(make cutscene-server で起動してください)"
+                                showToast "描き出しサーバに繋がりません(make cutscene-server で起動してください)"
                                     { model | bakeReq = Nothing, bakeFile = Nothing, bake = Just result }
 
                         Err _ ->
-                            showToast "焼きの応答が読めませんでした" { model | bakeReq = Nothing, bakeFile = Nothing }
+                            showToast "描き出しの応答が読めませんでした" { model | bakeReq = Nothing, bakeFile = Nothing }
 
             else
                 ( model, Effect.none )
@@ -7204,7 +7204,7 @@ handleOkByKind env model =
 
         "putFile" ->
             if Just env.id == model.bornSketchReq then
-                -- ラフ札の誕生直後の写し。成功は黙る(誕生の祝いは既に出ている)
+                -- ラフのカードの誕生直後の写し。成功は黙る(誕生の祝いは既に出ている)
                 ( { model | bornSketchReq = Nothing }, Effect.none )
 
             else if Just env.id == model.sketchSaveReq then
@@ -7696,7 +7696,7 @@ handleErrByKind env message model =
                     ( { model | bakeReq = Nothing, bakeFile = Nothing }, Effect.none )
 
                 else
-                    showToast ("焼けませんでした — " ++ message) { model | bakeReq = Nothing, bakeFile = Nothing }
+                    showToast ("描き出せませんでした — " ++ message) { model | bakeReq = Nothing, bakeFile = Nothing }
 
             else
                 ( model, Effect.none )
@@ -7969,7 +7969,7 @@ request kind payload model =
     )
 
 
-{-| 開いているファイルをディスクから取り直す。打ちかけ・保存待ち・競合の印は畳む。
+{-| 開いているファイルをディスクから取り直す。下書き・保存待ち・競合の印は畳む。
 409 のダイアログからも手の「読み直す」からも同じ道を通す(道が 2 本あると片方が腐る)。
 -}
 reloadCurrent : Model -> ( Model, Effect )
@@ -8028,8 +8028,8 @@ syncFileListIfNeeded mtimes model =
 {-| 開いているファイルが見張り(changes)の一覧から消えた = ディスクから
 無くなったとみられる時の着地。fileVerbs の削除(afterVerb)は本人が消した
 操作なので問答無用で閉じるが、こちらは本人の指示ではない外部の変化なので、
-打ちかけがあれば勝手に捨てず帯で知らせるだけに留める(保存を試みれば
-結局 404/409 で守られる)。打ちかけが無ければ afterVerb と同じ着地(閉じる)。
+下書きがあれば勝手に捨てず帯で知らせるだけに留める(保存を試みれば
+結局 404/409 で守られる)。下書きが無ければ afterVerb と同じ着地(閉じる)。
 -}
 closeOrFlagMissing : String -> Model -> ( Model, Effect )
 closeOrFlagMissing path model =
@@ -8116,7 +8116,7 @@ gotoTab tab model =
                 ([ requestInfo "atelierCandidates"
                  , requestInfo "gameStatus"
 
-                 -- 「つくる」の素材スロット(無いサーバでは AI カードが準備中になるだけ)
+                 -- 「つくる」のアセットスロット(無いサーバでは AI カードが準備中になるだけ)
                  , requestInfo "atelierSlots"
 
                  -- アーカイブの中身(無いサーバでは入口ごと出ないだけ)
@@ -8167,7 +8167,7 @@ view model =
                         viewShell model (viewHome model)
 
                     AtelierTab ->
-                        -- 入口から素材 / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ
+                        -- 入口からアセット / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ
                         if Atelier.showLanding model.atelier then
                             viewShell model (Html.map AtelierMsg (Atelier.viewLanding model.atelier))
 
@@ -8371,7 +8371,7 @@ viewReferenceBadge model =
                         , ( "text-amber-300", status.broken > 0 )
                         , ( "text-ok", status.broken == 0 )
                         ]
-                    , HA.title "焼き上がりが前と同じかを見比べる"
+                    , HA.title "描き出した絵が前と同じかを見比べる"
                     , HE.onClick ReferenceOpened
                     ]
                     [ text
@@ -8577,10 +8577,10 @@ viewHome model =
                 [ text "ビルドの詰まりを掃除" ]
             , button
                 [ HA.class "clear-font-cache-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                , HA.title "字が乱れるときに。フォントの焼き置きを捨てます(次の起動は焼き直しで少し遅くなります)"
+                , HA.title "字が乱れるときに。フォントのキャッシュを捨てます(次の起動は作り直しで少し遅くなります)"
                 , HE.onClick ClearFontCacheClicked
                 ]
-                [ text "フォントの焼き置きを捨てる" ]
+                [ text "フォントのキャッシュを捨てる" ]
             ]
         , viewChangesModal model
         , viewScenesModal model
@@ -9046,7 +9046,7 @@ viewEditing model =
                            )
                     )
 
-                -- 開いたファイルの境界の 1 行(素材なら②への行き来、調整値なら完結の一言)
+                -- 開いたファイルの境界の 1 行(アセットなら②への行き来、調整値なら完結の一言)
                 , viewRoleBoundary model
                 , viewProblemBar model
                 , case model.conflict of
@@ -9316,11 +9316,11 @@ frameKey model cut =
 
 
 {-| ファイルを切り替えた時に、前のファイルの「見せ方」を持ち越さない
-(絵・コマ・拡大・1 枚焼きの控え)。ただし進行中の焼き(起こし〜焼き、
+(絵・フレーム・拡大・1 枚焼きの控え)。ただし進行中の焼き(起こし〜焼き、
 bakeReq・bakeFile・bakeSeconds・waking・wakeReq)は消さない — 切り替えても
 裏で続き、bakeCutscene の応答が bakeFile と今のファイルを突き合わせて
 戻り先を決める(startBake/forgetBake のコメント参照)。
-1 枚焼きの予約は世代を進めて無効にする(やめると同じ仕組み)。
+1 枚焼きの予約は世代を進めて無効にする(やめると同じメカニクス)。
 -}
 forgetBake : Model -> Model
 forgetBake model =
@@ -9342,7 +9342,7 @@ forgetBake model =
 
 
 {-| 開いたファイルに前回の焼き産物があるか訊く。
-あれば「前回の焼き」として出す — 今の脚本と同じ保証は無いので札を添える。
+あれば「前回の焼き」として出す — 今のスクリプトと同じ保証は無いので注意書きを添える。
 -}
 lookForBaked : Model -> ( Model, Effect )
 lookForBaked model =
@@ -9362,8 +9362,8 @@ probeBaked path model =
         { model | bakeProbe = Just path }
 
 
-{-| pastBake(前回の焼き)は応答にコマ数が乗らない(GIF が「絵だけある」で
-復元されるだけ)ので、コマ別 PNG の置き場を数え直して埋め合わせる。
+{-| pastBake(前回の焼き)は応答にフレーム数が乗らない(GIF が「絵だけある」で
+復元されるだけ)ので、フレーム別 PNG の置き場を数え直して埋め合わせる。
 GIF の置き場から frames/ の置き場を導く(framesDir と同じ道具)。
 -}
 requestFramesCount : Model -> Api.BakeResult -> ( Model, Effect )
@@ -9394,7 +9394,7 @@ bakedGifPath id =
 
 
 {-| 焼く。未保存があれば先に保存してから頼む(サーバは毎回ファイルを読み直すので、
-保存前に頼むと古い脚本が焼ける)。焼いている間も編集は止めない。
+保存前に頼むと古いスクリプトが焼ける)。焼いている間も編集は止めない。
 焼く前に焼き係を起こす(繋がっていれば server 側で即返る)。起こしている間は
 「起こしています… n 秒」を出し、返ってから焼きへ進む。押した時点のファイル
 (path)を控える — 起こし待ちの間に別ファイルへ切り替えられても、焼くのは
@@ -9453,7 +9453,7 @@ wakeGiveUpSeconds =
     240
 
 
-{-| 実機へ「この脚本をここから演じて」と頼む。脚本は毎回ディスクから読み直されるので、
+{-| 実機へ「このスクリプトをここから演じて」と頼む。スクリプトは毎回ディスクから読み直されるので、
 未保存があれば先に保存する。path は startWake で控えた「押した時点のファイル」—
 起こし待ちの間に別ファイルへ切り替えられていても、演じるのはこの path
 (今開いているファイルではない)。保存は「今開いていて、かつ同じファイル」の
@@ -9664,12 +9664,12 @@ tallPreview model =
 
 
 {-| 右上の「見え方」。音の文書なら ▶(選んでいる音)、絵のある文書なら
-これまでのプレビュー札。どちらでもなければ静かな一言。
+これまでのプレビューカード。どちらでもなければ静かな一言。
 -}
 viewKnobPreview : Model -> Maybe (List (Html Msg))
 viewKnobPreview model =
     case bakeUrlOf model of
-        -- 焼き係を宣言している Doc(場面の脚本)は、焼き上がりが見え方
+        -- 焼き係を宣言している Doc(場面のスクリプト)は、焼き上がりが見え方
         Just _ ->
             Just (viewBakePanel model)
 
@@ -9699,8 +9699,8 @@ viewKnobPreviewBody model =
                             Just cards
 
 
-{-| 焼き上がりの場面。焼く札・注意の件数・GIF・コマ送り。
-焼きは 20〜70 秒かかるので、押した後も編集は止めない(札だけ回る)。
+{-| 焼き上がりの場面。描き出すボタン・注意の件数・GIF・フレーム送り。
+焼きは 20〜70 秒かかるので、押した後も編集は止めない(ボタンだけ回る)。
 -}
 viewBakePanel : Model -> List (Html Msg)
 viewBakePanel model =
@@ -9772,22 +9772,22 @@ viewBakePanel model =
             , HA.disabled (baking || waking || unchanged)
             , HA.title
                 (if bakingElsewhere then
-                    "別の脚本を焼いています(終わるまで待ってください)"
+                    "別のスクリプトを描き出しています(終わるまで待ってください)"
 
                  else if unchanged then
-                    "前回の焼きから何も変わっていません(脚本や部屋の JSON を変えると押せるようになります)"
+                    "前回の描き出しから何も変わっていません(スクリプトや部屋の JSON を変えると押せるようになります)"
 
                  else
-                    "保存してから焼き係に頼みます(20〜70 秒。焼いている間も編集できます)"
+                    "保存してから描き出しサーバに頼みます(20〜70 秒。描き出している間も編集できます)"
                 )
             , HE.onClick BakeClicked
             ]
             [ text
                 (if model.dirty then
-                    "保存して焼く"
+                    "保存して描き出す"
 
                  else
-                    "焼く"
+                    "描き出す"
                 )
             ]
         , if waking || baking then
@@ -9795,7 +9795,7 @@ viewBakePanel model =
                 [ HA.class "bake-cancel btn btn-ghost btn-mini"
                 , HA.title
                     (if bakingElsewhere then
-                        "別の脚本の焼き(裏で進んでいる分)をやめます"
+                        "別のスクリプトの描き出し(裏で進んでいる分)をやめます"
 
                      else
                         ""
@@ -9815,7 +9815,7 @@ viewBakePanel model =
                             "ゲームを起こしています… "
 
                         BakeAfterWake _ ->
-                            "焼き係を起こしています… "
+                            "描き出しサーバを起こしています… "
                      )
                         ++ String.fromInt model.wakeSeconds
                         ++ "s(初回はコンパイルのため数分かかることがあります)"
@@ -9825,13 +9825,13 @@ viewBakePanel model =
           else if bakingHere then
             span [ HA.class "flex items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
-                , text ("焼いています… " ++ String.fromInt model.bakeSeconds ++ "s")
+                , text ("描き出しています… " ++ String.fromInt model.bakeSeconds ++ "s")
                 ]
 
           else if bakingElsewhere then
             span [ HA.class "bake-elsewhere flex items-center gap-1.5 text-[11px] text-ink-soft" ]
                 [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
-                , text "別の脚本を焼いています…"
+                , text "別のスクリプトを描き出しています…"
                 ]
 
           else
@@ -9842,10 +9842,10 @@ viewBakePanel model =
                     span [ HA.class "bake-offline text-[11px] text-amber-300" ]
                         [ text
                             (if bakeCmdDeclared model then
-                                "焼き係が応えませんでした(もう一度お試しください)"
+                                "描き出しサーバが応えませんでした(もう一度お試しください)"
 
                              else
-                                "焼き係の起こし方が宣言されていません(project.json の editor.bakeCmd)"
+                                "描き出しサーバの起こし方が宣言されていません(project.json の editor.bakeCmd)"
                             )
                         ]
 
@@ -9867,22 +9867,22 @@ viewBakePanel model =
 
 
 {-| 右ペインの絵の枠。「カットの瞬間」(frameShot、行を選んだ 0.4 秒の 1 枚焼き)と
-「焼き上がりの通し」(bake、コマ送り)を 1 つの枠 + 1 本の操作列に統合する。
+「焼き上がりの通し」(bake、フレーム送り)を 1 つの枠 + 1 本の操作列に統合する。
 
 出しているのはどちらか(model.previewMode)は「最後に指した方」で決めるが、
 どちらか一方しか無ければそちらを優先する(両方無ければ何も出さない)。
-未保存の編集があるうちは「今の脚本」ではないことを小さく断る(勝手には保存しない)。
+未保存の編集があるうちは「今のスクリプト」ではないことを小さく断る(勝手には保存しない)。
 -}
 viewPreview : Model -> List (Html Msg)
 viewPreview model =
     case ( model.frameShot, filmOf model ) of
         ( Nothing, Nothing ) ->
             if model.frameReq /= Nothing then
-                [ div [ HA.class "mb-2 text-[11px] text-ink-faint" ] [ text "この瞬間を焼いています…" ] ]
+                [ div [ HA.class "mb-2 text-[11px] text-ink-faint" ] [ text "この瞬間を描き出しています…" ] ]
 
             else
                 [ div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
-                    [ text "「焼く」を押すと、この脚本を焼いて動く絵で見せます。" ]
+                    [ text "「描き出す」を押すと、このスクリプトを描き出して動く絵で見せます。" ]
                 ]
 
         ( Just shot, Nothing ) ->
@@ -9900,7 +9900,7 @@ viewPreview model =
                     viewFilmPreview model result gif
 
 
-{-| 前回の焼き産物を「絵だけある」状態として持つ(コマ数は分からないので 0)。 -}
+{-| 前回の焼き産物を「絵だけある」状態として持つ(フレーム数は分からないので 0)。 -}
 pastBake : String -> Api.BakeResult
 pastBake gif =
     { reachable = True
@@ -9912,7 +9912,7 @@ pastBake gif =
     }
 
 
-{-| 焼き上がりの絵(GIF)。コマ別 PNG が焼けているかは Api.pngFrameCount で見る。 -}
+{-| 焼き上がりの絵(GIF)。フレーム別 PNG が焼けているかは Api.pngFrameCount で見る。 -}
 filmOf : Model -> Maybe ( Api.BakeResult, String )
 filmOf model =
     model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif )))
@@ -9947,7 +9947,7 @@ viewShotPreview model shot =
         ]
     , if model.dirty then
         div [ HA.class "mb-2 text-[10px] text-ink-faint" ]
-            [ text "保存すると最新の脚本で焼けます" ]
+            [ text "保存すると最新のスクリプトで描き出せます" ]
 
       else
         text ""
@@ -9960,9 +9960,9 @@ viewShotPreview model shot =
     ]
 
 
-{-| 焼き上がりの通し(GIF またはコマ別 PNG)を枠に出し、下に操作列を添える。
-コマ別 PNG が焼けていれば(再生中も停止中も)そのコマの PNG を出す。
-GIF は今どのコマかを外から知れず操作列と連動できないので、コマ数不明の
+{-| 焼き上がりの通し(GIF またはフレーム別 PNG)を枠に出し、下に操作列を添える。
+フレーム別 PNG が焼けていれば(再生中も停止中も)そのフレームの PNG を出す。
+GIF は今どのフレームかを外から知れず操作列と連動できないので、フレーム数不明の
 過去の焼き(pastBake)を出す時だけ従来どおり GIF を出す。拡大は通し全体(BakeZoomOpened)。
 -}
 viewFilmPreview : Model -> Api.BakeResult -> String -> List (Html Msg)
@@ -9978,7 +9978,7 @@ viewFilmPreview model result gif =
             clamp 0 last model.bakeFrame
     in
     [ div [ HA.class "relative mb-2" ]
-        [ -- キー付き(sceneId + gif パス)で包む: コマ送り(src の書き換えだけ)は
+        [ -- キー付き(sceneId + gif パス)で包む: フレーム送り(src の書き換えだけ)は
           -- 同じノードのまま滑らかに進めたいが、ファイル/焼き直しが変われば
           -- キーが変わって別ノードになり、前の絵が居座って見えるのを防ぐ
           Html.Keyed.node "div"
@@ -9990,7 +9990,7 @@ viewFilmPreview model result gif =
                             img
                                 [ HA.class "bake-gif block w-full rounded border border-edge bg-well"
                                 , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
-                                , HA.alt ("コマ " ++ String.fromInt at)
+                                , HA.alt ("フレーム " ++ String.fromInt at)
                                 ]
                                 []
 
@@ -10001,7 +10001,7 @@ viewFilmPreview model result gif =
                     img
                         [ HA.class "bake-gif block w-full rounded border border-edge bg-well"
                         , HA.src (mediaUrl model gif)
-                        , HA.alt "焼き上がり"
+                        , HA.alt "描き出した絵"
                         ]
                         []
               )
@@ -10009,14 +10009,14 @@ viewFilmPreview model result gif =
         , div [ HA.class "absolute top-1 left-1 flex gap-1" ]
             [ if model.bakeStale then
                 span [ HA.class "bake-stale rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
-                    [ text "前回の焼き" ]
+                    [ text "前回の描き出し" ]
 
               else
                 text ""
             ]
         , button
             [ HA.class "bake-zoom btn btn-mini absolute top-1 right-1"
-            , HA.title "大きく見る(← → でコマ送り・Space で再生 / 止める・Esc で閉じる)"
+            , HA.title "大きく見る(← → でフレーム送り・Space で再生 / 止める・Esc で閉じる)"
             , HE.onClick BakeZoomOpened
             ]
             [ text "⤢ 拡大" ]
@@ -10028,11 +10028,11 @@ viewFilmPreview model result gif =
         viewFilmControls model at last
 
     , div [ HA.class "text-[10px] text-ink-faint" ]
-        [ text "焼き上がりは保存した脚本のもの(編集しただけでは変わりません)" ]
+        [ text "描き出した絵は保存したスクリプトのもの(編集しただけでは変わりません)" ]
     ]
 
 
-{-| 通しの操作列。再生ボタン・◀ ▶・シークバー・i/n 表示。コマ別 PNG があるときだけ出す
+{-| 通しの操作列。再生ボタン・◀ ▶・シークバー・i/n 表示。フレーム別 PNG があるときだけ出す
 (絵は frames/<id>/<n>.png、再生は購読(FilmAdvanced)が model.bakeFrame を進める)。
 -}
 viewFilmControls : Model -> Int -> Int -> Html Msg
@@ -10120,8 +10120,8 @@ bakedUrl model item =
     SceneView.galleryImageUrl model.serverBase model.root "gallery" item.name
 
 
-{-| 焼き上がりの拡大。全場面モーダルと同じ暗幕の流儀で、画面いっぱいに出す。
-中でも同じ操作(GIF の再生 / 止める・コマ送り)ができる。
+{-| 焼き上がりの拡大。全場面モーダルと同じオーバーレイの流儀で、画面いっぱいに出す。
+中でも同じ操作(GIF の再生 / 止める・フレーム送り)ができる。
 -}
 viewBakeZoom : Model -> Html Msg
 viewBakeZoom model =
@@ -10158,22 +10158,22 @@ viewBakeZoom model =
                         text ""
 
                 -- キー付き(filmKey)で包む: viewFilmPreview と同じ理由・同じ鍵
-                -- (コマ送りは同じノードのまま、ファイル/焼き直しが変われば別ノードに)
+                -- (フレーム送りは同じノードのまま、ファイル/焼き直しが変われば別ノードに)
                 , Html.Keyed.node "div"
                     [ HA.class "contents" ]
                     [ ( filmKey model result
                       , case ( model.bakeZoomShot, Api.pngFrameCount result > 0 || not model.bakePlaying, result.gif ) of
-                            -- GIF は今どのコマかを外から知れず(<img> の中で完結する)、
-                            -- シークバー(bakeFrame)と連動できない。コマ別 PNG があるなら
-                            -- 再生中も停止中もコマ送りに一本化する。GIF を出すのは
-                            -- コマ数不明の過去の焼き(pastBake)を再生中のときだけ
+                            -- GIF は今どのフレームかを外から知れず(<img> の中で完結する)、
+                            -- シークバー(bakeFrame)と連動できない。フレーム別 PNG があるなら
+                            -- 再生中も停止中もフレーム送りに一本化する。GIF を出すのは
+                            -- フレーム数不明の過去の焼き(pastBake)を再生中のときだけ
                             ( Nothing, True, _ ) ->
                                 case sceneId model of
                                     Just id ->
                                         img
                                             [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
                                             , HA.src (mediaUrl model (framesDir model result ++ id ++ "/" ++ String.fromInt at ++ ".png"))
-                                            , HA.alt ("コマ " ++ String.fromInt at)
+                                            , HA.alt ("フレーム " ++ String.fromInt at)
                                             ]
                                             []
 
@@ -10184,7 +10184,7 @@ viewBakeZoom model =
                                 img
                                     [ HA.class "bake-zoom-shot max-h-[82vh] max-w-[94vw] object-contain"
                                     , HA.src (mediaUrl model gif)
-                                    , HA.alt "焼き上がり"
+                                    , HA.alt "描き出した絵"
                                     ]
                                     []
 
@@ -10195,7 +10195,7 @@ viewBakeZoom model =
                 , div
                     [ HA.class "flex w-[70vw] max-w-[52rem] items-center gap-2"
 
-                    -- 中の操作は暗幕の「押したら閉じる」に食わせない
+                    -- 中の操作はオーバーレイの「押したら閉じる」に食わせない
                     , HE.stopPropagationOn "click" (D.succeed ( BakeTick, True ))
                     ]
                     [ button
@@ -10239,7 +10239,7 @@ viewBakeZoom model =
 
 {-| 焼き上がりの絵(通し)を Html.Keyed で包む時の鍵。ファイル(sceneId)か
 産物(gif の置き場)のどちらかが変われば別ノードになり、読み込み中に前の絵が
-居座って見えるのを防ぐ。コマ番号は含めない — コマ送りは同じノードのまま
+居座って見えるのを防ぐ。フレーム番号は含めない — フレーム送りは同じノードのまま
 src だけ滑らかに進めたい。
 -}
 filmKey : Model -> Api.BakeResult -> String
@@ -10247,7 +10247,7 @@ filmKey model result =
     Maybe.withDefault "" (sceneId model) ++ "|" ++ Maybe.withDefault "" result.gif
 
 
-{-| コマ別 PNG の置き場。GIF の置き場から導く(応答が置き場を明示しないので、
+{-| フレーム別 PNG の置き場。GIF の置き場から導く(応答が置き場を明示しないので、
 同じ産物の隣を指す)。
 -}
 framesDir : Model -> Api.BakeResult -> String
@@ -10280,14 +10280,14 @@ mediaUrl model path =
     SceneView.galleryImageUrl model.serverBase model.root dir name
 
 
-{-| 脚本が指している部屋(定規つきの絵を選ぶ材料)。文書が持つ値。 -}
+{-| スクリプトが指している部屋(定規つきの絵を選ぶ材料)。文書が持つ値。 -}
 roomOf : Model -> Maybe String
 roomOf model =
     parsedDoc model
         |> Maybe.andThen (\doc -> D.decodeValue (D.field "room" D.string) doc |> Result.toMaybe)
 
 
-{-| その部屋の列数(= 間取りの 1 行の文字数)。マスの大きさは
+{-| その部屋の列数(= 間取りの 1 行の文字数)。セルの大きさは
 「絵の幅 ÷ 列数」で出すので、部屋ごとの倍率を覚えなくてよい。
 横断辞書に間取りが無ければ Nothing(その時は数値入力だけで進める)。
 -}
@@ -10309,7 +10309,7 @@ roomColumns model room =
             )
 
 
-{-| 開いている脚本の id(コマの置き場を指すのに使う)。宣言でなく文書が持つ値。 -}
+{-| 開いているスクリプトの id(フレームの置き場を指すのに使う)。宣言でなく文書が持つ値。 -}
 sceneId : Model -> Maybe String
 sceneId model =
     parsedDoc model
@@ -10329,7 +10329,7 @@ selectedSoundName model =
             currentSection model |> Maybe.map Tuple.first
 
 
-{-| 焼いてある WAV を鳴らす札と、その波形(再生位置・範囲選択・シーク)。
+{-| 焼いてある WAV を鳴らすボタンと、その波形(再生位置・範囲選択・シーク)。
 焼き直しが要る間は、その旨を添える。
 -}
 viewSoundPlayer : Model -> String -> Html Msg
@@ -10394,7 +10394,7 @@ viewSoundControls model name =
           else
             button
                 [ HA.class "sound-play btn btn-mini"
-                , HA.title "焼いてある WAV をそのまま鳴らす(全体の音量つまみは掛かりません)"
+                , HA.title "描き出してある WAV をそのまま鳴らす(全体の音量つまみは掛かりません)"
                 , HE.onClick (SoundPlayClicked name)
                 ]
                 [ text ("▶ " ++ name) ]
@@ -10410,9 +10410,9 @@ viewSoundControls model name =
         , if model.dirty then
             span
                 [ HA.class "rebake-badge shrink-0 rounded-sm bg-amber-500/20 px-1.5 py-px text-[10px] text-amber-300 ring-1 ring-amber-400/40"
-                , HA.title "つまみを変えました。ゲーム側で焼き直すまで、鳴るのは前の音です"
+                , HA.title "つまみを変えました。ゲーム側で描き出し直すまで、鳴るのは前の音です"
                 ]
-                [ text "焼き直しが要る" ]
+                [ text "描き出し直しが要る" ]
 
           else
             text ""
@@ -10561,8 +10561,8 @@ viewEditToolbar model =
             Nothing ->
                 text ""
         , case model.staleMtime of
-            -- 外で変わったのに手元に打ちかけがある、という情報表示だけ(読み直す手は
-            -- 置かない — 打ちかけを勝手に捨てない。保存は 409 で最後まで守られる)
+            -- 外で変わったのに手元に下書きがある、という情報表示だけ(読み直す手は
+            -- 置かない — 下書きを勝手に捨てない。保存は 409 で最後まで守られる)
             Just _ ->
                 span
                     [ HA.class "stale flex shrink-0 items-center gap-1.5 rounded-sm bg-amber-500/20 px-1.5 py-px text-[11px] text-amber-300 ring-1 ring-amber-400/40" ]
@@ -10579,7 +10579,7 @@ viewEditToolbar model =
                 text ""
         , if model.currentMissing then
             -- 見張り(changes)の一覧から消えた = ディスクから無くなったとみられる。
-            -- 打ちかけがあれば closeOrFlagMissing が閉じずここへ倒す(情報表示のみ)
+            -- 下書きがあれば closeOrFlagMissing が閉じずここへ倒す(情報表示のみ)
             span
                 [ HA.class "missing flex shrink-0 items-center gap-1.5 rounded-sm bg-amber-500/20 px-1.5 py-px text-[11px] text-amber-300 ring-1 ring-amber-400/40" ]
                 [ text "このファイルはディスクから見当たりません(保存時に確認します)"
@@ -10636,7 +10636,7 @@ viewEditToolbar model =
 
 
 {-| 戻せる手数。0 の間は出さない — 何もしていない時に押せない物を置かない。
-盤面・ドット絵が前面の時も出さない(その画面の ⌘Z は自前の履歴が持ち場で、
+盤面・ドット絵が前面の時も出さない(その画面の ⌘Z は自前の履歴が担当で、
 数が合わないため)。
 -}
 viewUndoCount : Model -> Html Msg
@@ -10766,7 +10766,7 @@ baseName path =
 
 
 {-| フォーム/エディタの下の境界の 1 行。開いたファイルが
-素材(role:material の宣言)なら「素材を切り替える」への行き来リンク、
+アセット(role:material の宣言)なら「アセットを切り替える」への行き来リンク、
 宣言された調整値(tuning)なら「値を変えるだけで完結」の一言(リンクなし)。
 宣言外のファイル(すべてのファイル表示中に開ける)にはこの行自体を出さない。
 題は宣言題(括弧前)だけを織り込む — 名詞を発明しない。
@@ -10880,7 +10880,7 @@ viewFilePane model =
                     ]
                     [ text
                         (if showAll then
-                            "宣言された素材だけに戻す"
+                            "宣言されたアセットだけに戻す"
 
                          else
                             "🗂 すべてのファイル"
@@ -11139,7 +11139,7 @@ viewDashboardRow openId dash =
 
 
 {-| 左が主リソースのエントリ一覧、右が選択エントリの要約と ref ののぞき窓。
-編集はここでは受けない — カードのジャンプで正本ファイルを開いてから行う。
+編集はここでは受けない — カードのジャンプで元のファイルを開いてから行う。
 -}
 viewDashboard : Model -> DashState -> Html Msg
 viewDashboard model dash =
@@ -11180,7 +11180,7 @@ viewDashboard model dash =
 
 
 {-| 見開きの図鑑: 左がモンスター一覧(肖像サムネ付き)、右が選択エントリの
-攻略本ページ。編集はここでは受けない — ジャンプで正本ファイルを開いてから行う。
+攻略本ページ。編集はここでは受けない — ジャンプで元のファイルを開いてから行う。
 -}
 viewDashBody : Model -> DashState -> Html Msg
 viewDashBody model dash =
@@ -11384,7 +11384,7 @@ weightText value =
         String.fromFloat value
 
 
-{-| ref ののぞき窓。参照先が引けたら要約カード(肖像サムネ+クリックで正本へ
+{-| ref ののぞき窓。参照先が引けたら要約カード(肖像サムネ+クリックで元データへ
 ジャンプ)、引けなければ赤の「見つかりません」— 黙って隠すとぶら下がりに気づけない。
 -}
 viewPeek : Model -> { target : String, id : String, peek : Maybe Dashboards.Peek } -> Html Msg
@@ -11748,7 +11748,7 @@ viewUnsupportedFooter model =
 
 
 {-| ビジュアルの中央: セクションタブ+盤面カード+テーブル。テキストは出さない —
-生 JSON は分割/コードモードの持ち場。
+生 JSON は分割/コードモードの担当。
 -}
 viewVisualCenter : Model -> Html Msg
 viewVisualCenter model =
@@ -11798,7 +11798,7 @@ viewVisualBody model schema doc =
 
 
 {-| ビジュアルの中央に出すセクション 1 枚ぶん(一覧の表か、盤面を持たない
-種類の案内)。フォームは右ペインの持ち場なので、ここには出さない。
+種類の案内)。フォームは右ペインの担当なので、ここには出さない。
 -}
 viewVisualCenterSection : Model -> D.Value -> EntryTable.UsageDicts -> ( String, Schema.Section ) -> List (Html Msg)
 viewVisualCenterSection model doc usageDict ( key, section ) =
@@ -12065,7 +12065,7 @@ viewFormPaneIn attrs model =
 
 絵(PNG)はサーバが焼いた物のまま。選択枠・掴み所・ドラッグ追従の円は
 その上に % 配置で重ねる対話レイヤの div — 「エンジンが唯一のレンダラ」の原則は
-絵の話で、選択やドラッグ中という対話の印はこちらの持ち場。
+絵の話で、選択やドラッグ中という対話の印はこちらの担当。
 -}
 viewPreviewCard : Model -> List (Html Msg)
 viewPreviewCard model =
@@ -12561,7 +12561,7 @@ viewKindPicker basePath picked =
 
 {-| enabledWhen の最終判定。条件を満たさないフィールドはフォームに出さない —
 「今この場で実際にいじれて、効く物」だけを見せる(条件元を切り替えた瞬間に現れる)。
-兄弟フィールドに打ちかけ(draft)があればそちらを今の値として使う。
+兄弟フィールドに下書き(draft)があればそちらを今の値として使う。
 -}
 rowIsEnabled : Model -> List Seg -> SchemaForm.Row -> Bool
 rowIsEnabled model basePath row =
@@ -12646,7 +12646,7 @@ viewRow model basePath row =
         ]
 
 
-{-| その欄が打ちかけ中なら draft の文字、でなければ文書の値。
+{-| その欄が下書き中なら draft の文字、でなければ文書の値。
 フォーカス中の欄に文書の値を流し込まない規則はこの 1 関数に集約。
 -}
 draftTextFor : Maybe ActiveDraft -> List Seg -> String -> String
@@ -12719,7 +12719,7 @@ viewControl model path control =
                         , withArrows = True
                         }
 
-                -- % 併記(widget unit / percent)。打ちかけ中はその値で追従する
+                -- % 併記(widget unit / percent)。下書き中はその値で追従する
                 note =
                     percentNote spec n.percentFactor shown
             in
@@ -12955,7 +12955,7 @@ viewControl model path control =
                 )
 
 
-{-| マスを指す値({x, y})の欄にだけ、絵から選ぶ入口を添える。
+{-| セルを指す値({x, y})の欄にだけ、絵から選ぶ入口を添える。
 判定は値の形 — 欄の名前(walkTo / look …)は見ない。数値の直接入力は常に効く。
 -}
 viewTilePickButton : Model -> List Seg -> String -> List (Html Msg)
@@ -12969,7 +12969,7 @@ viewTilePickButton model path shown =
     if isTile && roomOf model /= Nothing then
         [ button
             [ HA.class "tile-pick btn btn-ghost btn-mini mt-0.5"
-            , HA.title "焼いた部屋の絵から、マスをクリックして選ぶ"
+            , HA.title "描き出した部屋の絵から、セルをクリックして選ぶ"
             , HE.onClick (TilePickerOpened path)
             ]
             [ text "マップから選ぶ" ]
@@ -12979,8 +12979,8 @@ viewTilePickButton model path shown =
         []
 
 
-{-| マスを選ぶポップオーバー。背景は定規つきの部屋の絵で、押した場所を
-「絵の幅 ÷ 列数」でマスに換算する。絵が焼かれていなければ焼き方を案内する。
+{-| セルを選ぶポップオーバー。背景は定規つきの部屋の絵で、押した場所を
+「絵の幅 ÷ 列数」でセルに換算する。絵が焼かれていなければ焼き方を案内する。
 -}
 viewTilePicker : Model -> Html Msg
 viewTilePicker model =
@@ -13003,7 +13003,7 @@ viewTilePicker model =
                     ]
                     [ div [ HA.class "mb-1.5 flex items-center gap-2 text-[11px] text-ink-soft" ]
                         [ span [ HA.class "font-mono" ] [ text picker.room ]
-                        , span [ HA.class "text-ink-faint" ] [ text "クリックしたマスを書き込みます" ]
+                        , span [ HA.class "text-ink-faint" ] [ text "クリックしたセルを書き込みます" ]
                         , span [ HA.class "flex-1" ] []
                         , button [ HA.class "btn btn-ghost btn-mini", HE.onClick TilePickerClosed ] [ text "✕" ]
                         ]
@@ -13021,12 +13021,12 @@ viewTilePicker model =
                             div [ HA.class "text-[11px] leading-relaxed text-ink-faint" ]
                                 [ text "この部屋の間取りが読めないので、絵からは選べません(数値で入れてください)" ]
                     , div [ HA.class "mt-1.5 text-[10px] text-ink-faint" ]
-                        [ text "絵が出ない時は make cutscene-grid で焼いてください" ]
+                        [ text "絵が出ない時は make cutscene-grid で描き出してください" ]
                     ]
                 ]
 
 
-{-| 絵の中の押した場所 → マス。1 マスの大きさは「今の表示幅 ÷ 列数」で出すので、
+{-| 絵の中の押した場所 → セル。1 セルの大きさは「今の表示幅 ÷ 列数」で出すので、
 絵の倍率(部屋ごとに違う)も、画面での縮小も、同じ 1 本の式で吸収できる。
 -}
 onTileClick : List Seg -> Int -> Html.Attribute Msg
@@ -13080,10 +13080,10 @@ rangeStep step isInt =
             "0.01"
 
 
-{-| 打ちかけ(draft)方式の数値・重み入力欄。
+{-| 下書き(draft)方式の数値・重み入力欄。
 type="number" にしないのは、ブラウザ標準のスピナー(↑↓増減)とこちらの
 step 処理が二重に効いて 1 押しで 2 目盛り動くため。数字キーボードは inputmode で出す。
-赤枠は「今確定しても文書に入らない」の印。打ちかけ中だけ判定する。
+赤枠は「今確定しても文書に入らない」の印。下書き中だけ判定する。
 -}
 viewDraftBox :
     Maybe ActiveDraft
@@ -13118,7 +13118,7 @@ viewDraftBox activeDraft opts =
         []
 
 
-{-| % 併記(0.35 → 35%)。数字になっていない打ちかけの間は "–" で場所だけ保つ。 -}
+{-| % 併記(0.35 → 35%)。数字になっていない下書きの間は "–" で場所だけ保つ。 -}
 percentNote : Draft.NumberSpec -> Maybe Float -> String -> List (Html Msg)
 percentNote spec factor shown =
     case factor of
@@ -13307,7 +13307,7 @@ viewWeightRow model path w ( key, value ) =
             , original = docValue
             }
 
-        -- 数値ボックスに打ちかけがあればスライダーもその値を映す(打った値が
+        -- 数値ボックスに下書きがあればスライダーもその値を映す(打った値が
         -- その場でつまみ位置になる)。weights は連動再配分なので draft でなく
         -- バッチ即書き(onSlider)のまま — value だけ draft 優先に揃える
         shown =
@@ -13622,7 +13622,7 @@ matching path w =
         Nothing
 
 
-{-| 打ちかけ欄のキー運転。Enter=確定(focus は残す)・Esc=破棄、
+{-| 下書き欄のキー運転。Enter=確定(focus は残す)・Esc=破棄、
 数値欄(withArrows)だけ ↑↓=step 増減(Shift ×10)。
 preventDefault は ↑↓ でカーソルが行頭へ飛ぶ・Enter が textarea に改行を
 挿すのを止めるため。他のキーはデコーダ失敗で素通し。
@@ -13982,7 +13982,7 @@ viewWizardConfirm model w =
         [ div [ HA.class "wizard-previews flex flex-wrap items-start gap-3" ]
             [ viewGenPreview ("① スキーマ → " ++ Wizard.schemaPathOf w.draft) (Wizard.schemaText w.draft)
             , viewGenPreview ("② データ雛形 → " ++ Wizard.dataPathOf w.draft) (Wizard.dataText w.draft)
-            , viewGenPreview "③ project.json — \"editor\".\"resources\" 末尾へ追記(他のキー・注釈はそのまま)"
+            , viewGenPreview "③ project.json — \"editor\".\"resources\" 末尾へ追記(他のキー・アノテーションはそのまま)"
                 (Wizard.declText w.draft)
             ]
         ]
@@ -14261,8 +14261,8 @@ viewDeleteDialog confirm =
 -- 配線
 
 
-{-| 拡大の中のキー(QuickLook の作法): ← → でコマ送り・Space で動かす / 止める・
-Esc で閉じる。コマ送りは自動で「止めた」姿にする(動く絵の上でコマは指せない)。
+{-| 拡大の中のキー(QuickLook の作法): ← → でフレーム送り・Space で動かす / 止める・
+Esc で閉じる。フレーム送りは自動で「止めた」姿にする(動く絵の上でフレームは指せない)。
 -}
 bakeZoomKeyDecoder : Model -> D.Decoder Msg
 bakeZoomKeyDecoder model =
@@ -14434,7 +14434,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- ラフ塗り(アトリエ / 新しいゲームのラフ札)の一筆も同じ。
+        -- ラフ塗り(アトリエ / 新しいゲームのラフのカード)の一筆も同じ。
         -- 塗り場は画面上に同時に 1 つしか出ないので、届け先は active な方だけでよい
         , if Atelier.sketchStrokeActive model.atelier then
             Browser.Events.onMouseUp (D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.StrokeEnded)))
@@ -14469,7 +14469,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- ラフを塗る窓が出ている間だけ Esc で閉じる。暗幕は押しても閉じない口なので、
+        -- ラフを塗る窓が出ている間だけ Esc で閉じる。オーバーレイは押しても閉じない口なので、
         -- 塗り場から手を離さずに畳める道はここだけ
         , if Atelier.sketchOpen model.atelier then
             Browser.Events.onKeyDown
@@ -14524,7 +14524,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- ドット絵のコマ送り。動かしている間だけ時計を回す
+        -- ドット絵のフレーム送り。動かしている間だけ時計を回す
         , if PixelEditor.isPlaying model.pixel then
             Time.every 140 (\_ -> PixelMsg PixelEditor.PlayTicked)
 
@@ -14572,7 +14572,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- 拡大の間だけ、コマ送り(← →)・再生の入り切り(Space)・閉じる(Esc)
+        -- 拡大の間だけ、フレーム送り(← →)・再生の入り切り(Space)・閉じる(Esc)
         , if model.bakeZoom then
             Browser.Events.onKeyDown (bakeZoomKeyDecoder model)
 
@@ -14586,10 +14586,10 @@ subscriptions model =
           else
             Sub.none
 
-        -- 「▶ 動かす」の間、コマ別 PNG を送って再生する。
-        -- GIF は今どのコマかを外から知れない(<img> の中で完結する)ので、
-        -- シークバー(bakeFrame)と連動できない → コマ送りに一本化する。
-        -- 焼きは 30fps を 1 コマおきに間引いた 15fps なので 1000/15 ≈ 66.7ms
+        -- 「▶ 動かす」の間、フレーム別 PNG を送って再生する。
+        -- GIF は今どのフレームかを外から知れない(<img> の中で完結する)ので、
+        -- シークバー(bakeFrame)と連動できない → フレーム送りに一本化する。
+        -- 焼きは 30fps を 1 フレームおきに間引いた 15fps なので 1000/15 ≈ 66.7ms
         , case ( model.bakePlaying, model.bake ) of
             ( True, Just result ) ->
                 if Api.pngFrameCount result > 0 then
@@ -14652,7 +14652,7 @@ subscriptions model =
             Sub.none
 
         -- ⌘Z / ⇧⌘Z(戻す・やり直す)。編集画面で、前面の編集器が自前の undo を
-        -- 持っていない間だけ生かす — 盤面・ドット絵の ⌘Z はそちらの持ち場。
+        -- 持っていない間だけ生かす — 盤面・ドット絵の ⌘Z はそちらの担当。
         -- キーの聞き取り中も止める — 1 打が undo と聞き取りの両方に届く
         , if model.screen == Editing && model.current /= Nothing && not (ownUndoFront model) && model.keyCapture == Nothing then
             Browser.Events.onKeyDown historyKeyDecoder

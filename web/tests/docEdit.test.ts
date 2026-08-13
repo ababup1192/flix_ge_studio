@@ -1,12 +1,12 @@
 // docEdit は「触ったキーの周りだけ」を書き換える最小テキスト編集。
-// キー順・インデント・"//" 注釈が保たれることを、結果テキスト全文で固定する。
+// キー順・インデント・"//" アノテーションが保たれることを、結果テキスト全文で固定する。
 
 import { describe, expect, test } from "vitest";
 import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, rangeAt, valueAt } from "../src/js/docEdit";
 
 const doc = [
   "{",
-  '  "//": "手書きの注釈",',
+  '  "//": "手書きのアノテーション",',
   '  "meta": { "scrollSpeed": 60 },',
   '  "spawns": [',
   '    { "atX": 200, "kind": "popcorn" }',
@@ -15,12 +15,12 @@ const doc = [
   "",
 ].join("\n");
 
-describe("applyDocEdit — 正本テキストへの最小編集", () => {
-  test("float の書き換え: 値のトークンだけ変わり、キー順・注釈・整形が保たれる", () => {
+describe("applyDocEdit — 元データテキストへの最小編集", () => {
+  test("float の書き換え: 値のトークンだけ変わり、キー順・アノテーション・整形が保たれる", () => {
     expect(applyDocEdit(doc, ["meta", "scrollSpeed"], 72.5, false)).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "meta": { "scrollSpeed": 72.5 },',
         '  "spawns": [',
         '    { "atX": 200, "kind": "popcorn" }',
@@ -41,7 +41,7 @@ describe("applyDocEdit — 正本テキストへの最小編集", () => {
   test("int フィールドは小数点なしで書く(350.0 → 350、端数は四捨五入)", () => {
     const expected = [
       "{",
-      '  "//": "手書きの注釈",',
+      '  "//": "手書きのアノテーション",',
       '  "meta": { "scrollSpeed": 60 },',
       '  "spawns": [',
       '    { "atX": 350, "kind": "popcorn" }',
@@ -57,7 +57,7 @@ describe("applyDocEdit — 正本テキストへの最小編集", () => {
     expect(applyDocEdit(doc, ["spawns", 0, "y"], 120, true)).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "meta": { "scrollSpeed": 60 },',
         '  "spawns": [',
         "    {",
@@ -74,11 +74,11 @@ describe("applyDocEdit — 正本テキストへの最小編集", () => {
 });
 
 // id 改名(キー改名+参照書き換え)が頼る挙動を固定する。要は
-// 「キーのトークンだけが変わる」— 1 行書きエントリの整形・行位置・注釈は動かない。
+// 「キーのトークンだけが変わる」— 1 行書きエントリの整形・行位置・アノテーションは動かない。
 describe("applyDocEdits — renameKey と複数編集のバッチ", () => {
   const level = [
     "{",
-    '  "//": "手書きの注釈",',
+    '  "//": "手書きのアノテーション",',
     '  "routes": {',
     '    "slow":  { "type": "straight", "speed": 60 },',
     '    "wavy":  { "type": "sine", "speed": 85 }',
@@ -91,11 +91,11 @@ describe("applyDocEdits — renameKey と複数編集のバッチ", () => {
     "",
   ].join("\n");
 
-  test("renameKey: ネストしたキーだけ変わり、1 行書きの整形・注釈・キー順が保たれる", () => {
+  test("renameKey: ネストしたキーだけ変わり、1 行書きの整形・アノテーション・キー順が保たれる", () => {
     expect(applyDocEdits(level, [{ op: "renameKey", path: ["routes", "wavy"], newKey: "wave" }])).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "routes": {',
         '    "slow":  { "type": "straight", "speed": 60 },',
         '    "wave":  { "type": "sine", "speed": 85 }',
@@ -119,7 +119,7 @@ describe("applyDocEdits — renameKey と複数編集のバッチ", () => {
     ).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "routes": {',
         '    "slow":  { "type": "straight", "speed": 60 },',
         '    "wave":  { "type": "sine", "speed": 85 }',
@@ -144,10 +144,10 @@ describe("applyDocEdits — renameKey と複数編集のバッチ", () => {
 // ウィザードの project.json 追記が頼る挙動を固定する。要は
 // 「追記なのに既存行が diff に出ない」— 1 行書きの直前エントリもそのまま。
 describe("applyDocAppend — 配列末尾への追記", () => {
-  test("editor.resources への追記: 1 行書きの既存エントリ・キー順・注釈が保たれる", () => {
+  test("editor.resources への追記: 1 行書きの既存エントリ・キー順・アノテーションが保たれる", () => {
     const project = [
       "{",
-      '  "//": "手書きの注釈",',
+      '  "//": "手書きのアノテーション",',
       '  "title": "Flix Shooting",',
       '  "editor": {',
       '    "resources": [',
@@ -167,7 +167,7 @@ describe("applyDocAppend — 配列末尾への追記", () => {
     ).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "title": "Flix Shooting",',
         '  "editor": {',
         '    "resources": [',
@@ -229,7 +229,7 @@ describe("applyDocAppend — 配列末尾への追記", () => {
 describe("applyDocRemove — キー/要素の削除(エントリ削除の足)", () => {
   const catalog = [
     "{",
-    '  "//": "手書きの注釈",',
+    '  "//": "手書きのアノテーション",',
     '  "routes": {',
     '    "slow": { "type": "straight", "speed": 60 },',
     '    "fast": { "type": "straight", "speed": 100 }',
@@ -242,11 +242,11 @@ describe("applyDocRemove — キー/要素の削除(エントリ削除の足)", 
     "",
   ].join("\n");
 
-  test("catalog のキー削除: その行だけ消え、他の行・注釈・整形は動かない", () => {
+  test("catalog のキー削除: その行だけ消え、他の行・アノテーション・整形は動かない", () => {
     expect(applyDocRemove(catalog, ["routes", "slow"])).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "routes": {',
         '    "fast": { "type": "straight", "speed": 100 }',
         "  },",
@@ -264,7 +264,7 @@ describe("applyDocRemove — キー/要素の削除(エントリ削除の足)", 
     expect(applyDocRemove(catalog, ["spawns", 0])).toBe(
       [
         "{",
-        '  "//": "手書きの注釈",',
+        '  "//": "手書きのアノテーション",',
         '  "routes": {',
         '    "slow": { "type": "straight", "speed": 60 },',
         '    "fast": { "type": "straight", "speed": 100 }',
@@ -303,7 +303,7 @@ describe("valueAt — 編集する前の値を読む(元に戻すの材料)", ()
   });
 });
 
-describe("rangeAt — 触っている欄が正本のどこかを指す", () => {
+describe("rangeAt — 触っている欄が元データのどこかを指す", () => {
   test("キーごとの範囲を返す(フォームの欄 → JSON の行)", () => {
     const range = rangeAt(doc, ["meta", "scrollSpeed"]);
     expect(range).not.toBeNull();

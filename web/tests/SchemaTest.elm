@@ -153,7 +153,7 @@ sectionFields key =
 suite : Test
 suite =
     describe "Schema デコーダ(level.schema.json 実物)"
-        [ test "version とセクション(キー順・kind)が読める。ルートの \"//\" 注釈は無視" <|
+        [ test "version とセクション(キー順・kind)が読める。ルートの \"//\" アノテーションは無視" <|
             \_ ->
                 decoded
                     |> Result.map (\s -> ( s.version, List.map (Tuple.mapSecond .kind) s.sections ))
@@ -223,7 +223,7 @@ suite =
                     """{"sections": {"a": {"kind": "record", "fields": {"x": {"type": {"fancy": []}}}}}}"""
                     |> Expect.equal
                         (Err "スキーマが読めません: sections → a → fields → x → type → 未知の type タグ \"fancy\"")
-        , test "fields 内の \"//\" キーは注釈として読み飛ばす" <|
+        , test "fields 内の \"//\" キーはアノテーションとして読み飛ばす" <|
             \_ ->
                 Schema.decodeString
                     """{"sections": {"a": {"kind": "record", "fields": {"//メモ": "自由文", "x": {"type": "int"}}}}}"""
@@ -299,7 +299,7 @@ suite =
             \_ ->
                 Schema.decodeString
                     """{"sections": {
-                         "darkness": {"kind": "value", "type": "float", "label": "暗幕の濃さ", "min": 0, "max": 1, "default": 0.85},
+                         "darkness": {"kind": "value", "type": "float", "label": "オーバーレイの濃さ", "min": 0, "max": 1, "default": 0.85},
                          "name": {"kind": "field", "type": "string", "label": "名前", "order": 1, "required": true}}}"""
                     |> Result.map
                         (\s ->

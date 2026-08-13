@@ -77,7 +77,7 @@ galleryImageUrl base root dir name =
         ++ Url.percentEncode name
 
 
-{-| dir 直下の *.png の枚数を数える口(復元した焼き上がりのコマ数を知るのに使う
+{-| dir 直下の *.png の枚数を数える口(復元した焼き上がりのフレーム数を知るのに使う
 — 焼きの応答そのものには乗らない情報を、後から棚を見て埋め合わせる)。
 p= の要り用は galleryImageUrl と同じ。
 -}
@@ -240,7 +240,7 @@ viewStatus handlers state =
         , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
             [ text
                 (if running then
-                    "保存はゲームの画面にすぐ反映されます(ここは焼き上がりの記録)"
+                    "保存はゲームの画面にすぐ反映されます(ここは描き出した絵の記録)"
 
                  else if state.failed then
                     "アトリエのタブに、しくじった時のログが残っています"
@@ -300,7 +300,7 @@ imageUrl state name =
 
 
 {-| ミニプレイヤーの絵の拡大。アトリエのプレビュー拡大(lightbox)と同じ流儀 —
-暗幕の上に PNG を大きく(〜90vw / 85vh・ドットのまま)、場面名を添える。
+オーバーレイの上に PNG を大きく(〜90vw / 85vh・ドットのまま)、場面名を添える。
 閉じるのはクリック・閉じる ボタン・Esc(Esc の購読は subscriptions)。
 開いた時の場面名を持つので裏の自動追従で別場面へは切り替わらない —
 差し替え(同じ場面の新しい絵)だけが v の進みで映る。

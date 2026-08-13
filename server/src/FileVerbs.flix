@@ -1,5 +1,5 @@
 // FileVerbs — ファイルそのものへの動詞 (新規 / 複製 / 名前を変える / 消す)。
-// 中身の編集は PUT /file の持ち場で、こちらは「ファイルの出し入れ」だけを扱う。
+// 中身の編集は PUT /file の担当で、こちらは「ファイルの出し入れ」だけを扱う。
 //
 // パスはすべて FileIndex.resolveInside の門番を通す。ブラウザから来た文字列で
 // プロジェクトの外を触らせない — 動詞が増えるほど、門番を通し忘れた 1 本が
@@ -36,7 +36,7 @@ mod FileVerbs {
         }
 
     /// POST /file/rename — {path, toPath}。名前を変えるだけで、中身も参照も触らない
-    /// (この名前を指している台帳の書き換えは別の仕事)。
+    /// (この名前を指しているレジストリの書き換えは別の仕事)。
     pub def rename(dir: String, body: String): (Int32, Json) \ IO =
         match twoFields("path", "toPath", body) {
             case None => (400, errorJson("body must be a JSON object {path, toPath}"))

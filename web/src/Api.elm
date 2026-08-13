@@ -560,18 +560,18 @@ type alias BakeResult =
     { reachable : Bool
     , gif : Maybe String
 
-    -- 演じた総コマ(30fps)。コマ別 PNG は間引いて焼かれるので、この数ではない
+    -- 演じた総フレーム(30fps)。フレーム別 PNG は間引いて焼かれるので、この数ではない
     , frames : Int
 
-    -- コマ別 PNG の枚数(応答が明示する時だけ)と、間引きの歩幅
+    -- フレーム別 PNG の枚数(応答が明示する時だけ)と、間引きの歩幅
     , pngFrames : Maybe Int
     , stride : Int
     , notes : List String
     }
 
 
-{-| コマ送りで指せる枚数。明示があればそれ、無ければ総コマ ÷ 歩幅の切り上げ。
-総コマをそのまま使うと、焼かれていない番号の PNG を指してしまう。
+{-| フレーム送りで指せる枚数。明示があればそれ、無ければ総フレーム ÷ 歩幅の切り上げ。
+総フレームをそのまま使うと、焼かれていない番号の PNG を指してしまう。
 -}
 pngFrameCount : BakeResult -> Int
 pngFrameCount result =

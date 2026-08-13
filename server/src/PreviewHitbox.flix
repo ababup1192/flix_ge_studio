@@ -1,6 +1,6 @@
 // PreviewHitbox — POST /preview/hitbox。hitbox.json (メモリ上の doc、またはプロジェクト内の
-// ファイル path) の当たり形を、エンティティごとのマス目に並べた 1 枚の PNG にして返す。
-// キャンバス寸法 (design) はゲームの設計解像度ではなくマス目全体の大きさ —
+// ファイル path) の当たり形を、エンティティごとのセル目に並べた 1 枚の PNG にして返す。
+// キャンバス寸法 (design) はゲームの設計解像度ではなくセル目全体の大きさ —
 // 当たり形は数 px の小物が多く、ゲーム画面の縮尺に置くと読めないため。
 // 失敗の返し分けは PreviewUi と同じ: 封筒不正だけ HTTP 400、ドキュメント側の問題は 200 の ok:false。
 
@@ -44,7 +44,7 @@ mod PreviewHitbox {
                 }
         }
 
-    /// マス目を組んで描き、成功応答を作る。エンティティは名前順 (Map のキー順) で並べる。
+    /// セル目を組んで描き、成功応答を作る。エンティティは名前順 (Map のキー順) で並べる。
     def okJson(ctx: ProjectCtx.Ctx, primary: {path = String, atlas = FontAtlas},
                warnings: List[String], docJson: Json, sheet: HitDoc.Sheet, scale: Int32): Json \ IO =
         let entities = Map.toList(sheet);
@@ -81,7 +81,7 @@ mod PreviewHitbox {
         })
 
     // ════════════════════════════════════════════════════════
-    // マス目の割り付け (純関数 — テスト対象)
+    // セル目の割り付け (純関数 — テスト対象)
     // ════════════════════════════════════════════════════════
 
     /// セルの中の余白 (px)。形がセル枠に触れると隣のセルと溶けて見えるので離す。
@@ -90,11 +90,11 @@ mod PreviewHitbox {
     /// セル辺の最小 (px)。小さな形しか無くても名前ラベルが収まる広さは確保する。
     def minCellSide(): Float64 = 48.0
 
-    /// n 個を並べる列数。正方形に近いマス目になる ceil(sqrt(n))。
+    /// n 個を並べる列数。正方形に近いセル目になる ceil(sqrt(n))。
     pub def columnsOf(n: Int32): Int32 =
         if (n <= 1) 1 else columnsFrom(1, n)
 
-    /// c×c マスに n 個が収まる最小の c。
+    /// c×c セルに n 個が収まる最小の c。
     def columnsFrom(c: Int32, n: Int32): Int32 =
         if (c * c >= n) c else columnsFrom(c + 1, n)
 
@@ -122,7 +122,7 @@ mod PreviewHitbox {
                        y = Int32.toFloat64(index / columns) * side },
           size = { x = side, y = side } }
 
-    /// マス目全体のキャンバス寸法。n = 0 でも 1 セルぶんは確保する (0px の PNG を作らない)。
+    /// セル目全体のキャンバス寸法。n = 0 でも 1 セルぶんは確保する (0px の PNG を作らない)。
     pub def designOf(n: Int32, columns: Int32, side: Float64): Vec2.Vec2 =
         let rows = Int32.max(1, (n + columns - 1) / columns);
         { x = Int32.toFloat64(columns) * side, y = Int32.toFloat64(rows) * side }
@@ -140,11 +140,11 @@ mod PreviewHitbox {
         }
 
     // ════════════════════════════════════════════════════════
-    // "//" 注釈の収集 (純関数 — テスト対象)
+    // "//" アノテーションの収集 (純関数 — テスト対象)
     // ════════════════════════════════════════════════════════
 
-    /// 生 JSON から注釈を拾う (HitDoc は "//" キーをコメントとして読み飛ばすので、こちらで別途拾う)。
-    /// トップの "//" が全体注釈、"hit" の中の "//名前" がそのエンティティの注釈。
+    /// 生 JSON からアノテーションを拾う (HitDoc は "//" キーをコメントとして読み飛ばすので、こちらで別途拾う)。
+    /// トップの "//" が全体アノテーション、"hit" の中の "//名前" がそのエンティティのアノテーション。
     /// 名前の付かない "hit" 内の "//" はどのエンティティの物でもないので拾わない。
     pub def notesOf(docJson: Json): (Option[String], Map[String, String]) =
         let objOpt = JsonCodec.expectObject(docJson);

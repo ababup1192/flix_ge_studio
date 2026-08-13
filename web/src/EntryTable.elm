@@ -106,7 +106,7 @@ viewCrudBar handlers state doc key section =
                     False
     in
     -- ボタンの格: 追加=secondary / 複製・削除=tertiary(テキスト系)。
-    -- 削除の確定(danger)はダイアログ側の持ち場
+    -- 削除の確定(danger)はダイアログ側の担当
     div [ HA.class "crud-bar mb-1.5 flex shrink-0 items-center gap-1.5" ]
         [ button [ HA.class "crud-add btn", HE.onClick handlers.onAdd ] [ text "+ 追加" ]
         , button [ HA.class "crud-dup btn btn-ghost", HE.onClick handlers.onDuplicate, HA.disabled (not hasSelection) ] [ text "複製" ]
@@ -336,7 +336,7 @@ viewUsageSite handlers site =
 
 
 {-| 他ファイルからの使用箇所 1 行。クリックでそのファイルを開いて該当エントリを選ぶ
-(dirty の関所はジャンプ側が通す)。
+(dirty のゲートはジャンプ側が通す)。
 -}
 viewExternalUsageSite : Handlers msg -> Sources.ExternalUsage -> Html msg
 viewExternalUsageSite handlers usage =
@@ -392,7 +392,7 @@ viewHeaderCell handlers sort column label numeric =
 
 
 {-| 一覧の行操作(↑ ↓ 複製 ✕)を出すための材料。catalog の行には出さない
-(並び順が意味を持たず、id 付きの追加・複製は上の操作列の持ち場)。
+(並び順が意味を持たず、id 付きの追加・複製は上の操作列の担当)。
 -}
 type alias RowOps =
     { key : String

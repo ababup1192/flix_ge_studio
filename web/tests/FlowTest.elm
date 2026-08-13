@@ -189,7 +189,7 @@ changesBodyMany files =
 
 
 {-| GET /changes の応答。token をファイルの mtime から独立に指定できる版
-(「前回の焼きから何も変わっていないか」= bakedToken の突き合わせの検査用。
+(「前回の描き出しから何も変わっていないか」= bakedToken の突き合わせの検査用。
 token は他のファイルの変化でも動く集計値なので、同じファイルの同じ mtime の
 まま token だけ変える/変えない、を作れる必要がある)。
 -}
@@ -386,8 +386,8 @@ runningGamesBody cwds =
         ]
 
 
-{-| GET /atelier/slots の応答(素材スロット 1 件)。スロットのカード
-(atelier-slot)はこの宣言から生えるので、素材セクションの検査はこれを
+{-| GET /atelier/slots の応答(アセットスロット 1 件)。スロットのカード
+(atelier-slot)はこの宣言から生えるので、アセットセクションの検査はこれを
 流してから行う。
 -}
 atelierSlotsBody : E.Value
@@ -570,7 +570,7 @@ unsupportedSchemaText =
 lightSchemaText : String
 lightSchemaText =
     """{"sections": {
-         "darkness": {"kind": "value", "type": "float", "label": "暗幕の濃さ", "min": 0, "max": 1, "default": 0.85},
+         "darkness": {"kind": "value", "type": "float", "label": "オーバーレイの濃さ", "min": 0, "max": 1, "default": 0.85},
          "rim": {"kind": "record", "fields": {"alpha": {"type": "float", "label": "縁の濃さ"}}}}}"""
 
 
@@ -808,7 +808,7 @@ oneOfSchemaText =
     "cuts": { "kind": "list", "oneOf": true, "label": "カット",
               "fields": {
                 "wait":   { "type": "float", "label": "待つ(秒。とても長い説明がここに入り、見出しでは省略されてほしい)", "order": 1 },
-                "walkTo": { "type": "object", "label": "歩く先のマス", "order": 2 },
+                "walkTo": { "type": "object", "label": "歩く先のセル", "order": 2 },
                 "say":    { "type": {"list": "text"}, "label": "言葉", "order": 3 },
                 "noWait": { "type": "bool", "label": "待たない(添え鍵)", "order": 4 }
               }
@@ -877,7 +877,7 @@ openedCuts =
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
         |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
-        -- 開いた拍に「前回の焼き」を探す(この見本には無い)
+        -- 開いた拍に「前回の描き出し」を探す(この見本には無い)
         |> ensureKinds [ "mediaExists" ]
         |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
         |> ProgramTest.simulateDomEvent
@@ -885,7 +885,7 @@ openedCuts =
             ( "click", E.object [] )
 
 
-{-| マスの欄を持つ場面(walkTo)。部屋の間取りは横断辞書から引く。 -}
+{-| セルの欄を持つ場面(walkTo)。部屋の間取りは横断辞書から引く。 -}
 tilePickSchemaText : String
 tilePickSchemaText =
     """{
@@ -1032,7 +1032,7 @@ performErrorBody =
     E.object
         [ ( "ok", E.bool True )
         , ( "reachable", E.bool True )
-        , ( "body", E.string "error: 脚本が読めません\n" )
+        , ( "body", E.string "error: スクリプトが読めません\n" )
         ]
 
 
@@ -1069,7 +1069,7 @@ frameShotBody =
         ]
 
 
-{-| POST /bake/proxy の応答(焼き係の本文を包んだ形)。カット 2 を飛ばした。 -}
+{-| POST /bake/proxy の応答(描き出しサーバの本文を包んだ形)。カット 2 を飛ばした。 -}
 bakeOkBody : E.Value
 bakeOkBody =
     E.object
@@ -1078,7 +1078,7 @@ bakeOkBody =
         , ( "body"
           , E.string
                 ("""{"baked":[{"gif":"debug/cutscene/prologue.gif","frames":679,"""
-                    ++ """"notes":["カット 2 を飛ばした: 着けないマス"]}]}"""
+                    ++ """"notes":["カット 2 を飛ばした: 着けないセル"]}]}"""
                 )
           )
         ]
@@ -1143,7 +1143,7 @@ openedMusic =
         |> respondOk 6 "sfxShape" moonlightShapeBody
 
 
-{-| kaidan の map と同じ骨格: マスを見ない行(on:enter)が 1 行だけ入った triggers。 -}
+{-| kaidan の map と同じ骨格: セルを見ない行(on:enter)が 1 行だけ入った triggers。 -}
 mapText : String
 mapText =
     """{
@@ -1154,7 +1154,7 @@ mapText =
 }"""
 
 
-{-| triggers は x,y を宣言するが必須ではない(= マスを見ない行も書ける)。 -}
+{-| triggers は x,y を宣言するが必須ではない(= セルを見ない行も書ける)。 -}
 mapSchemaText : String
 mapSchemaText =
     """{
@@ -1163,7 +1163,7 @@ mapSchemaText =
     "rows": { "kind": "field", "type": "grid", "label": "間取り" },
     "triggers": {
       "kind": "list",
-      "label": "マスの仕掛け",
+      "label": "セルの仕掛け",
       "fields": {
         "x": { "type": "int", "label": "x", "order": 1, "min": 0 },
         "y": { "type": "int", "label": "y", "order": 2, "min": 0 },
@@ -1220,7 +1220,7 @@ clickRoomRow =
         ( "click", E.object [] )
 
 
-{-| 波形の帯を押す / なぞる(器の幅 400px の何割の位置か)。 -}
+{-| 波形の帯を押す / なぞる(コンテナの幅 400px の何割の位置か)。 -}
 waveEvent : String -> Float -> App -> App
 waveEvent name ratio =
     ProgramTest.simulateDomEvent
@@ -1565,13 +1565,13 @@ suite =
                     |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
                     |> respondErr 0 "journeyState" "HTTP 404"
                     |> ProgramTest.expectViewHas [ text "ゲームをアレンジしてみましょう" ]
-        , test "アトリエ: タブから開くと入口が出て、カードで素材へ、「← アトリエ」で入口へ戻る" <|
+        , test "アトリエ: タブから開くと入口が出て、カードでアセットへ、「← アトリエ」で入口へ戻る" <|
             \() ->
                 landingWith resourcesBody
                     |> ProgramTest.ensureViewHas [ class "atelier-landing" ]
                     |> ProgramTest.ensureViewHas [ text "パラメータを変える" ]
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
-                    |> ProgramTest.clickButton "素材を切り替える"
+                    |> ProgramTest.clickButton "アセットを切り替える"
                     |> ProgramTest.ensureViewHas [ class "atelier-slot" ]
                     |> ProgramTest.clickButton "← アトリエ"
                     |> ProgramTest.expectViewHas [ class "atelier-landing" ]
@@ -1630,16 +1630,16 @@ suite =
                         )
                     |> ProgramTest.ensureViewHas [ class "atelier-extend-draft" ]
                     |> ProgramTest.expectViewHas [ text "📋 プロンプトをコピー" ]
-        , test "調整の境界: 素材(material)には②への行き来リンク、tuning には完結の一言だけ" <|
+        , test "調整の境界: アセット(material)には②への行き来リンク、tuning には完結の一言だけ" <|
             \() ->
                 booted
                     |> ProgramTest.clickButton "assets/level.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/level.json" levelText)
-                    -- 宣言はあるが素材スロットではない = tuning。リンクは出さない
+                    -- 宣言はあるがアセットスロットではない = tuning。リンクは出さない
                     |> ProgramTest.ensureViewHas [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
                     |> ProgramTest.ensureViewHasNot [ text "別のレベルに切り替える(まず候補を作ります)→" ]
-                    -- 素材スロットの宣言が届いたら、同じファイルは行き来リンクに変わる
+                    -- アセットスロットの宣言が届いたら、同じファイルは行き来リンクに変わる
                     -- (題は宣言題の括弧前だけを織り込む — 実際の宣言題は全角括弧)
                     |> respondOk 0
                         "atelierSlots"
@@ -1656,11 +1656,11 @@ suite =
                         )
                     |> ProgramTest.ensureViewHasNot [ text "レベルは値を変えるだけで完結します(切り替えるものはありません)" ]
                     |> ProgramTest.expectViewHas [ text "別のレベルに切り替える(まず候補を作ります)→" ]
-        , test "素材のカード: 押すと開いて候補づくりが見え、ヘッダの再クリックで閉じる" <|
+        , test "アセットのカード: 押すと開いて候補づくりが見え、ヘッダの再クリックで閉じる" <|
             \() ->
                 landingWith resourcesBody
                     |> respondOk 0 "atelierSlots" atelierSlotsBody
-                    |> ProgramTest.clickButton "素材を切り替える"
+                    |> ProgramTest.clickButton "アセットを切り替える"
                     |> ProgramTest.ensureViewHasNot [ class "atelier-create" ]
                     |> ProgramTest.simulateDomEvent
                         (Query.find [ class "atelier-slot" ])
@@ -1677,7 +1677,7 @@ suite =
                     |> ProgramTest.clickButton "🗂 すべてのファイル"
                     |> ProgramTest.ensureViewHasNot [ text "⚙️ パラメータを変える" ]
                     |> ProgramTest.ensureViewHas [ text "🗂 すべてのファイル" ]
-                    |> ProgramTest.clickButton "宣言された素材だけに戻す"
+                    |> ProgramTest.clickButton "宣言されたアセットだけに戻す"
                     |> ProgramTest.expectViewHas [ text "⚙️ パラメータを変える" ]
         , test "ホーム: pick(候補を比べて選ぼう)もアトリエ入口(3枚のカード)に着地する" <|
             \() ->
@@ -1936,7 +1936,7 @@ suite =
         , test "つまみ系 Doc: モード切替を持たず、フォームと JSON の 2 ペインで開く" <|
             \() ->
                 openedLevel
-                    -- 盤面(grid 欄)を持たないスキーマ = つまみ系。切替の札は出ない
+                    -- 盤面(grid 欄)を持たないスキーマ = つまみ系。切替のボタンは出ない
                     |> ProgramTest.ensureViewHasNot [ text "ビジュアル" ]
                     |> ProgramTest.ensureViewHasNot [ text "コード" ]
                     |> ProgramTest.expectViewHas [ class "form-tabs", class "json-box" ]
@@ -1956,7 +1956,7 @@ suite =
                             (D.at [ "payload", "offset" ] D.float)
                         )
                         (Expect.equal [ ( "playSound", "moonlight.wav", 0 ) ])
-        , test "焼き上がりの見比べ: 数字を押すと窓が開き、割れた物が先に並ぶ" <|
+        , test "描き出した絵の見比べ: 数字を押すと窓が開き、割れた物が先に並ぶ" <|
             \() ->
                 booted
                     |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
@@ -1967,7 +1967,7 @@ suite =
                         , text "pit.png"
                         , text "リファレンス画像を更新"
                         ]
-        , test "焼き上がりの見比べ: リファレンス画像を更新すると、その名前をサーバへ渡して見比べ直す" <|
+        , test "描き出した絵の見比べ: リファレンス画像を更新すると、その名前をサーバへ渡して見比べ直す" <|
             \() ->
                 booted
                     |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
@@ -2012,7 +2012,7 @@ suite =
                         ( "click", E.object [] )
                     |> ProgramTest.advanceTime 200
                     |> ProgramTest.expectOutgoingPortValues "apiRequest" (D.field "kind" D.string) (Expect.equal [])
-        , test "焼く: 保存してから焼き係へ取り次ぎ、応答で GIF と注意の件数が出る" <|
+        , test "描き出す: 保存してから描き出しサーバへ取り次ぎ、応答で GIF と注意の件数が出る" <|
             \() ->
                 openedCuts
                     |> clickOn "bake-run"
@@ -2021,13 +2021,13 @@ suite =
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "url" ] D.string))
                         (Expect.equal [ ( "bakeCutscene", "http://127.0.0.1:8792/cutscene" ) ])
-                    |> ProgramTest.ensureViewHas [ text "焼いています…" ]
+                    |> ProgramTest.ensureViewHas [ text "描き出しています…" ]
                     |> respondOk 8 "bakeCutscene" bakeOkBody
                     |> ProgramTest.expectViewHas
                         [ class "bake-gif"
                         , text "⚠ 飛ばしたカット 1 件"
                         ]
-        , test "焼く: 注意はその行(1 始まり)に ⚠ が付く" <|
+        , test "描き出す: 注意はその行(1 始まり)に ⚠ が付く" <|
             \() ->
                 openedCuts
                     |> clickOn "bake-run"
@@ -2037,10 +2037,10 @@ suite =
                     |> respondOk 8 "bakeCutscene" bakeOkBody
                     |> ProgramTest.expectView
                         (Query.findAll [ class "row-note" ] >> Query.count (Expect.equal 1))
-        , test "焼く: 焼き完了後、同じ token の changes が来ると「焼く」は押せなくなる" <|
+        , test "描き出す: 焼き完了後、同じ token の changes が来ると「描き出す」は押せなくなる" <|
             \() ->
                 openedCuts
-                    -- 焼く前に token(tA)を知っておく
+                    -- 描き出す前に token(tA)を知っておく
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tA")
                     |> clickOn "bake-run"
                     |> ensureKinds [ "bakeWake" ]
@@ -2052,7 +2052,7 @@ suite =
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tA")
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
-        , test "焼く: 焼き完了後でも、別の token の changes(JSON が変わった)が来れば再び押せる" <|
+        , test "描き出す: 焼き完了後でも、別の token の changes(JSON が変わった)が来れば再び押せる" <|
             \() ->
                 openedCuts
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tA")
@@ -2066,7 +2066,7 @@ suite =
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tB")
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled False ])
-        , test "焼く: 押せなくなった後でも、編集して打ちかけ(dirty)ができれば押せる" <|
+        , test "描き出す: 押せなくなった後でも、編集して下書き(dirty)ができれば押せる" <|
             \() ->
                 openedCuts
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tA")
@@ -2078,7 +2078,7 @@ suite =
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tA")
                     |> ProgramTest.ensureView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
-                    -- 選んでいる行(言葉)の添え物(見回す速さ)を打ちかけで書き換えて確定する。
+                    -- 選んでいる行(言葉)の添え物(見回す速さ)を下書きで書き換えて確定する。
                     -- draft は打っただけでは dirty にならない — Enter → applyDocEdit の
                     -- 応答で doc(docText)が実際に書き換わって初めて dirty になる
                     |> typeNumberBox "2.0"
@@ -2102,7 +2102,7 @@ suite =
                         )
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled False ])
-        , test "焼く: a を焼いてから b を焼くと、a も b も disabled のまま(片方の控えがもう片方を上書きしない)" <|
+        , test "描き出す: a を焼いてから b を描き出すと、a も b も disabled のまま(片方の控えがもう片方を上書きしない)" <|
             \() ->
                 -- 報告されたバグの再現: bakedTokens が 1 枠の Maybe だった時は、
                 -- b の焼きの控えが a の控えを上書きし、b は disabled のまま a が
@@ -2121,11 +2121,11 @@ suite =
                             [ ( "assets/prologue.scene.json", 111 ), ( "assets/second.scene.json", 111 ) ]
                             "tA"
                         )
-                    -- a(prologue)を焼く
+                    -- a(prologue)を描き出す
                     |> clickOn "bake-run"
                     |> respondOk 9 "bakeWake" wakeOkBody
                     |> respondOk 10 "bakeCutscene" bakeOkBody
-                    -- b(second)へ切り替えて焼く
+                    -- b(second)へ切り替えて描き出す
                     |> ProgramTest.clickButton "assets/second.scene.json"
                     |> respondOk 11 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 12 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2148,12 +2148,12 @@ suite =
                     -- a も、同じく何も変わっていないので disabled のまま(バグがあれば有効に戻ってしまう)
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
-        , test "焼く: Studio を再起動した後(bakedTokens は消えている)でも、復元した GIF が全 JSON より新しければ disabled" <|
+        , test "描き出す: Studio を再起動した後(bakedTokens は消えている)でも、復元した GIF が全 JSON より新しければ disabled" <|
             \() ->
                 -- bakedTokens はメモリなので Studio 再起動で消える。ここでは焼いたことは
                 -- 一度も無い(セッション内の bakedTokens 経路は使わない) — pastBake の復元
                 -- (mediaExists の X-Mtime)と changes の mtime 一覧だけでディスクの事実から
-                -- 「前回の焼きから何も変わっていない」を言い直せることを見る
+                -- 「前回の描き出しから何も変わっていない」を言い直せることを見る
                 bootedWith cutsResourcesBody
                     |> ProgramTest.clickButton "assets/prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
@@ -2162,12 +2162,12 @@ suite =
                     |> ensureKinds [ "mediaExists" ]
                     -- 復元した GIF の mtime は 500(サーバの X-Mtime ヘッダ相当)
                     |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ), ( "mtime", E.int 500 ) ])
-                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の描き出し" ]
                     -- 全 JSON(場面 111・hitbox.json 1)が GIF(500)より古い → 何も変わっていない
                     |> respondOk 0 "changes" (changesBodyToken "assets/prologue.scene.json" 111 "tX")
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
-        , test "焼く: 復元した GIF より新しい JSON がある changes が来れば、押せるようになる" <|
+        , test "描き出す: 復元した GIF より新しい JSON がある changes が来れば、押せるようになる" <|
             \() ->
                 bootedWith cutsResourcesBody
                     |> ProgramTest.clickButton "assets/prologue.scene.json"
@@ -2176,7 +2176,7 @@ suite =
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> ensureKinds [ "mediaExists" ]
                     |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ), ( "mtime", E.int 500 ) ])
-                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の描き出し" ]
                     -- 別の JSON(例: 部屋の間取り相当。ここでは hitbox.json で代用)が
                     -- GIF(500)より新しい(600)→ GIF より後に何かが変わった → 押せる
                     |> respondOk 0
@@ -2187,7 +2187,7 @@ suite =
                         )
                     |> ProgramTest.expectView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled False ])
-        , test "焼く: 焼き途中に別ファイルへ切り替えても焼きは裏で続き、戻ると届いた焼き上がりが出る" <|
+        , test "描き出す: 焼き途中に別ファイルへ切り替えても焼きは裏で続き、戻ると届いた描き出した絵が出る" <|
             \() ->
                 -- id 番号は「開くたび横断辞書(他ファイル)を読みに行く」分も含めて実測した並び
                 -- (2 本立ての resources なので、開くたびにもう 1 本の getFile が飛ぶ)。
@@ -2200,15 +2200,15 @@ suite =
                     |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 8 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
-                    -- 焼き始める(起こし → 焼き係へ取り次ぎ、id 10 の応答をまだ寝かせる)
+                    -- 焼き始める(起こし → 描き出しサーバへ取り次ぎ、id 10 の応答をまだ寝かせる)
                     |> clickOn "bake-run"
                     |> respondOk 9 "bakeWake" wakeOkBody
                     -- 別ファイルへ切り替える(焼き応答はまだ届いていない)
                     |> ProgramTest.clickButton "assets/second.scene.json"
                     |> respondOk 11 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 12 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
-                    -- 別ファイルを見ている間は「別の脚本を焼いています」の札で、焼くボタンは押せない
-                    |> ProgramTest.ensureViewHas [ text "別の脚本を焼いています" ]
+                    -- 別ファイルを見ている間は「別のスクリプトを描き出しています」のラベルで、描き出すボタンは押せない
+                    |> ProgramTest.ensureViewHas [ text "別のスクリプトを描き出しています" ]
                     |> ProgramTest.ensureView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
                     |> respondOk 13 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
@@ -2227,9 +2227,9 @@ suite =
                         [ class "bake-gif"
                         , text "⚠ 飛ばしたカット 1 件"
                         ]
-        , test "焼く: 起こし待ち中に切り替えても、焼かれるのは押した時のファイル" <|
+        , test "描き出す: 起こし待ち中に切り替えても、焼かれるのは押した時のファイル" <|
             \() ->
-                -- 「焼く」を押す(起こし待ちが始まる)→ 応答が届く前に別ファイルへ
+                -- 「描き出す」を押す(起こし待ちが始まる)→ 応答が届く前に別ファイルへ
                 -- 切り替える → 起こし完了(BakeAfterWake)で焼かれるのは model.current
                 -- (切り替え先)ではなく、押した時に model に控えた path であるべき
                 bootedWith twoCutsResourcesBody
@@ -2237,7 +2237,7 @@ suite =
                     -- id 4(本文)・5(スキーマ)
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
-                    -- 焼き係を起こし始める(id 9。id 6〜8 は横断辞書・前回焼き探しの分)
+                    -- 描き出しサーバを起こし始める(id 9。id 6〜8 は横断辞書・前回焼き探しの分)
                     |> clickOn "bake-run"
                     -- 起こしの応答(id 9)がまだ届かないうちに、別ファイルへ切り替える
                     |> ProgramTest.clickButton "assets/second.scene.json"
@@ -2245,7 +2245,7 @@ suite =
                     |> respondOk 10 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 11 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     -- ここでようやく起こし完了が届く。今開いているのは second だが、
-                    -- 焼くべきは押した時の prologue のはず
+                    -- 描き出すべきは押した時の prologue のはず
                     |> respondOk 9 "bakeWake" wakeOkBody
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair
@@ -2329,7 +2329,7 @@ suite =
             \() ->
                 cutsWarm
                     |> ProgramTest.clickButton "▶ 実機で再生"
-                    -- 起こしは焼き係と同じ道(実機の口を起こす)
+                    -- 起こしは描き出しサーバと同じ道(実機の口を起こす)
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "url" ] D.string))
                         (Expect.equal [ ( "bakeWake", "http://127.0.0.1:7777/scene" ) ])
@@ -2352,7 +2352,7 @@ suite =
                     |> respondOk 8 "bakeWake" wakeOkBody
                     |> ensureKinds [ "performScene" ]
                     |> respondOk 9 "performScene" performErrorBody
-                    |> ProgramTest.expectViewHas [ text "error: 脚本が読めません" ]
+                    |> ProgramTest.expectViewHas [ text "error: スクリプトが読めません" ]
         , test "oneOf の表: 鍵ごとの列見出しではなく #/カット/内容 の 3 列で出る" <|
             \() ->
                 bootedWith cutsResourcesBody
@@ -2380,7 +2380,7 @@ suite =
                         , text "say"
                         , text "(35, 4) [待たない]"
                         ]
-        , test "前回の焼き: 開いた拍に産物があれば出し、「前回の焼き」の札を添える" <|
+        , test "前回の描き出し: 開いた拍に産物があれば出し、「前回の描き出し」の札を添える" <|
             \() ->
                 bootedWith cutsResourcesBody
                     |> ProgramTest.clickButton "assets/prologue.scene.json"
@@ -2389,8 +2389,8 @@ suite =
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> ensureKinds [ "mediaExists" ]
                     |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ) ])
-                    |> ProgramTest.expectViewHas [ class "bake-gif", text "前回の焼き" ]
-        , test "前回の焼き: 復元直後は無かったシークバーが、コマ数を数え直すと出る" <|
+                    |> ProgramTest.expectViewHas [ class "bake-gif", text "前回の描き出し" ]
+        , test "前回の描き出し: 復元直後は無かったシークバーが、フレーム数を数え直すと出る" <|
             \() ->
                 bootedWith cutsResourcesBody
                     |> ProgramTest.clickButton "assets/prologue.scene.json"
@@ -2399,17 +2399,17 @@ suite =
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> ensureKinds [ "mediaExists" ]
                     |> respondOk 6 "mediaExists" (E.object [ ( "exists", E.bool True ) ])
-                    -- 復元直後(pastBake はコマ数を知らない)は GIF だけで、操作列(シークバー)は無い
-                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の焼き" ]
+                    -- 復元直後(pastBake はフレーム数を知らない)は GIF だけで、操作列(シークバー)は無い
+                    |> ProgramTest.ensureViewHas [ class "bake-gif", text "前回の描き出し" ]
                     |> ProgramTest.ensureViewHasNot [ class "filmstrip" ]
-                    -- コマ別 PNG の置き場を数え直す要求が飛ぶ
+                    -- フレーム別 PNG の置き場を数え直す要求が飛ぶ
                     |> ensureKinds [ "mediaCount" ]
                     |> respondOk 7 "mediaCount" (E.object [ ( "ok", E.bool True ), ( "count", E.int 5 ) ])
-                    -- 届いたコマ数(5 枚 = 0〜4)でインラインにシークバーが出て、i/n も正しい
+                    -- 届いたフレーム数(5 枚 = 0〜4)でインラインにシークバーが出て、i/n も正しい
                     |> ProgramTest.expectViewHas [ class "filmstrip", text "0 / 4" ]
-        , test "ファイルを切り替えると、前のファイルの焼き上がりは消える" <|
+        , test "ファイルを切り替えると、前のファイルの描き出した絵は消える" <|
             \() ->
-                -- 瞬間(frameShot)を選ばず焼く: 右ペインの絵の枠は通し(Film)を出す
+                -- 瞬間(frameShot)を選ばず描き出す: 右ペインの絵の枠は通し(Film)を出す
                 -- (瞬間と通しが両方あれば「最後に指した方」を出すので、ここでは瞬間を挟まない)
                 openedCuts
                     |> clickOn "bake-run"
@@ -2432,7 +2432,7 @@ suite =
                     |> respondOk 8 "bakeWake" wakeWaitingBody
                     -- 焼きへは進まない
                     |> ensureKinds []
-                    |> ProgramTest.ensureViewHas [ text "焼き係を起こしています…" ]
+                    |> ProgramTest.ensureViewHas [ text "描き出しサーバを起こしています…" ]
                     |> ProgramTest.advanceTime 2000
                     -- 2 回目からは訊くだけ(launch=false)
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
@@ -2457,10 +2457,10 @@ suite =
                     |> ensureKinds [ "bakeWake" ]
                     |> respondOk 8 "bakeWake" wakeWaitingBody
                     |> ProgramTest.clickButton "やめる"
-                    |> ProgramTest.ensureViewHasNot [ text "焼き係を起こしています…" ]
+                    |> ProgramTest.ensureViewHasNot [ text "描き出しサーバを起こしています…" ]
                     |> ProgramTest.advanceTime 5000
                     |> ProgramTest.expectOutgoingPortValues "apiRequest" (D.field "kind" D.string) (Expect.equal [])
-        , test "焼く: 起こし方の宣言が無いプロジェクトでは、宣言のしかたを案内する" <|
+        , test "描き出す: 起こし方の宣言が無いプロジェクトでは、宣言のしかたを案内する" <|
             \() ->
                 openedCuts
                     |> clickOn "bake-run"
@@ -2475,13 +2475,13 @@ suite =
                         )
                     -- 焼きへは進まない(頼む先が起きていない)
                     |> ensureKinds []
-                    |> ProgramTest.expectViewHas [ text "焼き係の起こし方が宣言されていません" ]
-        , test "マスの欄({x,y})には絵から選ぶ入口が出て、押した場所がマスになる" <|
+                    |> ProgramTest.expectViewHas [ text "描き出しサーバの起こし方が宣言されていません" ]
+        , test "セルの欄({x,y})には絵から選ぶ入口が出て、押した場所がセルになる" <|
             \() ->
                 openedTilePick
                     |> ProgramTest.clickButton "マップから選ぶ"
                     |> ProgramTest.ensureViewHas [ class "tile-grid" ]
-                    -- 960px 幅の絵 ÷ 20 列 = 48px/マス → (150, 100) は (3, 2)
+                    -- 960px 幅の絵 ÷ 20 列 = 48px/セル → (150, 100) は (3, 2)
                     |> ProgramTest.simulateDomEvent
                         (Query.find [ class "tile-grid" ])
                         ( "click"
@@ -2890,7 +2890,7 @@ suite =
                     |> ensureKinds [ "applyDocEdit" ]
                     |> respondOk 8 "applyDocEdit" (E.object [ ( "text", E.string levelEditedText ) ])
                     |> ensureKinds [ "previewItems" ]
-                    -- 読み直し(外の中身を取り直す)で正本が入れ替わる。ツールバーの
+                    -- 読み直し(外の中身を取り直す)で元データが入れ替わる。ツールバーの
                     -- ボタンは無くなったので(自動見張り+409で守られるため)、
                     -- Msg を直に(reloadCurrent は 409 ダイアログ等がまだ使う)
                     |> ProgramTest.update Main.ReloadClicked
@@ -3133,7 +3133,7 @@ suite =
                             (D.at [ "payload", "value" ] D.float)
                         )
                         (Expect.equal [ ( [ "darkness" ], 0.7 ) ])
-        , test "外部変更の見張り: 打ちかけが無ければ黙って読み直す" <|
+        , test "外部変更の見張り: 下書きが無ければ黙って読み直す" <|
             \() ->
                 openedLevel
                     |> respondOk 0 "changes" (changesBody "assets/level.json" 222)
@@ -3148,11 +3148,11 @@ suite =
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.at [ "kind" ] D.string)
                         (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [])
-        , test "外部変更の見張り: 打ちかけがあれば読み直さず帯で知らせる" <|
+        , test "外部変更の見張り: 下書きがあれば読み直さず帯で知らせる" <|
             \() ->
                 dirtyHitbox
                     |> respondOk 0 "changes" (changesBody "hitbox.json" 222)
-                    -- 勝手に取り直さない(打ちかけを捨てない)
+                    -- 勝手に取り直さない(下書きを捨てない)
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.at [ "kind" ] D.string)
                         (\kinds -> Expect.equal (List.filter ((==) "getFile") kinds) [])
@@ -3185,7 +3185,7 @@ suite =
                     |> respondOk 4 "files" filesBody
                     |> respondOk 5 "resources" (E.object [ ( "resources", E.list identity [] ) ])
                     |> ProgramTest.expectViewHasNot [ text "assets/level.json" ]
-        , test "一覧の見張り: 開いているファイルが消え、打ちかけが無ければ編集を閉じて知らせる" <|
+        , test "一覧の見張り: 開いているファイルが消え、下書きが無ければ編集を閉じて知らせる" <|
             \() ->
                 openedLevel
                     |> respondOk 0 "changes" (changesBodyMany [ ( "hitbox.json", 1 ) ])
@@ -3372,7 +3372,7 @@ suite =
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.field "kind" D.string)
                         (Expect.equal [ "putFile" ])
-        , test "マップ(ビジュアル): マスを見ない行は一覧から選べ、選んだ行のフォームが右に出る" <|
+        , test "マップ(ビジュアル): セルを見ない行は一覧から選べ、選んだ行のフォームが右に出る" <|
             \() ->
                 openedMap
                     -- 印は 1 つも無いが、部屋の行はチップの下の一覧に出る

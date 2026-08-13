@@ -35,10 +35,10 @@ module SketchPad exposing
     , viewWindow
     )
 
-{-| 画面のラフ塗り。「大体ここ壁・ここに人」をマス目に雑に塗って、
+{-| 画面のラフ塗り。「大体ここ壁・ここに人」をセル目に雑に塗って、
 AI への依頼文に文字グリッドとして自動で挟むための下書き部品。
 
-正本はこの Model が持つ(ゲームの Doc ではないので親の編集直列に乗せない)。
+元データはこの Model が持つ(ゲームの Doc ではないので親の編集直列に乗せない)。
 塗りの道具(ペン・バケツ・消しゴム)は PixelEditor の純関数を借りる。
 ラベル(何色が何を表すか)は人間が名前・色・ひとことで自由に増やせて、
 1 文字コードは Studio が自動で割り振る(人間には見せない)。
@@ -103,7 +103,7 @@ type Camera
 
 
 {-| リサイズのつまみ。左右の端=列、上下の端=行、角=両方。
-左・上のつまみで広げたときはマスが左・上に増える(見えている絵は動かさない)。
+左・上のつまみで広げたときはセルが左・上に増える(見えている絵は動かさない)。
 -}
 type Edge
     = RightEdge
@@ -177,10 +177,10 @@ type alias Model =
     -- 形の道具(直線・矩形・楕円)のドラッグ中だけ Just。離すまで rows は触らない
     , shape : Maybe { start : ( Int, Int ), current : ( Int, Int ) }
 
-    -- 1 マスの画面上の大きさ(px)。保存には含めない — 表示倍率は絵ではない
+    -- 1 セルの画面上の大きさ(px)。保存には含めない — 表示倍率は絵ではない
     , cellPx : Int
 
-    -- ラフの再現度(1=雰囲気 〜 4=マス単位で忠実)。絵に対する意図なので
+    -- ラフの再現度(1=雰囲気 〜 4=セル単位で忠実)。絵に対する意図なので
     -- カメラと同じく保存にも依頼文にも載せる
     , fidelity : Int
 
@@ -201,7 +201,7 @@ type alias Model =
     -- カメラの絵柄一覧を開いているか(普段はチップ 1 枚に畳む)
     , cameraOpen : Bool
 
-    -- レイヤーを奥から手前の順に。ここが絵の唯一の正本 — 選んでいる 1 枚だけ
+    -- レイヤーを奥から手前の順に。ここが絵の唯一の元データ — 選んでいる 1 枚だけ
     -- 別の場所へ写すと、どちらが正しいかで必ず食い違う。
     -- 各 hidden(縮めて見えなくなった塗りの退避)は保存に含めない —
     -- 保存物 = 見えている絵、という約束を守るため
@@ -266,7 +266,7 @@ type Msg
     | SaveClicked
 
 
-{-| 空きマスの文字。ラベルには使わせない予約。 -}
+{-| 空きセルの文字。ラベルには使わせない予約。 -}
 emptyChar : Char
 emptyChar =
     '.'
@@ -284,7 +284,7 @@ maxSize =
     { w = 75, h = 75 }
 
 
-{-| 1 マスの画面上の大きさ(px)の初期値。 -}
+{-| 1 セルの画面上の大きさ(px)の初期値。 -}
 defaultCellPx : Int
 defaultCellPx =
     20
@@ -573,7 +573,7 @@ isPainted sheet =
     sheet.rows |> String.concat |> String.any (\c -> c /= emptyChar)
 
 
-{-| 依頼文とレイヤーパネルで数える「塗ったマスの数」。 -}
+{-| 依頼文とレイヤーパネルで数える「塗ったセルの数」。 -}
 paintedCells : LayerSheet -> Int
 paintedCells sheet =
     sheet.rows
@@ -583,7 +583,7 @@ paintedCells sheet =
         |> List.length
 
 
-{-| 上の絵を下の絵へ重ねる(上が空きのマスだけ下が見える)。 -}
+{-| 上の絵を下の絵へ重ねる(上が空きのセルだけ下が見える)。 -}
 mergeRows : { w : Int, h : Int } -> List String -> List String -> List String
 mergeRows size upper lower =
     List.map2
@@ -712,7 +712,7 @@ sketchDecoder =
                 sheets =
                     if List.isEmpty layers then
                         -- レイヤーの欄が無いラフは、畳んだ絵をそのまま 1 枚として読む。
-                        -- ここでレイヤーに分け直そうとすると、どのマスがどのレイヤーかは
+                        -- ここでレイヤーに分け直そうとすると、どのセルがどのレイヤーかは
                         -- 元の絵に書かれていないので当て推量になる
                         [ { name = defaultLayerName 1, rows = fitRows size rows, hidden = [], visible = True } ]
 
@@ -957,7 +957,7 @@ safeName raw =
 Nothing(= 描かなければ依頼文は今まで通り)。
 凡例は塗りに使われているラベルだけ載せる(使っていない色で AI を迷わせない)。
 
-1 枚で描いたラフはマス目を 1 枚だけ書く。レイヤーに分けて描いたときは
+1 枚で描いたラフはセル目を 1 枚だけ書く。レイヤーに分けて描いたときは
 レイヤーごとに 1 枚ずつ書く — 畳んで注記だけにすると、手前の物に隠れた奥の形が
 文字グリッドから消えてしまう。
 
@@ -1031,14 +1031,14 @@ sketchTitle model =
         "画面のラフ"
 
 
-{-| 1 マスが何を表すか。 -}
+{-| 1 セルが何を表すか。 -}
 cellWord : Model -> String
 cellWord model =
     if model.preset == "dot" then
         "1ドット"
 
     else
-        "1マス"
+        "1セル"
 
 
 {-| 再現度の段階名(スライダーの表示と依頼文の見出しで共用)。 -}
@@ -1069,10 +1069,10 @@ fidelityClause level =
             "配置と大きさの比率をできるだけ保ってください。多少の調整は構いません。"
 
         4 ->
-            "マス単位でできるだけ忠実に再現してください。"
+            "セル単位でできるだけ忠実に再現してください。"
 
         _ ->
-            "ラフなのでマス単位の忠実さは不要です。雰囲気が伝われば十分です。"
+            "ラフなのでセル単位の忠実さは不要です。雰囲気が伝われば十分です。"
 
 
 legendTerm : Entry -> String
@@ -1114,7 +1114,7 @@ update msg model =
                 fresh =
                     fromPreset presetId
             in
-            -- マスの大きさ(見た目の好み)と再現度(人の意図)も残す。
+            -- セルの大きさ(見た目の好み)と再現度(人の意図)も残す。
             -- sketches(既存バージョン一覧)もプリセット替えでは消えない —
             -- 一覧はプロジェクトに紐づく物で、道具の選び直しとは無関係
             ( { fresh
@@ -1373,7 +1373,7 @@ update msg model =
             ( { model | camera = camera, cameraOpen = False, save = SaveIdle }, OutNone )
 
         LayerPicked index ->
-            -- 絵は 1 マスも変わらないので save には触らない
+            -- 絵は 1 セルも変わらないので save には触らない
             -- (保存済みの表示が、塗る場所を選び直しただけで消えると戸惑う)
             ( { model | layerIndex = clamp 0 (List.length model.layers - 1) index, editing = Nothing }, OutNone )
 
@@ -1662,7 +1662,7 @@ isShapeTool tool =
     tool == Line || tool == Rect || tool == Ellipse
 
 
-{-| 形の道具が確定・プレビューで塗るマスの一覧。ワイルドカードを使わず
+{-| 形の道具が確定・プレビューで塗るセルの一覧。ワイルドカードを使わず
 全部並べるのは、Tool を増やしたときコンパイラに漏れを教えてもらうため。
 形の道具以外は shape が立たないのでここへは来ないが、来ても直線で害がない。
 -}
@@ -1688,7 +1688,7 @@ shapeCells tool start current =
             lineCells start current
 
 
-{-| 2 点を結ぶ直線のマス。長い方の軸の歩数で線形補間する。 -}
+{-| 2 点を結ぶ直線のセル。長い方の軸の歩数で線形補間する。 -}
 lineCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
 lineCells ( x0, y0 ) ( x1, y1 ) =
     let
@@ -1712,7 +1712,7 @@ lineCells ( x0, y0 ) ( x1, y1 ) =
                 )
 
 
-{-| 2 点を対角とする四角の枠線のマス。中は塗らない —
+{-| 2 点を対角とする四角の枠線のセル。中は塗らない —
 塗り潰しはバケツで一撫でできるので、塗り潰し用の道具を別に増やさない。
 -}
 rectCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
@@ -1738,7 +1738,7 @@ rectCells ( x0, y0 ) ( x1, y1 ) =
         )
 
 
-{-| 外接矩形に内接する枠線の楕円のマス。列走査と行走査の両方を重ねるのは、
+{-| 外接矩形に内接する枠線の楕円のセル。列走査と行走査の両方を重ねるのは、
 片方だけだと細長い楕円で急な曲がりの所に穴が開くため(Set で重複は消える)。
 -}
 ellipseCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
@@ -1968,7 +1968,7 @@ viewHeader model =
 {-| 塗り場を浮かせる窓。中身の大きさで決まる幅(画面いっぱいには広げない)で、
 はみ出す分だけ窓の中が動く。
 
-暗幕を押しても閉じない — グリッドの外で指を離す操作が多い塗り場では、
+オーバーレイを押しても閉じない — グリッドの外で指を離す操作が多い塗り場では、
 1 回の押し間違いで塗った絵ごと引っ込む事故になるため。
 
 onClose が Nothing の間は閉じられない(閉じると戻れなくなる仕事を
@@ -2124,7 +2124,7 @@ viewChipEditor model =
                     []
                 , button
                     [ HA.class "sketch-chip-delete btn h-7 px-2 text-[11px]"
-                    , HA.title "このラベルと、塗ったマスをすべて消します"
+                    , HA.title "このラベルと、塗ったセルをすべて消します"
                     , HE.onClick ChipDeleted
                     ]
                     [ text "削除" ]
@@ -2152,7 +2152,7 @@ viewTools model =
                 [ toolGlyph tool ]
     in
     div [ HA.class "mb-2 flex flex-wrap items-center gap-1.5" ]
-        [ toolButton Pen "ペン — 選んだラベルで 1 マスずつ塗る"
+        [ toolButton Pen "ペン — 選んだラベルで 1 セルずつ塗る"
         , toolButton Bucket "バケツ — 同じ色の続きをまとめて塗る"
         , toolButton Eraser "消しゴム — 空きに戻す"
         , toolButton Line "直線 — 押した所から離した所まで直線を引く"
@@ -2525,9 +2525,9 @@ eyeGlyph visible =
         )
 
 
-{-| サイズバッジ + マスの大きさスライダー + グリッド + つまみ 6 つ。
-つまみはグリッドの外周に重ねる(マスの中に置くと塗りの mousedown と
-取り合いになる)。グリッドはスクロール箱に入れる — マスを大きくしたり
+{-| サイズバッジ + セルの大きさスライダー + グリッド + つまみ 6 つ。
+つまみはグリッドの外周に重ねる(セルの中に置くと塗りの mousedown と
+取り合いになる)。グリッドはスクロール箱に入れる — セルを大きくしたり
 48x32 まで広げてもパネルがページを乗っ取らないように。
 -}
 viewGridBlock : Model -> Html Msg
@@ -2545,7 +2545,7 @@ viewGridBlock model =
                 ]
                 [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h ++ " — 端や角をつまんで広げる・縮める") ]
             , span [ HA.class "flex items-center gap-1.5 text-[10px] text-ink-faint" ]
-                [ text ("マス: " ++ String.fromInt model.cellPx ++ "px")
+                [ text ("セル: " ++ String.fromInt model.cellPx ++ "px")
                 , Html.input
                     [ HA.type_ "range"
                     , HA.min "10"
@@ -2704,7 +2704,7 @@ viewCell cellSize colorOf previewFill previewSet x y char ghost =
 
                     Nothing ->
                         -- ほかのレイヤーの塗りは薄く敷くだけ。同じ濃さで出すと、
-                        -- どのマスが今の一筆で動くのか分からなくなる
+                        -- どのセルが今の一筆で動くのか分からなくなる
                         case colorOf ghost of
                             Just fill ->
                                 [ HA.class "sketch-cell-ghost"

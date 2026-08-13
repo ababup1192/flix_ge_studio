@@ -327,7 +327,7 @@ sl-alert.notice::part(message) {
 }
 
 /* ---- 効果音エディタ ----
-   中央のペインいっぱいに広がる。波形と帯は SVG(器の形に引き伸ばすので
+   中央のペインいっぱいに広がる。波形と帯は SVG(コンテナの形に引き伸ばすので
    preserveAspectRatio は none)、字と目盛りは HTML で重ねる —
    引き伸ばす SVG に字を置くと横に潰れるため。 */
 
@@ -336,7 +336,7 @@ sl-alert.notice::part(message) {
   flex-direction: column;
   flex: 1;
   min-height: 15rem;
-  /* 並べ方は「画面の広さ」でなく「この器の広さ」で決める。右のプレビュー枠
+  /* 並べ方は「画面の広さ」でなく「このコンテナの広さ」で決める。右のプレビュー枠
      (狭い)へ移しても、窓が広いままだと画面基準の切り替えは効かないため */
   container-type: inline-size;
   border: 1px solid var(--color-edge);
@@ -448,7 +448,7 @@ sl-alert.notice::part(message) {
   padding: 0.7rem;
 }
 
-/* 器が狭い(右のプレビュー枠など)ときは 1 列に積む。2 列のままだと
+/* コンテナが狭い(右のプレビュー枠など)ときは 1 列に積む。2 列のままだと
    グラフ側が 0 幅まで潰れ、右にパッドの固定幅だけが残る */
 @container (max-width: 34rem) {
   .sfx-body {
@@ -590,7 +590,7 @@ sl-alert.notice::part(message) {
   padding: 2px 0;
 }
 
-/* 縦書きにするのは字だけ。器に掛けると縦積みのつもりが横並びになる */
+/* 縦書きにするのは字だけ。コンテナに掛けると縦積みのつもりが横並びになる */
 .sfx-axis-y span {
   writing-mode: vertical-rl;
   text-orientation: upright;

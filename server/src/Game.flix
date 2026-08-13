@@ -34,7 +34,7 @@ mod Game {
     pub type alias Procs = JMap[String, Process]
 
     /// 前の server から引き継いだゲーム (キー: dir、値: pid の文字列)。
-    /// 手元記録 (Procs) と違い停止の道具が pid しか無いので、別の器で区別しておく。
+    /// 手元記録 (Procs) と違い停止の道具が pid しか無いので、別のコンテナで区別しておく。
     pub type alias Adopted = JMap[String, String]
 
     /// ゲームまわりの器一式。走行権・手元記録・引き継ぎ・命令口をいつも一緒に持ち歩く。

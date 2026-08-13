@@ -12,7 +12,7 @@ module EntryOps exposing
     , newEntry
     )
 
-{-| エントリの追加・複製・削除(テーブル上部の CRUD)が正本へ流す編集の導出。
+{-| エントリの追加・複製・削除(テーブル上部の CRUD)が元データへ流す編集の導出。
 
 ここは純ロジック(Html も Effect も作らない)。「どの操作がどの編集になるか」を
 view に散らさず 1 箇所に集め、elm-test で固定する。パスの語彙は Refs.PathSeg を
@@ -28,7 +28,7 @@ import Refs exposing (Entry(..), PathSeg(..))
 import Schema exposing (Field, FieldType(..), Section)
 
 
-{-| 正本(jsonc テキスト)への編集 1 件。
+{-| 元データ(jsonc テキスト)への編集 1 件。
 Set=キーへの書き込み(catalog の追加・複製)・Append=配列末尾へ挿入(list)・
 Remove=キー/要素の削除。
 -}

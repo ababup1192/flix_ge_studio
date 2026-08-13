@@ -4,7 +4,7 @@ module AtelierCreateTest exposing (suite)
 
 守るのは規則だけ: パネルの既定の開閉(既定は畳む)、カードを開いたら
 AI 候補づくりフォームに直行すること、プロンプトの取り寄せと表示、
-複製の依頼と成功後の行き先。カードの見た目やコピー札の戻りの
+複製の依頼と成功後の行き先。カードの見た目やコピーボタンの戻りの
 タイミング(2 秒)の演出は焼かない。
 
 -}
@@ -189,8 +189,8 @@ suite =
                     ( Atelier.createOpen closed, Atelier.shownPrompt closed )
                         |> Expect.equal ( False, Just "描いてください" )
             ]
-        , describe "手直し(えらぶ側から入る)"
-            [ test "候補カードの「手直し」でそのファイルを開く便りが飛び、調整側へ切り替わる" <|
+        , describe "クイック編集(えらぶ側から入る)"
+            [ test "候補カードの「クイック編集」でそのファイルを開く便りが飛び、調整側へ切り替わる" <|
                 \_ ->
                     let
                         ( model, out ) =

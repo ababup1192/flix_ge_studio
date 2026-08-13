@@ -157,7 +157,7 @@ view handlers urls model =
             , case model.status of
                 Just status ->
                     if List.isEmpty status.items then
-                        viewEmpty "見張る絵も音もありません(reference/ に焼き上がりを置くと、ここで見比べられます)"
+                        viewEmpty "見張る絵も音もありません(reference/ に描き出した絵を置くと、ここで見比べられます)"
 
                     else
                         div [ HA.class "flex min-h-0 flex-1" ]
@@ -191,7 +191,7 @@ viewHead handlers model =
                     ""
     in
     div [ HA.class "flex h-9 shrink-0 items-center gap-3 border-b border-edge bg-panel px-3" ]
-        [ span [ HA.class "text-xs font-semibold text-ink" ] [ text "焼き上がりの見比べ" ]
+        [ span [ HA.class "text-xs font-semibold text-ink" ] [ text "描き出した絵の見比べ" ]
         , span
             [ HA.classList
                 [ ( "reference-summary text-[11px]", True )
@@ -303,7 +303,7 @@ viewCompareHead handlers item =
           else
             button
                 [ HA.class "reference-update btn btn-mini"
-                , HA.title "今の焼き上がりを新しいリファレンス画像にする(元には戻せません)"
+                , HA.title "今の描き出した絵を新しいリファレンス画像にする(元には戻せません)"
                 , HE.onClick (handlers.onUpdate item)
                 ]
                 [ text "リファレンス画像を更新" ]
@@ -354,7 +354,7 @@ viewImage handlers urls model item =
         SideBySide ->
             div [ HA.class "flex gap-3" ]
                 [ shot "リファレンス画像" (urls.reference item)
-                , shot "今(焼き上がり)" (urls.baked item)
+                , shot "今(描き出した絵)" (urls.baked item)
                 ]
 
         Overlay ->
@@ -394,7 +394,7 @@ viewSound handlers item =
     in
     [ div [ HA.class "flex items-center gap-2" ]
         [ play "▶ リファレンス画像側" "reference/sfx"
-        , play "▶ 今(焼き上がり)" "assets/sfx"
+        , play "▶ 今(描き出した絵)" "assets/sfx"
         ]
     , div [ HA.class "text-[10px] text-ink-faint" ]
         [ text "同じ名前の音を、置き場を分けて聴き比べます(素の WAV のまま)" ]

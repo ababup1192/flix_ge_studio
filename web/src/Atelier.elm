@@ -88,7 +88,7 @@ module Atelier exposing
 {-| アトリエの「候補選び」— 生成された見た目候補を見比べて、ゲームで使う(採用する)。
 
 アトリエタブは入口(viewLanding)から始まり、行き先は
-素材(候補選び+候補づくり)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
+アセット(候補選び+候補づくり)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
 アーカイブの 4 つ。どれを描くかは Main が showLanding / showArchiver /
 showPicks / showExtend で判定し、各セクションの最上段の
 「← アトリエ」(viewSectionTop)で入口へ戻る。
@@ -155,7 +155,7 @@ type Data
 
 
 {-| アトリエタブのセクション。Landing(入口)から
-Picks(素材 = 候補選び+候補づくり)/ Storehouse(調整 = Doc エディタ)/
+Picks(アセット = 候補選び+候補づくり)/ Storehouse(調整 = Doc エディタ)/
 Extend(広げる = 依頼文の下書き)/ Archiver(アーカイブ)へ入る。
 -}
 type Section
@@ -280,7 +280,7 @@ type alias GameLog =
     }
 
 
-{-| 候補づくりの素材スロット(GET /atelier/slots — material 役だけ来る契約)。 -}
+{-| 候補づくりのアセットスロット(GET /atelier/slots — material 役だけ来る契約)。 -}
 type alias CreateSlot =
     { file : String
     , entityId : Maybe String
@@ -353,7 +353,7 @@ type alias Model =
     , pending : Maybe Mode
     , overlay : Maybe Overlay
 
-    -- いま開いているセクション(入口 / 素材 / 調整 / 広げる / アーカイブ)
+    -- いま開いているセクション(入口 / アセット / 調整 / 広げる / アーカイブ)
     , section : Section
 
     -- 調整の左の一覧に宣言外のファイルまで全部出すか。既定は「宣言された資源だけ」—
@@ -587,7 +587,7 @@ update msg model =
             ( switchSection SectionStorehouse { model | allFiles = True }, OutNone )
 
         FilesFilterToggled ->
-            -- 調整の一覧の下のトグル(すべてのファイル ⇄ 宣言された素材だけ)
+            -- 調整の一覧の下のトグル(すべてのファイル ⇄ 宣言されたアセットだけ)
             ( { model | allFiles = not model.allFiles }, OutNone )
 
         OpenPicks ->
@@ -596,7 +596,7 @@ update msg model =
         CreateForSlotClicked slotFile ->
             -- 候補づくりパネルをそのスロット向け(AI・スロット選択済み)にして、
             -- そのスロットのカードを開く(anchored)。調整の境界の
-            -- 「まず候補を作ります」からも来るのでセクションも素材に合わせる
+            -- 「まず候補を作ります」からも来るのでセクションもアセットに合わせる
             ( switchSection SectionPicks
                 (mapCreate (\c -> { c | open = Just True, slot = Just slotFile, anchored = True }) model)
             , OutNone
@@ -801,9 +801,9 @@ update msg model =
             )
 
         EditCandidateClicked file ->
-            -- 候補カードの「✏️ 手直し」や行の「値を変える」— 調整(エディタ)で
+            -- 候補カードの「✏️ クイック編集」や行の「値を変える」— 調整(エディタ)で
             -- そのファイルを開く(開くのは Main の仕事なので値で返す)。
-            -- 一覧は既定(宣言された素材だけ)に戻し、着地の見出しを押した言葉に合わせる
+            -- 一覧は既定(宣言されたアセットだけ)に戻し、着地の見出しを押した言葉に合わせる
             ( switchSection SectionStorehouse { model | allFiles = False }, OutEditFile file )
 
         CopyCurrentClicked slotFile ->
@@ -995,7 +995,7 @@ headTitle title file =
             t
 
 
-{-| 素材セクションの 1 行 = 1 素材スロット。slot は候補のある列(無ければ Nothing)。 -}
+{-| アセットセクションの 1 行 = 1 アセットスロット。slot は候補のある列(無ければ Nothing)。 -}
 type alias PickRow =
     { file : String
     , title : String
@@ -1003,7 +1003,7 @@ type alias PickRow =
     }
 
 
-{-| 素材スロットの行の導出。role:material の宣言(/atelier/slots)全部が行になり、
+{-| アセットスロットの行の導出。role:material の宣言(/atelier/slots)全部が行になり、
 候補(/atelier/candidates)はスロット別に付く。宣言が引けない時(旧サーバ等)は
 候補のあるスロットだけを行にする(fail-open — 候補を見せない画面にしない)。
 -}
@@ -1041,7 +1041,7 @@ pickRows model =
     List.map fromDecl model.create.slots ++ leftover
 
 
-{-| 「いまの素材: vN」の N。スロットのアーカイブ最大バージョン + 1、無ければ 1
+{-| 「いまのアセット: vN」の N。スロットのアーカイブ最大バージョン + 1、無ければ 1
 (/atelier/archive から導出。読めないサーバでも v1 に倒れる)。
 -}
 slotVersion : Model -> String -> Int
@@ -1066,9 +1066,9 @@ slotPastVersions model slotFile =
             []
 
 
-{-| そのファイルが素材スロット(role:material の宣言)なら、行き来リンクに
+{-| そのファイルがアセットスロット(role:material の宣言)なら、行き来リンクに
 織り込む題(括弧前)。宣言外・tuning は Nothing — Main の境界の 1 行が
-素材か調整値かをこれで見分ける。
+アセットか調整値かをこれで見分ける。
 -}
 materialTitleOf : Model -> String -> Maybe String
 materialTitleOf model file =
@@ -1743,7 +1743,7 @@ showLanding model =
     model.section == SectionLanding
 
 
-{-| アトリエタブで素材(候補選び+つくる)を主役に描くべきか。 -}
+{-| アトリエタブでアセット(候補選び+つくる)を主役に描くべきか。 -}
 showPicks : Model -> Bool
 showPicks model =
     model.section == SectionPicks
@@ -1784,8 +1784,8 @@ cardAction model info =
 -- 画面
 
 
-{-| 素材セクションの画面(Main が showPicks の時だけこれを主役に描く —
-Doc エディタもそのタブ群もここには出ない)。1 行 = 1 素材スロット
+{-| アセットセクションの画面(Main が showPicks の時だけこれを主役に描く —
+Doc エディタもそのタブ群もここには出ない)。1 行 = 1 アセットスロット
 (role:material の宣言全部)で、候補はスロット別にその行へ付く。
 候補が届く前(Loading 等)でも行は出す(空の画面で待たせない)。
 行はカードで、押すと開いて候補づくりのパネルがその中に出る
@@ -1796,7 +1796,7 @@ view src model =
     div [ HA.class "atelier-picks min-h-0 flex-1 overflow-y-auto px-6 py-6" ]
         [ div [ HA.class "mx-auto w-full max-w-3xl" ]
             (List.concat
-                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 素材を切り替える" ] ]
+                [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🎨 アセットを切り替える" ] ]
                 , case model.data of
                     Ready candidates ->
                         viewBakePanel model candidates
@@ -1860,8 +1860,8 @@ viewLanding model =
                 }
             , landingCard
                 { icon = "🎨"
-                , title = "素材を切り替える"
-                , body = "いまの素材を、別の素材と見比べて切り替えます。候補は AI に頼んで作れます。前の素材はバージョンで残り、いつでも戻せます。"
+                , title = "アセットを切り替える"
+                , body = "いまのアセットを、別のアセットと見比べて切り替えます。候補は AI に頼んで作れます。前のアセットはバージョンで残り、いつでも戻せます。"
                 , chip =
                     case candidateCount model of
                         0 ->
@@ -1881,7 +1881,7 @@ viewLanding model =
                 , span [ HA.class "text-xs font-semibold text-ink" ] [ text "ゲームを広げる" ]
                 ]
             , div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-soft" ]
-                [ text "いまのゲームに無いものを足します — 新しい場面、新しい仕組み、新しい種類の素材。" ]
+                [ text "いまのゲームに無いものを足します — 新しい場面、新しいメカニクス、新しい種類のアセット。" ]
             ]
         , div [ HA.class "mt-6 flex items-center gap-5" ]
             [ if archiveAvailable model then
@@ -1979,8 +1979,8 @@ viewExtend model =
 extendKinds : List { id : String, title : String, body : String }
 extendKinds =
     [ { id = "scene", title = "場面を足す", body = "ゲームの進行に新しい場面が増えます。" }
-    , { id = "mechanic", title = "仕組みを足す", body = "ゲームに新しいルールや機能が入ります。" }
-    , { id = "material", title = "素材の種類を足す", body = "切り替えられる素材の種類が増えます。" }
+    , { id = "mechanic", title = "メカニクスを足す", body = "ゲームに新しいルールや機能が入ります。" }
+    , { id = "material", title = "アセットの種類を足す", body = "切り替えられるアセットの種類が増えます。" }
     ]
 
 
@@ -2289,8 +2289,8 @@ anyPreviewMissing candidates =
         candidates.slots
 
 
-{-| 素材スロットの 1 枚 = 開閉するカード。閉じた既定はヘッダ
-(宣言題 + path + いまの素材 vN + 候補の件数)だけで、カード全体が押せる。
+{-| アセットスロットの 1 枚 = 開閉するカード。閉じた既定はヘッダ
+(宣言題 + path + いまのアセット vN + 候補の件数)だけで、カード全体が押せる。
 押すと開き、候補のカード列 / 候補づくりパネル(候補ゼロならこれが主役)/
 過去バージョン / 調整への行き来リンクが現れる。開いた状態でヘッダを押すと
 閉じる(パネル内の「閉じる」でも閉じる)。採用・アーカイブ送りの操作は
@@ -2322,7 +2322,7 @@ viewPickRow src model row =
                       , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
                             [ text row.file ]
                       , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
-                            [ text ("いまの素材: v" ++ String.fromInt (slotVersion model row.file)) ]
+                            [ text ("いまのアセット: v" ++ String.fromInt (slotVersion model row.file)) ]
                       ]
                     , if rowCandidateCount > 0 then
                         [ span [ HA.class "atelier-slot-count badge shrink-0" ]
@@ -2575,7 +2575,7 @@ viewCard src model baking slotName candidate =
                 [ HA.class "btn btn-ghost btn-mini shrink-0"
                 , stopClick (EditCandidateClicked candidate.file)
                 ]
-                [ text "✏️ 手直し" ]
+                [ text "✏️ クイック編集" ]
 
             -- アーカイブへ送る(消さない)。押した瞬間 ⏳ + 無効化
             , if archiveAvailable model then
@@ -2676,7 +2676,7 @@ viewComboTrial slots =
         ]
 
 
-{-| スロットの素材種(/atelier/slots の kind)。一覧に無ければ不明。 -}
+{-| スロットのアセット種(/atelier/slots の kind)。一覧に無ければ不明。 -}
 slotKind : Model -> String -> Maybe String
 slotKind model file =
     model.create.slots
@@ -2776,7 +2776,7 @@ viewLoose loose =
 
     else
         [ div [ HA.class "atelier-loose mt-4" ]
-            (div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "素材スロットが見つからない候補" ]
+            (div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "アセットスロットが見つからない候補" ]
                 :: List.map
                     (\l ->
                         div [ HA.class "flex items-baseline gap-2 text-[11px] text-ink-faint" ]
@@ -2832,8 +2832,8 @@ viewOverlay overlay =
             ]
         ]
 
-{-| プレビューの拡大(lightbox)。暗幕の上に PNG を大きく
-(〜90vw / 85vh・ドットのまま)。閉じるのは 閉じる ボタン・暗幕クリック・Esc
+{-| プレビューの拡大(lightbox)。オーバーレイの上に PNG を大きく
+(〜90vw / 85vh・ドットのまま)。閉じるのは 閉じる ボタン・オーバーレイクリック・Esc
 (Esc の購読は Main)。候補には「いまの見た目と見比べる」トグル —
 同じ場所で絵だけが入れ替わるのが一番比べやすい。
 -}
@@ -2919,7 +2919,7 @@ viewLightbox src bust lightbox =
 
 
 {-| 「候補を作る」の畳めるセクション。開くと、そのスロット向けの
-AI 候補づくりフォームに直行する(道えらびは挟まない — 仕組みや素材の種類を足すのは
+AI 候補づくりフォームに直行する(道えらびは挟まない — メカニクスやアセットの種類を足すのは
 「ゲームを広げる」の役割)。実体は 1 つで、スロットカードが開いた時
 (anchored)にだけそのカードの中に描かれる(最上段の常設バーは置かない)。
 -}
@@ -2968,7 +2968,7 @@ viewCreateForm create =
         [ [ Html.textarea
                 [ HA.class "field h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
                 , HA.rows 3
-                , HA.placeholder "方向性: この素材で何を、どんな雰囲気にしたいかを書きます"
+                , HA.placeholder "方向性: このアセットで何を、どんな雰囲気にしたいかを書きます"
                 , HA.value create.direction
                 , HE.onInput CreateDirectionEdited
                 ]
@@ -3091,10 +3091,10 @@ retiredLine : String -> String
 retiredLine retired =
     case versionTag retired of
         Just v ->
-            "前の素材は " ++ v ++ " として残りました(アーカイブからいつでも戻せます)"
+            "前のアセットは " ++ v ++ " として残りました(アーカイブからいつでも戻せます)"
 
         Nothing ->
-            "前の素材はアーカイブに残りました(いつでも戻せます)"
+            "前のアセットはアーカイブに残りました(いつでも戻せます)"
 
 
 {-| ファイル名のドット区切りから "v<数字>" の節を拾う(サーバの命名

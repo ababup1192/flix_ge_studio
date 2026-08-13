@@ -1,6 +1,6 @@
 module DraftTest exposing (suite)
 
-{-| 打ちかけ(draft)の確定パースと ↑↓ 増減の純ロジック。
+{-| 下書き(draft)の確定パースと ↑↓ 増減の純ロジック。
 int 丸め・clamp・step の既定値(int 1 / float 0.1)・Shift ×10・
 浮動小数の桁ゴミ払い・パース不能時に値を出さないことを固定する。
 -}
@@ -83,7 +83,7 @@ suite =
                 \_ ->
                     stepText intSpec { dir = 1, shift = False } ""
                         |> Expect.equal (Just "1")
-            , test "数字になっていない打ちかけからは動かない" <|
+            , test "数字になっていない下書きからは動かない" <|
                 \_ ->
                     stepText intSpec { dir = 1, shift = False } "1x"
                         |> Expect.equal Nothing

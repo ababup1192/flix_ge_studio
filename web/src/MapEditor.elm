@@ -24,7 +24,7 @@ module MapEditor exposing
     , view
     )
 
-{-| マップ(\*.map.json)の手直し。骨格はピクセルエディタと同じ:
+{-| マップ(\*.map.json)のクイック編集。骨格はピクセルエディタと同じ:
 左に道具(ペン・消しゴム・バケツ・スポイト・戻す/やり直す)、中央にセルの
 グリッド、右にレイヤー+パレット。
 
@@ -36,7 +36,7 @@ module MapEditor exposing
   - 配置(手前)… map Doc のトップレベルで x,y を持つ物(単体オブジェクトと
     オブジェクト配列)を機械的に見つけた物。ラベルは JSON キーそのまま。
     配列に x,y を持たない行(triggers の on:enter など)が混ざっていたら、
-    その行だけマスに置かずパレットの件数に回す(編集は分割モードのフォーム)。
+    その行だけセルに置かずパレットの件数に回す(編集は分割モードのフォーム)。
   - 地形 … rows に塗る文字。terrain Doc(entries[].{char,name,fill})が
     読めればそこから、無ければ rows に実際に出る文字+'.' を候補にする
     (fail-open)。色は #rrggbb ならそのまま、それ以外はパレット内の並び順から
@@ -46,7 +46,7 @@ module MapEditor exposing
 非選択レイヤーはキャンバスで淡く、👁 を消すと描かない。👁 と選択は
 セッション内だけの状態(Doc には保存しない)。
 
-文書の正本はここに置かない — 描画は毎回親から渡される Doc から導き、
+文書の元データはここに置かない — 描画は毎回親から渡される Doc から導き、
 一筆の途中だけ rows の作業コピー(working)が表示に勝つ。確定は 1 操作 =
 1 つの Edit として親へ返し、親の編集直列(docEdit → dirty → 保存)に乗せる。
 
@@ -87,14 +87,14 @@ type GroupKind
     | Many
         { add : AddKind
 
-        -- マスを見ない行(on:enter 等)も雛形から足せるか
+        -- セルを見ない行(on:enter 等)も雛形から足せるか
         , roomAdd : Bool
         , points : List Mark
         , offRows : List OffRow
         }
 
 
-{-| マスに置かれていない行(x,y を持たない行)。グリッドには描けないので、
+{-| セルに置かれていない行(x,y を持たない行)。グリッドには描けないので、
 パレットのチップから一覧で開いて選ぶ。summary は中身の見当をつけるための
 1 行の見出し(スキーマは知らないので、値そのものから作る)。
 -}
@@ -102,14 +102,14 @@ type alias OffRow =
     { index : Int, summary : String }
 
 
-{-| 親が渡す「雛形から足せる配列」の宣言。room = マスを見ない行(x,y を書かない
+{-| 親が渡す「雛形から足せる配列」の宣言。room = セルを見ない行(x,y を書かない
 行)も作れるか。スキーマを読むのは親の仕事なので、ここは結果だけ受ける。
 -}
 type alias Addable =
     { key : String, room : Bool }
 
 
-{-| 空きマスのクリックで行を足せるか。
+{-| 空きセルのクリックで行を足せるか。
 
   - XyOnly … 要素が x,y だけ(herbs/lamps 型)。{x,y} の行をその場で足す(従来)。
   - FromSchema … x,y 以外のフィールドも要る配列(triggers/props 型)だが、
@@ -123,7 +123,7 @@ type AddKind
     | NoAdd
 
 
-{-| 配列のうち「マスに置かれている 1 要素」。index は元の配列の添字
+{-| 配列のうち「セルに置かれている 1 要素」。index は元の配列の添字
 (x,y を持たない行を飛ばしても書き戻し先がずれないように、詰めた順ではなく
 ドキュメントの添字をそのまま覚える)。
 -}
@@ -188,8 +188,8 @@ placeGroups schemaKeys value =
             )
 
 
-{-| オブジェクトの配列なら配置グループ。x,y を持つ要素だけをマスに置き、
-持たない行(triggers の on:enter のような、マスを見ない行)はグリッドに描かず
+{-| オブジェクトの配列なら配置グループ。x,y を持つ要素だけをセルに置き、
+持たない行(triggers の on:enter のような、セルを見ない行)はグリッドに描かず
 一覧(offRows)に回す — 混ざっているからとグループごと落とすと、
 同じキーの他の印まで見えなくなる。
 空配列と、文字列など非オブジェクトの配列(rows 等)は配置ではない(fail-open)。
@@ -448,7 +448,7 @@ type Step
     = RowsStep { before : List String, after : List String }
     | MoveStep { key : String, index : Maybe Int, from : ( Int, Int ), to : ( Int, Int ) }
     | AddStep { key : String, point : ( Int, Int ), fromSchema : Bool }
-      -- point = 消した行の印(マスを見ない行は Nothing。戻す先が無い)
+      -- point = 消した行の印(セルを見ない行は Nothing。戻す先が無い)
     | RemoveStep { key : String, point : Maybe ( Int, Int ), index : Int }
 
 
@@ -470,7 +470,7 @@ type alias Model =
     -- 添字はドキュメント配列の添字(Mark.index)で、単体グループは Nothing
     , picked : Maybe ( String, Maybe Int )
 
-    -- 「マスを見ない行」の一覧を開いているグループ(パレットのチップ 1 つぶん)
+    -- 「セルを見ない行」の一覧を開いているグループ(パレットのチップ 1 つぶん)
     , expanded : Maybe String
     , cellPx : Int
     , hover : Maybe ( Int, Int )
@@ -543,9 +543,9 @@ type Msg
     | RedoPressed
       -- パレットのチップ「(+部屋 N)」の開閉
     | GroupToggled String
-      -- マスを見ない行を一覧から選ぶ(インスペクタが映す)
+      -- セルを見ない行を一覧から選ぶ(インスペクタが映す)
     | OffRowChosen String Int
-      -- マスを見ない行(on:enter 等)を雛形から 1 行足す
+      -- セルを見ない行(on:enter 等)を雛形から 1 行足す
     | RoomRowPressed String
       -- 選択中の行を消す(インスペクタの削除。確認へ進む)
     | RemovePressed
@@ -563,7 +563,7 @@ type Edit
       -- fromSchema = スキーマの雛形(default 済みの全フィールド)から作る行か。
       -- False は従来どおり {x,y} だけの行
     | PointAdded { key : String, x : Int, y : Int, fromSchema : Bool }
-      -- マスを見ない行(x,y を書かない雛形)を 1 行。hadRoom = 既に同じ配列に
+      -- セルを見ない行(x,y を書かない雛形)を 1 行。hadRoom = 既に同じ配列に
       -- そういう行があったか(親が注意書きを出すため)
     | RoomRowAdded { key : String, hadRoom : Bool }
     | PointRemoved { key : String, index : Int }
@@ -641,7 +641,7 @@ update doc msg model =
             )
 
         OffRowChosen key index ->
-            -- マスを見ない行は動かせない(印が無い)。選ぶ=インスペクタで開く
+            -- セルを見ない行は動かせない(印が無い)。選ぶ=インスペクタで開く
             ( { model | placeKey = Just key, layer = PlaceLayer, picked = Just ( key, Just index ) }, Silent )
 
         RoomRowPressed key ->
@@ -787,7 +787,7 @@ placePress doc key cell model =
             ( model, Silent )
 
         Just (Single point) ->
-            -- 単体は動かすだけ。同じマスをもう一度なら「選ぶ」だけになる
+            -- 単体は動かすだけ。同じセルをもう一度なら「選ぶ」だけになる
             -- (インスペクタで中身を書くための選択)
             if point == cell then
                 ( { model | picked = Just ( key, Nothing ) }, Silent )
@@ -825,7 +825,7 @@ placePress doc key cell model =
                                 commitMove { key = key, index = Just index, from = mark.at, to = cell } model
 
                             Nothing ->
-                                -- 印を持たない行(マスを見ない行)を選んでいた: 解除だけ
+                                -- 印を持たない行(セルを見ない行)を選んでいた: 解除だけ
                                 ( { model | picked = Nothing }, Silent )
 
                     else
@@ -880,7 +880,7 @@ commitAdd add model =
     )
 
 
-{-| 配列 1 行の削除。印のある行も、マスを見ない行(インスペクタからの削除)も
+{-| 配列 1 行の削除。印のある行も、セルを見ない行(インスペクタからの削除)も
 同じ道を通る。文書に無い添字なら何もしない。
 -}
 commitRemove : Doc -> { key : String, index : Int } -> Model -> ( Model, Out )
@@ -1060,8 +1060,8 @@ applyStep doc isUndo step model =
                         )
 
                     Nothing ->
-                        -- マスを見ない行は印が無く、戻す手がかりを持っていない
-                        ( m1, Noticed "マスを見ない行は戻せません(中身を覚えていません)" )
+                        -- セルを見ない行は印が無く、戻す手がかりを持っていない
+                        ( m1, Noticed "セルを見ない行は戻せません(中身を覚えていません)" )
 
             else
                 removeLast doc removed.key m1
@@ -1275,7 +1275,7 @@ addKindOf doc key =
             NoAdd
 
 
-{-| そのキーの、マスに置かれている要素(元の添字つき)。単体は添字を持たないので空。
+{-| そのキーの、セルに置かれている要素(元の添字つき)。単体は添字を持たないので空。
 -}
 groupMarks : Doc -> String -> List Mark
 groupMarks doc key =
@@ -1298,7 +1298,7 @@ groupOffRows doc key =
 
 
 {-| いま選んでいる 1 行(キーと、配列なら添字)。親のインスペクタが映す行 —
-どの行を書いているかの正本はここ 1 つに置く。
+どの行を書いているかの元データはここ 1 つに置く。
 -}
 selectedRow : Model -> Maybe ( String, Maybe Int )
 selectedRow model =
@@ -1895,7 +1895,7 @@ viewSwatch doc model swatch =
         ]
 
 
-{-| 配置チップ 1 つ。マスに置かれた印の数と、マスを見ない行の数(+部屋 N)を出す。
+{-| 配置チップ 1 つ。セルに置かれた印の数と、セルを見ない行の数(+部屋 N)を出す。
 「+部屋 N」は押すと一覧が開き、行を選ぶとインスペクタで中身を書ける。
 雛形からその種の行を作れる配列には「＋ 部屋の行」も添える。
 -}
@@ -1952,7 +1952,7 @@ viewPlaceEntry doc model group =
                 else
                     [ button
                         [ HA.class "place-room-toggle mt-0.5 flex w-full cursor-pointer items-center gap-1 px-2 text-left text-[10px] text-ink-faint hover:text-ink"
-                        , HA.title "マスを見ない行(on:enter など)。えらぶとこの下のフォームで書けます"
+                        , HA.title "セルを見ない行(on:enter など)。えらぶとこの下のフォームで書けます"
                         , HE.onClick (GroupToggled group.key)
                         ]
                         [ text
@@ -1977,7 +1977,7 @@ viewPlaceEntry doc model group =
             ++ (if roomAdd then
                     [ button
                         [ HA.class "place-room-add mt-0.5 ml-2 cursor-pointer text-[10px] text-ink-faint hover:text-accent"
-                        , HA.title "マスを見ない行(on:enter)を 1 行足す。部屋に入った拍の言葉に使います"
+                        , HA.title "セルを見ない行(on:enter)を 1 行足す。部屋に入った拍の言葉に使います"
                         , HE.onClick (RoomRowPressed group.key)
                         ]
                         [ text "＋ 部屋の行(enter)" ]
@@ -1989,7 +1989,7 @@ viewPlaceEntry doc model group =
         )
 
 
-{-| マスを見ない行 1 行(一覧の中身)。見出しは値から作った要約。
+{-| セルを見ない行 1 行(一覧の中身)。見出しは値から作った要約。
 -}
 viewOffRow : Model -> String -> OffRow -> Html Msg
 viewOffRow model key row =

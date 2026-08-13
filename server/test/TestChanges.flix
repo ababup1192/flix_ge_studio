@@ -34,7 +34,7 @@ mod TestChanges {
              Changes.kicksPumpOnSave("reference/title.png"),
              Changes.kicksPumpOnSave("assets/title.png")))
 
-    /// 既読の判定: 無記録 (器の get が null = None) は「未読なし」に倒して落ちない。
+    /// 既読の判定: 無記録 (コンテナの get が null = None) は「未読なし」に倒して落ちない。
     /// "false" だけが未読で、それ以外の記録は既読。
     @Test
     def testSeenFromRecord(): Unit \ Assert =

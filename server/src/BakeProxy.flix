@@ -225,7 +225,7 @@ mod BakeProxy {
                         case None => (200, JObject(Map#{
                             "ok"        => JBool(false),
                             "reachable" => JBool(false),
-                            "error"     => JString("焼き係に繋がりません")
+                            "error"     => JString("描き出しサーバに繋がりません")
                         }))
                     }
             }

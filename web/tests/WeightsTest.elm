@@ -1,7 +1,7 @@
 module WeightsTest exposing (suite)
 
 {-| weights(合計固定の複数連動スライダー)の再配分・丸め・行の増減を固定する。
-合計の同値は format 後の文字列でも確かめる — 画面と正本に出るのはこの形。
+合計の同値は format 後の文字列でも確かめる — 画面と元データに出るのはこの形。
 -}
 
 import Expect

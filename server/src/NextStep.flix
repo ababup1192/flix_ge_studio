@@ -10,7 +10,7 @@ mod NextStep {
     use Util.Json.Json.{JObject, JString, JNumber, JBool}
 
     /// 判断の材料。atelierCandidates = atelier/ の試作 JSON の数、
-    /// staleGallery = 素材の方が絵より新しい (焼き直しが要る)、diffCount = リファレンス画像との差分の数、
+    /// staleGallery = アセットの方が絵より新しい (焼き直しが要る)、diffCount = リファレンス画像との差分の数、
     /// gameRunning = このプロジェクトのゲームが走っているか。
     pub type alias Checks = {
         atelierCandidates = Int32,
@@ -45,7 +45,7 @@ mod NextStep {
             // 心当たりが無ければ見比べる。基準は既に自動で追随済み。
             { id     = "changed",
               title  = "見た目が変わりました(${unseen}場面)",
-              detail = "触った素材のぶんなら、そのままでどうぞ。心当たりがなければ、前と今を見比べてください。",
+              detail = "触ったアセットのぶんなら、そのままでどうぞ。心当たりがなければ、前と今を見比べてください。",
               nav    = "changes" }
         else if (checks#hasStarterDoc and not checks#gameRunning)
             // 生まれたてで、まだ走っていない: 何かをいじる前に、まず遊んで
@@ -62,12 +62,12 @@ mod NextStep {
               nav    = "arrange" }
         else
             { id     = "create",
-              title  = "素材を試作しよう",
-              detail = "いまは知らせもありません。新しい素材を作って試してみましょう。",
+              title  = "アセットを試作しよう",
+              detail = "いまは知らせもありません。新しいアセットを作って試してみましょう。",
               nav    = "atelier" }
 
-    /// 素材 (assets/*.json) の方が絵 (gallery/*.png) より新しいか。
-    /// 絵が 1 枚も無いのに素材があるときも「焼き直しが要る」。素材が無ければ焼く物も無い。
+    /// アセット (assets/*.json) の方が絵 (gallery/*.png) より新しいか。
+    /// 絵が 1 枚も無いのにアセットがあるときも「焼き直しが要る」。アセットが無ければ焼く物も無い。
     pub def isStale(assetMtimes: List[Int64], galleryMtimes: List[Int64]): Bool =
         match List.maximum(assetMtimes) {
             case None           => false
@@ -79,7 +79,7 @@ mod NextStep {
 
     // ── IO: 材料集め ──────────────────────────────────────
 
-    /// 素材 (assets/*.json) が絵 (gallery/*.png) より新しいか (Changes の自動検査が使う)。
+    /// アセット (assets/*.json) が絵 (gallery/*.png) より新しいか (Changes の自動検査が使う)。
     pub def staleGalleryOf(dir: String): Bool \ IO =
         isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir))
 

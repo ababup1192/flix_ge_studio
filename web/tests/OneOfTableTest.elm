@@ -24,7 +24,7 @@ schemaFixture =
       "oneOf": true,
       "fields": {
         "wait":   { "type": "float", "label": "待つ(秒。長い説明がここに入っても見出しには出ない)", "order": 1 },
-        "walkTo": { "type": "object", "label": "歩く先のマス", "order": 2 },
+        "walkTo": { "type": "object", "label": "歩く先のセル", "order": 2 },
         "jump":   { "type": "object", "label": "別の部屋へ移す", "order": 3 },
         "say":    { "type": {"list": "text"}, "label": "言葉", "order": 4 },
         "lookBack": { "type": "bool", "label": "カメラを戻す", "order": 5 },
