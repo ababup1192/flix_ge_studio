@@ -88,7 +88,7 @@ module Atelier exposing
 {-| アトリエの「候補選び」— 生成された見た目候補を見比べて、ゲームで使う(採用する)。
 
 アトリエタブは入口(viewLanding)から始まり、行き先は
-アセット(候補選び+候補づくり)/ 調整(Doc エディタ)/ 広げる(依頼文の下書き)/
+アセット(候補選び+候補づくり)/ 調整(Doc エディタ)/ 広げる(プロンプトの下書き)/
 アーカイブの 4 つ。どれを描くかは Main が showLanding / showArchiver /
 showPicks / showExtend で判定し、各セクションの最上段の
 「← アトリエ」(viewSectionTop)で入口へ戻る。
@@ -156,7 +156,7 @@ type Data
 
 {-| アトリエタブのセクション。Landing(入口)から
 Picks(アセット = 候補選び+候補づくり)/ Storehouse(調整 = Doc エディタ)/
-Extend(広げる = 依頼文の下書き)/ Archiver(アーカイブ)へ入る。
+Extend(広げる = プロンプトの下書き)/ Archiver(アーカイブ)へ入る。
 -}
 type Section
     = SectionLanding
@@ -365,7 +365,7 @@ type alias Model =
     , extendWords : String
     , extendCopied : Bool
 
-    -- 「広げる」の先頭に置く画面のラフ塗り(依頼文に文字グリッドとして挟まる)
+    -- 「広げる」の先頭に置く画面のラフ塗り(プロンプトに文字グリッドとして挟まる)
     , sketch : SketchPad.Model
 
     -- アーカイブの中身(GET /atelier/archive)
@@ -1152,7 +1152,7 @@ gotGameLog log model =
                 case log.exitCode of
                     Just code ->
                         if code == 0 then
-                            -- 静かに終わった(窓を閉じた等)。ボタンを戻すだけ
+                            -- 静かに終わった(ウィンドウを閉じた等)。ボタンを戻すだけ
                             { model | launch = LaunchIdle }
 
                         else
@@ -1372,7 +1372,7 @@ extendPromptFailed message model =
 
 {-| 下書きにラフ塗りの一節を挟んだ、画面とコピーで見せる本文。
 描いていなければ素通し。保存した文字列ではなく毎回導出する —
-描き直せば依頼文も追随し、失効の管理が要らない。
+描き直せばプロンプトも追随し、失効の管理が要らない。
 -}
 sketchedPrompt : Model -> String -> String
 sketchedPrompt model draft =
@@ -1385,7 +1385,7 @@ sketchedPrompt model draft =
 
 
 {-| GET /sketch/list の応答。次のバージョン番号を決める材料をラフ塗りへ渡す —
-NewGame(これから産まれるプロジェクト)は呼ばない・呼ばれない(常に v1 から)。
+NewGame(これから作成されるプロジェクト)は呼ばない・呼ばれない(常に v1 から)。
 -}
 sketchListLoaded : List SketchPad.Sketch -> Model -> Model
 sketchListLoaded sketches model =
@@ -1415,7 +1415,7 @@ sketchResizeActive model =
     SketchPad.resizeActive model.sketch
 
 
-{-| ラフを塗る窓が出ているか(Main がこの間だけ Esc を購読する)。 -}
+{-| ラフを塗るウィンドウが出ているか(Main がこの間だけ Esc を購読する)。 -}
 sketchOpen : Model -> Bool
 sketchOpen model =
     SketchPad.isOpen model.sketch
@@ -1568,14 +1568,14 @@ createAnchoredTo model file =
 
 
 {-| パネルがどこかの行に繋留されているか(開いたパネルは必ずどこかの行の直下に出る、
-の覗き窓 — 最上段に常設バーは置かない)。
+のプレビュー — 最上段に常設バーは置かない)。
 -}
 createAnchored : Model -> Bool
 createAnchored model =
     createOpen model && model.create.anchored && model.create.slot /= Nothing
 
 
-{-| 画面に映っているプロンプト(テストの覗き窓)。 -}
+{-| 画面に映っているプロンプト(テストが読む値)。 -}
 shownPrompt : Model -> Maybe String
 shownPrompt model =
     case model.create.prompt of
@@ -1941,7 +1941,7 @@ archiverLabel model =
             "🗃️ アーカイブ(" ++ String.fromInt n ++ ")"
 
 
-{-| 「ゲームを広げる」のセクション。足したいものを選ぶと、AI に渡す依頼文の
+{-| 「ゲームを広げる」のセクション。足したいものを選ぶと、AI に渡すプロンプトの
 下書きが届く(GET /prompt/extend)。Studio は手を動かさない — 下書きに
 あなたの言葉を足してコピーし、AI に渡すところまでがこの部屋の仕事。
 -}
@@ -1952,7 +1952,7 @@ viewExtend model =
             (List.concat
                 [ [ div [ HA.class "mb-4" ] [ viewSectionTop "🧩 ゲームを広げる" ]
                   , div [ HA.class "mb-4 text-[11px] leading-relaxed text-ink-soft" ]
-                        [ text "足したいものを選ぶと、AI に渡す依頼文の下書きができます。あなたの言葉を足して仕上げてください。" ]
+                        [ text "足したいものを選ぶと、AI に渡すプロンプトの下書きができます。あなたの言葉を足して仕上げてください。" ]
                   , Html.map SketchMsg (SketchPad.view model.sketch)
                   , div [ HA.class "flex flex-col gap-3 sm:flex-row" ]
                         (List.map (viewExtendKind model.extendPrompt) extendKinds)
@@ -1974,7 +1974,7 @@ viewExtend model =
 
 
 {-| 広げ方の 3 口。id はサーバの kind(GET /prompt/extend?kind=…)。
-説明は普遍的に書く(具体物の例を焼き込まない — サーバの依頼文と同じ規約)。
+説明は普遍的に書く(具体物の例を焼き込まない — サーバのプロンプトと同じ規約)。
 -}
 extendKinds : List { id : String, title : String, body : String }
 extendKinds =
@@ -2742,7 +2742,7 @@ viewLaunch model =
         LaunchStarting info ->
             [ div [ HA.class "atelier-launch mt-3" ]
                 [ Progress.view
-                    { message = "起動しています… コンパイルには1分ほどかかります。窓が開いたらそのまま遊べます"
+                    { message = "起動しています… コンパイルには1分ほどかかります。ウィンドウが開いたらそのまま遊べます"
                     , lines = info.lines
                     , failed = False
                     , expanded = model.launchLogExpanded

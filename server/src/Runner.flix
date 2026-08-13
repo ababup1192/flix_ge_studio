@@ -42,7 +42,7 @@ mod Runner {
     pub def isAllowedTarget(target: String): Bool =
         Set.memberOf(target, Set#{"render", "gallery-prologue", "gallery-sounds", "atelier-preview"})
 
-    /// 「焼く」の許可リスト (この順で配る)。atelier-preview は試作の窓口なのでここには入れない。
+    /// 「焼く」の許可リスト (この順で配る)。atelier-preview は試作のウィンドウ口なのでここには入れない。
     pub def bakeTargets(): List[String] =
         "render" :: "gallery-prologue" :: "gallery-sounds" :: Nil
 

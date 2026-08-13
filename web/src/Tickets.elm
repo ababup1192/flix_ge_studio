@@ -48,7 +48,7 @@ type alias Model =
     -- 書きかけの一言(id → 文言)。保存はフォーカスが外れた時
     , drafts : Dict String String
 
-    -- 直前に依頼文をコピーしたチケット(ボタンに ✓ を出す)
+    -- 直前にプロンプトをコピーしたチケット(ボタンに ✓ を出す)
     , copiedId : Maybe String
 
     -- スクショを拡大表示中のチケット(Nothing = 閉じている)
@@ -152,7 +152,7 @@ commentOf model ticket =
     Dict.get ticket.id model.drafts |> Maybe.withDefault ticket.comment
 
 
-{-| AI へ渡す依頼文。一言とチケット内ファイルの場所だけを運び、
+{-| AI へ渡すプロンプト。一言とチケット内ファイルの場所だけを運び、
 直し先(コードか Doc か)の判断は AI に委ねる。
 
 手がかりは切った場所で変わる — 遊んでいて切った物にはその瞬間のゲーム状態が付き、
@@ -299,7 +299,7 @@ viewTicket ctx model ticket =
                 [ button
                     [ HA.class "btn btn-primary text-xs"
                     , HA.disabled (not canReport)
-                    , HA.title "一言とチケットの場所を依頼文にしてコピーします(Claude Code に貼ってください)"
+                    , HA.title "一言とチケットの場所をプロンプトにしてコピーします(Claude Code に貼ってください)"
                     , HE.onClick (ReportClicked ticket)
                     ]
                     [ text

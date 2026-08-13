@@ -36,7 +36,7 @@ module SketchPad exposing
     )
 
 {-| 画面のラフ塗り。「大体ここ壁・ここに人」をセル目に雑に塗って、
-AI への依頼文に文字グリッドとして自動で挟むための下書き部品。
+AI へのプロンプトに文字グリッドとして自動で挟むための下書き部品。
 
 元データはこの Model が持つ(ゲームの Doc ではないので親の編集直列に乗せない)。
 塗りの道具(ペン・バケツ・消しゴム)は PixelEditor の純関数を借りる。
@@ -46,7 +46,7 @@ AI への依頼文に文字グリッドとして自動で挟むための下書�
 絵は最大 3 枚のレイヤーに分けて塗る。最初は 1 枚で、増やすかどうかは人が決める。
 塗る先は選んでいる 1 枚だけで、ほかのレイヤーは薄く透けて見える。
 
-依頼文への差し込みは promptSection / spliceInto の純関数で行い、
+プロンプトへの差し込みは promptSection / spliceInto の純関数で行い、
 描き直せば導出し直すだけで追随する(失効の管理を持たない)。
 
 -}
@@ -66,7 +66,7 @@ import Svg.Attributes as SA
 -- データ
 
 
-{-| ラベル 1 つ。char は保存と依頼文でだけ表に出る内部コード。
+{-| ラベル 1 つ。char は保存とプロンプトでだけ表に出る内部コード。
 desc は AI への言葉の補足(空なら省かれる)。
 -}
 type alias Entry =
@@ -108,10 +108,12 @@ type Camera
 type Edge
     = RightEdge
     | BottomEdge
-    | CornerEdge
     | LeftEdge
     | TopEdge
     | TopLeftEdge
+    | TopRightEdge
+    | BottomRightEdge
+    | BottomLeftEdge
 
 
 {-| レイヤー 1 枚。hidden は縮めて見えなくなった塗りの退避。
@@ -158,6 +160,14 @@ type alias Model =
     { open : Bool
     , preset : String
     , size : { w : Int, h : Int }
+
+    -- 幅・高さの入力欄の下書き。打っている途中の "1" を size で上書きしない —
+    -- 範囲外の打ちかけをその場で丸めると、2 桁目が打てなくなる
+    , sizeDraft : { w : String, h : String }
+
+    -- 閉じてよいか聞いている最中か。保存していない絵があるまま閉じられると、
+    -- 打ち直しの利かない形で消える
+    , closeAsked : Bool
     , legend : List Entry
     , note : String
 
@@ -181,7 +191,7 @@ type alias Model =
     , cellPx : Int
 
     -- ラフの再現度(1=雰囲気 〜 4=セル単位で忠実)。絵に対する意図なので
-    -- カメラと同じく保存にも依頼文にも載せる
+    -- カメラと同じく保存にもプロンプトにも載せる
     , fidelity : Int
 
     -- 戻す用のスナップショット(一筆・1 リサイズで 1 本・直近 20 本まで)。
@@ -197,9 +207,6 @@ type alias Model =
     -- 決める材料 — 名前を打ち替えたときに他のラフの番号を使わないよう、
     -- 選んでいるラフだけでなく全部を持つ
     , sketches : List Sketch
-
-    -- カメラの絵柄一覧を開いているか(普段はチップ 1 枚に畳む)
-    , cameraOpen : Bool
 
     -- レイヤーを奥から手前の順に。ここが絵の唯一の元データ — 選んでいる 1 枚だけ
     -- 別の場所へ写すと、どちらが正しいかで必ず食い違う。
@@ -219,6 +226,10 @@ type alias Model =
         Maybe
             { edge : Edge
             , start : { x : Float, y : Float }
+
+            -- 直近のカーソル位置。寸法バッジをカーソルの隣に出すためだけに持つ
+            -- (寸法の計算は start からやり直す)
+            , current : { x : Float, y : Float }
             , startSize : { w : Int, h : Int }
             , startLayers : List LayerSheet
             }
@@ -249,7 +260,6 @@ type Msg
     | ResizeStarted Edge { x : Float, y : Float }
     | ResizeMoved { x : Float, y : Float }
     | ResizeEnded
-    | CameraToggled
     | CameraPicked Camera
     | LayerPicked Int
     | LayerAdded
@@ -262,7 +272,12 @@ type Msg
     | NoteEdited String
     | NameEdited String
     | CellSizeEdited String
-    | FidelityEdited String
+    | WidthTyped String
+    | HeightTyped String
+    | SizeBlurred
+    | CloseRequested
+    | CloseCancelled
+    | FidelityPicked Int
     | SaveClicked
 
 
@@ -314,6 +329,8 @@ fromPreset presetId =
     { open = False
     , preset = preset.id
     , size = preset.size
+    , sizeDraft = draftOf preset.size
+    , closeAsked = False
     , legend = preset.legend
     , note = ""
     , name = ""
@@ -327,7 +344,6 @@ fromPreset presetId =
     , undo = []
     , save = SaveIdle
     , camera = preset.camera
-    , cameraOpen = False
     , layers = [ blankLayer 1 preset.size ]
     , layerIndex = 0
     , resize = Nothing
@@ -432,7 +448,7 @@ fallbackPreset =
     { id = "map", label = "マップ", size = { w = 16, h = 10 }, camera = TopDown, legend = [] }
 
 
-{-| カメラの日本語名(チップ・ボタン・依頼文で共用)。 -}
+{-| カメラの日本語名(チップ・ボタン・プロンプトで共用)。 -}
 cameraLabel : Camera -> String
 cameraLabel camera =
     case camera of
@@ -446,7 +462,7 @@ cameraLabel camera =
             "クォーター"
 
         Behind ->
-            "背後から"
+            "三人称"
 
         FirstPerson ->
             "一人称"
@@ -573,7 +589,7 @@ isPainted sheet =
     sheet.rows |> String.concat |> String.any (\c -> c /= emptyChar)
 
 
-{-| 依頼文とレイヤーパネルで数える「塗ったセルの数」。 -}
+{-| プロンプトとレイヤーパネルで数える「塗ったセルの数」。 -}
 paintedCells : LayerSheet -> Int
 paintedCells sheet =
     sheet.rows
@@ -604,7 +620,7 @@ mergeRows size upper lower =
         (fitRows size lower)
 
 
-{-| 依頼文と保存でレイヤーごとに書き分けるか。表示していて塗ってあるものが
+{-| プロンプトと保存でレイヤーごとに書き分けるか。表示していて塗ってあるものが
 2 枚以上あるときだけ — 1 枚しか中身が無いなら見出しは邪魔なだけになる。
 -}
 isLayered : Model -> Bool
@@ -613,7 +629,7 @@ isLayered model =
 
 
 
--- 純ロジック(コード割り振り・JSON・依頼文)
+-- 純ロジック(コード割り振り・JSON・プロンプト)
 
 
 {-| 自由追加のラベルに割り振る 1 文字。使用中と空き(.)を避けて
@@ -629,7 +645,7 @@ nextChar used =
 
 {-| sketch.json の中身。desc が空のラベルは desc ごと省く。
 
-rows はレイヤーを畳んだ 1 枚。レイヤーを知らない読み手(比較の窓・古い Studio)が
+rows はレイヤーを畳んだ 1 枚。レイヤーを知らない読み手(比較のウィンドウ・古い Studio)が
 これだけで絵を出せるようにするため、レイヤーが何枚あっても必ず書く。
 layers は 2 枚以上あるときだけ足す — 1 枚で描いたラフの保存物を、
 レイヤーの入れ物の分だけ膨らませない。
@@ -726,6 +742,7 @@ sketchDecoder =
             in
             { base
                 | size = size
+                , sizeDraft = draftOf size
 
                 -- カメラの欄が無い・知らない値でも読める(fail-open)。
                 -- 読めない Doc で全体を止めないため、プリセットの初期カメラに倒す
@@ -859,7 +876,7 @@ entryDecoder =
 
 {-| 保存先の相対パス。保存した直後は同じ場所を指し続け(絵を触っていなければ
 SaveDone の内容と今の絵が一致する)、絵を触ったら次のバージョンへ動く。
-「原本: 」行(promptSection)がこの値を依頼文に書き残すので、保存直後は
+「原本: 」行(promptSection)がこの値をプロンプトに書き残すので、保存直後は
 存在するファイルを指し続けなければならない。
 
 名前も一致を見るのは、encode が name を含まない(name は保存の宛先を
@@ -953,8 +970,8 @@ safeName raw =
         cleaned
 
 
-{-| 依頼文に挟む「## 画面のラフ」の一節。何も塗っておらず補足も空なら
-Nothing(= 描かなければ依頼文は今まで通り)。
+{-| プロンプトに挟む「## 画面のラフ」の一節。何も塗っておらず補足も空なら
+Nothing(= 描かなければプロンプトは今まで通り)。
 凡例は塗りに使われているラベルだけ載せる(使っていない色で AI を迷わせない)。
 
 1 枚で描いたラフはセル目を 1 枚だけ書く。レイヤーに分けて描いたときは
@@ -1019,7 +1036,7 @@ promptSection model =
             )
 
 
-{-| 依頼文の見出し。ドット絵だけは「画面」でなく絵そのものの下描きなので
+{-| プロンプトの見出し。ドット絵だけは「画面」でなく絵そのものの下描きなので
 言い方を変える(画面のつもりで背景まで足されると別物になる)。
 -}
 sketchTitle : Model -> String
@@ -1041,7 +1058,7 @@ cellWord model =
         "1セル"
 
 
-{-| 再現度の段階名(スライダーの表示と依頼文の見出しで共用)。 -}
+{-| 再現度の段階名(スライダーの表示とプロンプトの見出しで共用)。 -}
 fidelityLabel : Int -> String
 fidelityLabel level =
     case level of
@@ -1058,7 +1075,7 @@ fidelityLabel level =
             "雰囲気再現"
 
 
-{-| 再現度を AI への注文の言葉に直す(依頼文の末尾)。 -}
+{-| 再現度を AI への注文の言葉に直す(プロンプトの末尾)。 -}
 fidelityClause : Int -> String
 fidelityClause level =
     case level of
@@ -1084,7 +1101,7 @@ legendTerm entry =
         String.fromChar entry.char ++ "=" ++ entry.name ++ "（" ++ String.trim entry.desc ++ "）"
 
 
-{-| 一節を依頼文へ差し込む。依頼文は必ず「【やること】」の行を持つ
+{-| 一節をプロンプトへ差し込む。プロンプトは必ず「【やること】」の行を持つ
 (サーバの固定構造)ので、その直前 = 説明の直後に入れる。
 見つからないときだけ末尾に足す(構造が変わっても依頼が壊れない安全網)。
 -}
@@ -1106,7 +1123,17 @@ update : Msg -> Model -> ( Model, Out )
 update msg model =
     case msg of
         ToggleOpen ->
-            ( { model | open = not model.open }, OutNone )
+            ( { model | open = not model.open, closeAsked = False }, OutNone )
+
+        CloseRequested ->
+            if unsavedEdits model then
+                ( { model | closeAsked = True }, OutNone )
+
+            else
+                ( { model | open = False, closeAsked = False }, OutNone )
+
+        CloseCancelled ->
+            ( { model | closeAsked = False }, OutNone )
 
         PresetPicked presetId ->
             -- 塗りは捨てる(プリセット替え=描き直し)が、補足と保存名は人の言葉なので残す
@@ -1279,6 +1306,7 @@ update msg model =
                     Just
                         { edge = edge
                         , start = point
+                        , current = point
                         , startSize = model.size
                         , startLayers = model.layers
                         }
@@ -1293,6 +1321,10 @@ update msg model =
 
                 Just going ->
                     let
+                        -- 寸法が変わらない動きでも、バッジがカーソルに付いていくよう位置だけは追う
+                        moved =
+                            { model | resize = Just { going | current = point } }
+
                         snap from delta =
                             from + round (delta / toFloat model.cellPx)
 
@@ -1330,7 +1362,7 @@ update msg model =
                             }
                     in
                     if newSize == model.size then
-                        ( model, OutNone )
+                        ( moved, OutNone )
 
                     else
                         -- 現在の姿でなくドラッグ開始時の姿から毎回計算し直す。
@@ -1338,7 +1370,7 @@ update msg model =
                         -- 同じドラッグ内で戻しても復元できない
                         ( applySize anchor
                             newSize
-                            { model | size = going.startSize, layers = going.startLayers }
+                            { moved | size = going.startSize, layers = going.startLayers }
                         , OutNone
                         )
 
@@ -1366,11 +1398,8 @@ update msg model =
                         , OutNone
                         )
 
-        CameraToggled ->
-            ( { model | cameraOpen = not model.cameraOpen }, OutNone )
-
         CameraPicked camera ->
-            ( { model | camera = camera, cameraOpen = False, save = SaveIdle }, OutNone )
+            ( { model | camera = camera, save = SaveIdle }, OutNone )
 
         LayerPicked index ->
             -- 絵は 1 セルも変わらないので save には触らない
@@ -1459,6 +1488,7 @@ update msg model =
                 previous :: rest ->
                     ( { model
                         | size = previous.size
+                        , sizeDraft = draftOf previous.size
                         , legend = previous.legend
                         , layers = previous.layers
                         , layerIndex = previous.layerIndex
@@ -1485,13 +1515,22 @@ update msg model =
                 Nothing ->
                     ( model, OutNone )
 
-        FidelityEdited raw ->
-            case String.toInt raw of
-                Just level ->
-                    ( { model | fidelity = clamp 1 4 level, save = SaveIdle }, OutNone )
+        FidelityPicked level ->
+            ( { model | fidelity = clamp 1 4 level, save = SaveIdle }, OutNone )
 
-                Nothing ->
-                    ( model, OutNone )
+        WidthTyped raw ->
+            typedSize (\n -> { w = n, h = model.size.h })
+                raw
+                { model | sizeDraft = { w = raw, h = model.sizeDraft.h } }
+
+        HeightTyped raw ->
+            typedSize (\n -> { w = model.size.w, h = n })
+                raw
+                { model | sizeDraft = { w = model.sizeDraft.w, h = raw } }
+
+        SizeBlurred ->
+            -- 打ちかけのまま欄を離れたら実際の寸法へ戻す(欄と絵が食い違ったままにしない)
+            ( { model | sizeDraft = draftOf model.size }, OutNone )
 
         SaveClicked ->
             -- path と content はここで 1 回だけ作り、飛ばす物(OutSave)と
@@ -1536,8 +1575,8 @@ swapLayers from to model =
 {-| つまみが左・上を動かすか(動かすなら絵ごと座標をずらす)。 -}
 edgeAnchor : Edge -> { left : Bool, top : Bool }
 edgeAnchor edge =
-    { left = edge == LeftEdge || edge == TopLeftEdge
-    , top = edge == TopEdge || edge == TopLeftEdge
+    { left = edge == LeftEdge || edge == TopLeftEdge || edge == BottomLeftEdge
+    , top = edge == TopEdge || edge == TopLeftEdge || edge == TopRightEdge
     }
 
 
@@ -1550,10 +1589,44 @@ hidden の古い塗りで勝手に復活させない。
 逆向きの退避まで持つと hidden の意味が「どの向きに落ちたか」まで抱えて重くなる)。
 
 -}
+draftOf : { w : Int, h : Int } -> { w : String, h : String }
+draftOf size =
+    { w = String.fromInt size.w, h = String.fromInt size.h }
+
+
+{-| 入力欄で打たれた寸法。範囲に収まった時だけ絵へ反映する — 打ちかけ("1")を
+その場で最小値へ丸めると 2 桁目が打てない。伸ばす向きは右・下(左上は動かさない)。
+-}
+typedSize : (Int -> { w : Int, h : Int }) -> String -> Model -> ( Model, Out )
+typedSize toSize raw model =
+    case String.toInt raw of
+        Nothing ->
+            ( model, OutNone )
+
+        Just typed ->
+            let
+                wanted =
+                    toSize typed
+
+                inRange =
+                    wanted.w >= minSize.w && wanted.w <= maxSize.w && wanted.h >= minSize.h && wanted.h <= maxSize.h
+            in
+            if not inRange || wanted == model.size then
+                ( model, OutNone )
+
+            else
+                ( applySize { left = False, top = False }
+                    wanted
+                    { model | undo = snapshot model :: List.take 19 model.undo, save = SaveIdle }
+                , OutNone
+                )
+
+
 applySize : { left : Bool, top : Bool } -> { w : Int, h : Int } -> Model -> Model
 applySize anchor newSize model =
     { model
         | size = newSize
+        , sizeDraft = draftOf newSize
 
         -- 全レイヤーを同じだけ切る・伸ばす。1 枚でも飛ばすと丈が食い違い、
         -- 重ねたときに行がずれる
@@ -1917,7 +1990,7 @@ saveFailed reason model =
 
 
 {-| GET /sketch/list の中身を流し込む(Atelier だけが呼ぶ — NewGame は
-これから産まれるプロジェクトなので必ず v1 から)。
+これから作成されるプロジェクトなので必ず v1 から)。
 -}
 gotList : List Sketch -> Model -> Model
 gotList sketches model =
@@ -1928,7 +2001,23 @@ gotList sketches model =
 -- 表示
 
 
-{-| 窓が出ているか(呼び側が Esc の受け口を張るかの判断に使う)。 -}
+{-| 保存していない絵か補足があるか。何も描いていないラフは引き止めない
+(空のまま閉じるのを止められると、ただの邪魔になる)。
+-}
+unsavedEdits : Model -> Bool
+unsavedEdits model =
+    case model.save of
+        SaveDone _ ->
+            False
+
+        SaveFlying _ ->
+            False
+
+        _ ->
+            promptSection model /= Nothing
+
+
+{-| ウィンドウが出ているか(呼び側が Esc の受け口を張るかの判断に使う)。 -}
 isOpen : Model -> Bool
 isOpen model =
     model.open
@@ -1942,9 +2031,15 @@ view model =
                     [ viewWindow
                         { title = "🎨 画面のラフを描く"
                         , hint = "閉じても塗った絵は残ります"
-                        , onClose = Just ToggleOpen
+                        , onClose = Just CloseRequested
+                        , footer =
+                            if model.closeAsked then
+                                [ viewCloseConfirm ]
+
+                            else
+                                [ viewSaveRow model ]
                         }
-                        (inlineParts model ++ [ viewSaveRow model ])
+                        (inlineParts model)
                     ]
 
                 else
@@ -1965,21 +2060,33 @@ viewHeader model =
         ]
 
 
-{-| 塗り場を浮かせる窓。中身の大きさで決まる幅(画面いっぱいには広げない)で、
-はみ出す分だけ窓の中が動く。
+{-| キャンバスを浮かせるウィンドウ。中身の大きさで決まる幅(画面いっぱいには広げない)で、
+はみ出す分だけウィンドウの中が動く。
 
-オーバーレイを押しても閉じない — グリッドの外で指を離す操作が多い塗り場では、
+オーバーレイを押しても閉じない — グリッドの外で指を離す操作が多いキャンバスでは、
 1 回の押し間違いで塗った絵ごと引っ込む事故になるため。
 
 onClose が Nothing の間は閉じられない(閉じると戻れなくなる仕事を
-窓の中で走らせている、と呼び側が判断したとき)。
+ウィンドウの中で走らせている、と呼び側が判断したとき)。
 
 -}
-viewWindow : { title : String, hint : String, onClose : Maybe msg } -> List (Html msg) -> Html msg
+viewWindow : { title : String, hint : String, onClose : Maybe msg, footer : List (Html msg) } -> List (Html msg) -> Html msg
 viewWindow window body =
+    let
+        -- 次の一歩はウィンドウの下端に常設する。本体だけスクロールさせて、
+        -- 主役のボタンを探しに行かせない(カード一覧の確認バーと同じ作法)
+        footerRow =
+            if List.isEmpty window.footer then
+                []
+
+            else
+                [ div [ HA.class "sketch-window-footer shrink-0 border-t border-edge px-3 py-2" ]
+                    window.footer
+                ]
+    in
     div [ HA.class "sketch-window-layer fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" ]
-        [ div [ HA.class "sketch-window flex max-h-[92vh] max-w-[min(96vw,64rem)] flex-col rounded-lg border border-edge bg-panel shadow-2xl" ]
-            [ div [ HA.class "flex items-center gap-2 border-b border-edge px-3 py-2" ]
+        [ div [ HA.class "sketch-window flex max-h-[92vh] w-[80vw] max-w-[96vw] flex-col rounded-lg border border-edge bg-panel shadow-2xl" ]
+            ([ div [ HA.class "flex items-center gap-2 border-b border-edge px-3 py-2" ]
                 [ span [ HA.class "text-xs font-semibold text-ink" ] [ text window.title ]
                 , span [ HA.class "text-[10px] text-ink-faint" ] [ text window.hint ]
                 , span [ HA.class "flex-1" ] []
@@ -1996,8 +2103,10 @@ viewWindow window body =
                         button [ HA.class "sketch-window-close btn btn-mini", HA.disabled True ]
                             [ text "✕ 閉じる" ]
                 ]
-            , div [ HA.class "min-h-0 flex-1 overflow-auto p-3" ] body
-            ]
+             , div [ HA.class "min-h-0 flex-1 overflow-auto p-3" ] body
+             ]
+                ++ footerRow
+            )
         ]
 
 
@@ -2014,6 +2123,7 @@ inlineParts model =
     List.concat
         [ [ viewPresets model
           , viewCamera model
+          , viewFidelity model
           , viewChips model
           ]
         , viewChipEditor model
@@ -2030,7 +2140,7 @@ inlineParts model =
 viewPresets : Model -> Html Msg
 viewPresets model =
     div [ HA.class "mb-2 flex items-center gap-1.5" ]
-        (span [ HA.class "text-[10px] text-ink-faint" ] [ text "はじめの品揃え:" ]
+        (span [ HA.class "text-[10px] text-ink-faint" ] [ text "プリセット:" ]
             :: List.map
                 (\preset ->
                     button
@@ -2255,37 +2365,108 @@ undoGlyph =
         ]
 
 
-{-| カメラ選び。普段はチップ 1 枚に畳む — 一覧を常に開くと
-塗り場より先に絵柄ボタンが場所を取ってしまうため。
+{-| カメラ選び。絵柄は常に見せる — どちらも塗る前に決める物なので、
+畳むと「決められる」こと自体が見えない。
 -}
 viewCamera : Model -> Html Msg
 viewCamera model =
     div [ HA.class "mb-2" ]
-        (button
-            [ HA.class "sketch-camera-toggle cursor-pointer rounded-full border border-edge px-2.5 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
-            , HE.onClick CameraToggled
-            ]
+        [ div [ HA.class "text-[11px] text-ink-soft" ]
             [ text "カメラ: "
             , span [ HA.class "text-accent" ] [ text (cameraLabel model.camera) ]
-            , text
-                (if model.cameraOpen then
-                    " ▴"
-
-                 else
-                    " ▾"
-                )
             ]
-            :: (if model.cameraOpen then
-                    [ div [ HA.class "sketch-camera-list mt-1.5 flex flex-wrap gap-1.5 rounded border border-edge bg-black/20 p-2" ]
-                        ([ TopDown, SideView, Quarter, Behind, FirstPerson, NoAngle ]
-                            |> List.map (viewCameraOption model.camera)
-                        )
+        , div [ HA.class "sketch-camera-list mt-1.5 flex flex-wrap gap-1.5 rounded border border-edge bg-black/20 p-2" ]
+            ([ TopDown, SideView, Quarter, Behind, FirstPerson, NoAngle ]
+                |> List.map (viewCameraOption model.camera)
+            )
+        ]
+
+
+{-| 再現度選び。カメラと同じ姿にそろえる — どちらも「絵に対する人の意図」で、
+スライダーだと 4 段の違いが数の大小にしか見えず、何が変わるか読めない。
+-}
+viewFidelity : Model -> Html Msg
+viewFidelity model =
+    div [ HA.class "mb-2" ]
+        [ div [ HA.class "text-[11px] text-ink-soft" ]
+            [ text "再現度: "
+            , span [ HA.class "text-accent" ] [ text (fidelityLabel model.fidelity) ]
+            ]
+        , div [ HA.class "sketch-fidelity-list mt-1.5 flex flex-wrap gap-1.5 rounded border border-edge bg-black/20 p-2" ]
+            ([ 1, 2, 3, 4 ] |> List.map (viewFidelityOption model.fidelity))
+        ]
+
+
+viewFidelityOption : Int -> Int -> Html Msg
+viewFidelityOption chosen level =
+    button
+        [ HA.class
+            (if chosen == level then
+                "sketch-fidelity-option flex cursor-pointer flex-col items-center gap-0.5 rounded border border-accent bg-accent/10 px-2 py-1.5"
+
+             else
+                "sketch-fidelity-option flex cursor-pointer flex-col items-center gap-0.5 rounded border border-edge px-2 py-1.5 hover:border-ink-faint"
+            )
+        , HE.onClick (FidelityPicked level)
+        ]
+        [ fidelityGlyph level
+        , span [ HA.class "text-[11px] text-ink" ] [ text (fidelityLabel level) ]
+        , span [ HA.class "text-[9px] text-ink-faint" ] [ text (fidelityHint level) ]
+        ]
+
+
+fidelityHint : Int -> String
+fidelityHint level =
+    case level of
+        2 ->
+            "どの辺にあるか"
+
+        3 ->
+            "配置と大きさ"
+
+        4 ->
+            "セル単位"
+
+        _ ->
+            "雰囲気だけ"
+
+
+{-| 再現度の絵柄。同じ 1 枚の絵が、段が上がるほど細かく写し取られていく様子を
+四角の数で見せる(画像を持たないのは、色テーマに CSS だけで追随させるため)。
+-}
+fidelityGlyph : Int -> Html msg
+fidelityGlyph level =
+    let
+        cell size place =
+            div [ HA.class ("absolute bg-accent/70 " ++ size ++ " " ++ place) ] []
+    in
+    div [ HA.class "flex h-9 w-11 items-center justify-center" ]
+        [ div [ HA.class "relative h-6 w-8 rounded-[2px] border border-ink-soft/40 overflow-hidden" ]
+            (case level of
+                2 ->
+                    [ cell "h-2.5 w-2.5" "left-1 top-1"
+                    , cell "h-2 w-3" "right-1 bottom-1"
                     ]
 
-                else
-                    []
-               )
-        )
+                3 ->
+                    [ cell "h-2 w-2" "left-1 top-1"
+                    , cell "h-1.5 w-2" "right-1.5 top-1.5"
+                    , cell "h-1.5 w-3" "left-1.5 bottom-1"
+                    ]
+
+                4 ->
+                    [ cell "h-1 w-1" "left-1 top-1"
+                    , cell "h-1 w-1" "left-2.5 top-1"
+                    , cell "h-1 w-1" "left-4 top-2"
+                    , cell "h-1 w-1" "left-1 bottom-1"
+                    , cell "h-1 w-1" "left-2.5 bottom-2"
+                    , cell "h-1 w-1" "right-1 bottom-1"
+                    ]
+
+                _ ->
+                    [ div [ HA.class "absolute inset-1 rounded-full bg-accent/40 blur-[2px]" ] [] ]
+            )
+        ]
 
 
 viewCameraOption : Camera -> Camera -> Html Msg
@@ -2525,10 +2706,11 @@ eyeGlyph visible =
         )
 
 
-{-| サイズバッジ + セルの大きさスライダー + グリッド + つまみ 6 つ。
+{-| サイズバッジ + セルの大きさスライダー + グリッド + つまみ 8 つ(四隅と各辺の中央)。
 つまみはグリッドの外周に重ねる(セルの中に置くと塗りの mousedown と
 取り合いになる)。グリッドはスクロール箱に入れる — セルを大きくしたり
-48x32 まで広げてもパネルがページを乗っ取らないように。
+48x32 まで広げてもパネルがページを乗っ取らないように。高さは画面比で取る
+(固定 px だと画面が大きくても余白が余り、スクロールだけ残る)。
 -}
 viewGridBlock : Model -> Html Msg
 viewGridBlock model =
@@ -2537,13 +2719,16 @@ viewGridBlock model =
             [ span
                 [ HA.class
                     (if model.resize /= Nothing then
-                        "sketch-size text-[10px] text-accent"
+                        "sketch-size flex items-center gap-1 text-[10px] text-accent"
 
                      else
-                        "sketch-size text-[10px] text-ink-faint"
+                        "sketch-size flex items-center gap-1 text-[10px] text-ink-faint"
                     )
                 ]
-                [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h ++ " — 端や角をつまんで広げる・縮める") ]
+                [ viewSizeInput "sketch-size-w" model.sizeDraft.w WidthTyped
+                , text "×"
+                , viewSizeInput "sketch-size-h" model.sizeDraft.h HeightTyped
+                ]
             , span [ HA.class "flex items-center gap-1.5 text-[10px] text-ink-faint" ]
                 [ text ("セル: " ++ String.fromInt model.cellPx ++ "px")
                 , Html.input
@@ -2556,33 +2741,67 @@ viewGridBlock model =
                     ]
                     []
                 ]
-            , span [ HA.class "flex items-center gap-1.5 text-[10px] text-ink-faint" ]
-                [ text ("再現度: " ++ fidelityLabel model.fidelity)
-                , Html.input
-                    [ HA.type_ "range"
-                    , HA.min "1"
-                    , HA.max "4"
-                    , HA.value (String.fromInt model.fidelity)
-                    , HA.class "sketch-fidelity w-24 cursor-pointer"
-                    , HE.onInput FidelityEdited
-                    ]
-                    []
-                ]
             ]
-        , div [ HA.class "max-h-96 max-w-full overflow-auto" ]
-            [ div [ HA.class "relative inline-block p-2" ]
-                [ viewGrid model
-                , viewHandle model RightEdge
-                , viewHandle model BottomEdge
-                , viewHandle model CornerEdge
-                , viewHandle model LeftEdge
-                , viewHandle model TopEdge
-                , viewHandle model TopLeftEdge
-                ]
+        , div [ HA.class "max-h-[62vh] max-w-full overflow-auto" ]
+            [ div [ HA.class "sketch-pad relative inline-block p-2" ]
+                (viewGrid model
+                    :: List.map (viewHandle model)
+                        [ TopLeftEdge
+                        , TopEdge
+                        , TopRightEdge
+                        , RightEdge
+                        , BottomRightEdge
+                        , BottomEdge
+                        , BottomLeftEdge
+                        , LeftEdge
+                        ]
+                )
             ]
+        , viewResizeBadge model
         ]
 
 
+{-| ドラッグ中だけカーソルの隣に出す寸法。左上のバッジまで目を動かさずに、
+いま何マスかが読める。位置は画面座標なので fixed で置く。
+-}
+viewResizeBadge : Model -> Html Msg
+viewResizeBadge model =
+    case model.resize of
+        Nothing ->
+            text ""
+
+        Just going ->
+            div
+                [ HA.class "sketch-resize-badge pointer-events-none fixed z-50 rounded border border-accent bg-black/80 px-1.5 py-0.5 text-[11px] text-ink"
+                , HA.style "left" (String.fromFloat (going.current.x + 14) ++ "px")
+                , HA.style "top" (String.fromFloat (going.current.y + 14) ++ "px")
+                ]
+                [ text (String.fromInt model.size.w ++ " × " ++ String.fromInt model.size.h) ]
+
+
+{-| 幅・高さの入力欄。2 桁(上限 75)が入るだけの幅にする — つまみで大まかに、
+数で正確に、と役割を分ける。
+-}
+viewSizeInput : String -> String -> (String -> Msg) -> Html Msg
+viewSizeInput marker draft toMsg =
+    Html.input
+        [ HA.type_ "number"
+        , HA.class (marker ++ " field h-5 w-11 px-1 text-center text-[10px]")
+        , HA.min (String.fromInt (min minSize.w minSize.h))
+        , HA.max (String.fromInt (max maxSize.w maxSize.h))
+        , HA.value draft
+        , HE.onInput toMsg
+        , HE.onBlur SizeBlurred
+        ]
+        []
+
+
+{-| つまみ 1 個。掴む所(外側)と見える印(内側)を分ける — 印を大きくすると絵が隠れ、
+掴む所を印と同じ大きさにすると狙いを外す。外側 16px・印 10px で、印は必ず
+グリッドの線の上に重なる(外側の中心 = 線の位置)。
+出し方(普段は消す・そのつまみの上に来た時だけ出す)は styles.css が持つ。
+掴む所は消えている間も生きている — 外周に入ればカーソルが変わり、そこで見つかる。
+-}
 viewHandle : Model -> Edge -> Html Msg
 viewHandle model edge =
     let
@@ -2592,35 +2811,38 @@ viewHandle model edge =
         ( marker, place ) =
             case edge of
                 RightEdge ->
-                    ( "sketch-resize-right", "absolute top-2 right-0 bottom-2 w-2 cursor-ew-resize rounded" )
+                    ( "sketch-resize-right", "top-4 right-0 bottom-4 w-4 cursor-ew-resize" )
 
                 BottomEdge ->
-                    ( "sketch-resize-bottom", "absolute bottom-0 left-2 right-2 h-2 cursor-ns-resize rounded" )
-
-                CornerEdge ->
-                    ( "sketch-resize-corner", "absolute bottom-0 right-0 h-2 w-2 cursor-nwse-resize rounded" )
+                    ( "sketch-resize-bottom", "bottom-0 left-4 right-4 h-4 cursor-ns-resize" )
 
                 LeftEdge ->
-                    ( "sketch-resize-left", "absolute top-2 left-0 bottom-2 w-2 cursor-ew-resize rounded" )
+                    ( "sketch-resize-left", "top-4 left-0 bottom-4 w-4 cursor-ew-resize" )
 
                 TopEdge ->
-                    ( "sketch-resize-top", "absolute top-0 left-2 right-2 h-2 cursor-ns-resize rounded" )
+                    ( "sketch-resize-top", "top-0 left-4 right-4 h-4 cursor-ns-resize" )
 
                 TopLeftEdge ->
-                    ( "sketch-resize-topleft", "absolute top-0 left-0 h-2 w-2 cursor-nwse-resize rounded" )
+                    ( "sketch-resize-topleft", "top-0 left-0 h-4 w-4 cursor-nwse-resize" )
+
+                TopRightEdge ->
+                    ( "sketch-resize-topright", "top-0 right-0 h-4 w-4 cursor-nesw-resize" )
+
+                BottomRightEdge ->
+                    ( "sketch-resize-bottomright", "bottom-0 right-0 h-4 w-4 cursor-nwse-resize" )
+
+                BottomLeftEdge ->
+                    ( "sketch-resize-bottomleft", "bottom-0 left-0 h-4 w-4 cursor-nesw-resize" )
 
         tone =
             if dragging then
-                " bg-accent/40"
-
-            else if edge == CornerEdge || edge == TopLeftEdge then
-                " bg-white/10 hover:bg-accent/40"
+                "is-dragging bg-accent"
 
             else
-                " bg-white/5 hover:bg-accent/40"
+                "bg-ink"
     in
     div
-        [ HA.class (marker ++ " " ++ place ++ tone)
+        [ HA.class ("sketch-handle absolute flex items-center justify-center " ++ marker ++ " " ++ place)
         , HE.custom "mousedown"
             (D.map2
                 (\x y -> { message = ResizeStarted edge { x = x, y = y }, stopPropagation = True, preventDefault = True })
@@ -2628,7 +2850,7 @@ viewHandle model edge =
                 (D.field "clientY" D.float)
             )
         ]
-        []
+        [ div [ HA.class ("sketch-handle-mark h-2.5 w-2.5 rounded-[2px] border border-accent " ++ tone) ] [] ]
 
 
 viewGrid : Model -> Html Msg
@@ -2739,6 +2961,21 @@ viewNote model =
             , HE.onInput NoteEdited
             ]
             []
+        ]
+
+
+{-| 閉じてよいかの確認。フッターに出す — 閉じる釦のすぐ下で、
+本体をスクロールしなくても答えられる位置。
+-}
+viewCloseConfirm : Html Msg
+viewCloseConfirm =
+    div [ HA.class "sketch-close-confirm flex flex-wrap items-center gap-2" ]
+        [ span [ HA.class "text-[11px] text-ink" ]
+            [ text "保存していない変更があります。閉じますか？" ]
+        , button [ HA.class "sketch-close-yes btn btn-danger", HE.onClick ToggleOpen ]
+            [ text "閉じる" ]
+        , button [ HA.class "sketch-close-no btn btn-ghost", HE.onClick CloseCancelled ]
+            [ text "やめる" ]
         ]
 
 

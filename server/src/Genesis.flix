@@ -107,7 +107,7 @@ mod Genesis {
 
     /// GET /prompt/genesis?genre=…&world=…&hero=…&essence=…(&direction=… は free 用)。
     /// ジャンルは必須。free だけは direction (どんなゲームかの言葉) が必須。
-    /// world/hero/essence は空なら例文プレースホルダのまま出す — 依頼文は
+    /// world/hero/essence は空なら例文プレースホルダのまま出す — プロンプトは
     /// ユーザーが書き換える前提の下書きなので、空欄でも 200 で返す。
     pub def promptJson(params: Map[String, String]): (Int32, Json) =
         match Map.get("genre", params) {

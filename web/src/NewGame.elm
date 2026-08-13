@@ -1,5 +1,5 @@
 module NewGame exposing
-    ( Family
+    ( Genre
     , LogResult(..)
     , Model
     , Msg(..)
@@ -7,21 +7,23 @@ module NewGame exposing
     , Phase(..)
     , accepted
     , buildSketchPrompt
+    , canCreate
+    , canCreateSketch
     , createFailed
-    , familiesDecoder
-    , familiesUnavailable
+    , genresDecoder
+    , genresUnavailable
     , genesisPromptFailed
-    , gotFamilies
+    , gotGenres
     , gotGenesisPrompt
     , gotLog
     , init
     , isPolling
     , logDecoder
     , nameError
-    , selectedFamily
+    , selectedGenre
     , shownError
     , shownGenesisPrompt
-    , sketchFamilyId
+    , sketchGenreId
     , sketchResizeActive
     , sketchStrokeActive
     , sketchWindowOpen
@@ -32,7 +34,7 @@ module NewGame exposing
 
 {-| 「＋ 新しいゲームをはじめる」— プロジェクトピッカーからのまっさら開始。
 
-まっさらな画面は作らない: 入口は GET /genesis/families の 9 ジャンル(並びは
+まっさらな画面は作らない: 入口は GET /genesis/genres の 9 ジャンル(並びは
 人気順 — サーバの順のまま表示する)。starter 持ちのジャンルは既存の作成フロー
 (名前入力 → POST /projects/new)へ、starter 無しは GET /prompt/genesis の
 公式プロンプト(編集可)を差し出す。フリージャンルだけは「どんなゲーム?」の
@@ -45,12 +47,12 @@ module NewGame exposing
 送りたい事は update の戻り値 Out で Main へ返す(Atelier / Journey と同じ流儀)。
 
 POST /projects/new(202)→ GET /projects/new/log を 2 秒毎に回す
-(ゲーム起動と同じ進捗ミニパネルの作法)。exitCode 0 で誕生 —
+(ゲーム起動と同じ進捗ミニパネルの作法)。exitCode 0 で作成 —
 Main が /projects を取り直し、できたプロジェクトを既存の選択フローで開く。
 失敗の時だけはログを隠さない(自動で全文展開)。
 
 エンドポイント未実装のサーバ(404)は「準備中」に倒す(fail-open —
-ピッカーの既存機能はそのまま生きる)。/genesis/families が無い旧サーバでは
+ピッカーの既存機能はそのまま生きる)。/genesis/genres が無い旧サーバでは
 従来のプリセット(w/h)入力に倒す。
 
 -}
@@ -65,9 +67,9 @@ import SketchPad
 
 {-| つくりの進み。Creating の間だけ Main がログのポーリングを回す。
 
-sketch(ラフ発かどうか)は送信の瞬間に焼き込む — 誕生の知らせが届いた時の
-選択中のカード(family)で判定すると、待っている間に他のカードへ移っただけで
-誕生の扱いを取り違えるため。
+sketch(ラフ発かどうか)は送信の瞬間に焼き込む — 作成の知らせが届いた時の
+選択中のカード(genre)で判定すると、待っている間に他のカードへ移っただけで
+作成の扱いを取り違えるため。
 
 -}
 type Phase
@@ -76,8 +78,8 @@ type Phase
     | Failed { lines : List String }
 
 
-{-| ジャンル 1 枚。starter が非空 = 公式テンプレートつき(複製でそのまま生まれる)。 -}
-type alias Family =
+{-| ジャンル 1 枚。starter が非空 = 公式テンプレートつき(複製でそのまま作れる)。 -}
+type alias Genre =
     { id : String
     , name : String
     , verb : String
@@ -90,11 +92,11 @@ type alias Family =
 {-| ジャンル一覧の取り寄せの進み。Unavailable(旧サーバの 404 等)は従来の
 プリセット入力に倒す(fail-open — 作れなくはならない)。
 -}
-type Families
-    = FamiliesNotAsked
-    | FamiliesLoading
-    | FamiliesReady (List Family)
-    | FamiliesUnavailable
+type Genres
+    = GenresNotAsked
+    | GenresLoading
+    | GenresReady (List Genre)
+    | GenresUnavailable
 
 
 {-| 公式プロンプト(GET /prompt/genesis)の進み。Ready の中身は編集可 —
@@ -117,7 +119,7 @@ type alias Model =
     , h : String
     , phase : Phase
 
-    -- 202 応答が教えてくれる「産まれるゲームの絶対パス」。誕生時の自動選択は
+    -- 202 応答が教えてくれる「作成されるゲームの絶対パス」。作成時の自動選択は
     -- これを使う(ログの target は make のターゲット名で、dir ではない)。
     -- 旧サーバは dir を返さない = Nothing(/projects 再取得だけに倒す fail-open)
     , dir : Maybe String
@@ -128,9 +130,9 @@ type alias Model =
     -- 送信前検証・サーバ 400/409 の理由(日本語)をボタンの近くに出す
     , error : Maybe String
 
-    -- ジャンルえらび(GET /genesis/families)。初回に開いた時だけ取り寄せる
-    , families : Families
-    , family : Maybe String
+    -- ジャンルえらび(GET /genesis/genres)。初回に開いた時だけ取り寄せる
+    , genres : Genres
+    , genre : Maybe String
 
     -- フリージャンルの「どんなゲーム?」(必須)
     , freeDirection : String
@@ -142,15 +144,11 @@ type alias Model =
     -- ラフのカード(画面のラフから)の塗り。ゲームの Doc ではないのでここが元データ
     , sketch : SketchPad.Model
 
-    -- ラフのカードの「伝えたいこと(任意)」。絵にできない事(雰囲気・ルールの種)を
-    -- 言葉で添える口。空なら依頼文に節ごと出さない
-    , sketchNote : String
-
-    -- ラフのカードの誕生情報(作られた先と合成済みの依頼文)。genesisPrompt とは別に
-    -- 持つ — 誕生後に他のカードを見て回ると genesisPrompt はそのカードの下書きに
+    -- ラフのカードの作成の結果(作られた先と合成済みのプロンプト)。genesisPrompt とは別に
+    -- 持つ — 作成後に他のカードを見て回ると genesisPrompt はそのカードの下書きに
     -- 変わるので、そこに合成文を置くと行き来しただけで失われるため。
-    -- prompt が空 = 公式文もラフの節も無いまま産まれた(取り直し待ち)
-    , born : Maybe { dir : Maybe String, prompt : String }
+    -- prompt が空 = 公式文もラフの節も無いまま作成された(取り直し待ち)
+    , created : Maybe { dir : Maybe String, prompt : String }
     }
 
 
@@ -165,22 +163,21 @@ init =
     , dir = Nothing
     , logExpanded = False
     , error = Nothing
-    , families = FamiliesNotAsked
-    , family = Nothing
+    , genres = GenresNotAsked
+    , genre = Nothing
     , freeDirection = ""
     , genesisPrompt = GenesisIdle
     , genesisCopied = False
     , sketch = SketchPad.init
-    , sketchNote = ""
-    , born = Nothing
+    , created = Nothing
     }
 
 
-{-| ラフのカードのローカル id。サーバの families には無い名前を使う
+{-| ラフのカードのローカル id。サーバの genres には無い名前を使う
 (サーバ側のカードと取り違えない)。
 -}
-sketchFamilyId : String
-sketchFamilyId =
+sketchGenreId : String
+sketchGenreId =
     "sketch"
 
 
@@ -199,16 +196,15 @@ type Msg
     | HeightEdited String
     | CreateClicked
     | LogToggled
-    | FamilyChosen String
+    | GenreChosen String
     | FreeDirectionEdited String
     | FreePromptRequested
     | GenesisPromptEdited String
     | CopyGenesisPromptClicked
     | SketchMsg SketchPad.Msg
-    | SketchNoteEdited String
-    | OpenBornClicked
-    | BornPromptEdited String
-    | BornRetryClicked
+    | OpenCreatedClicked
+    | CreatedPromptEdited String
+    | CreatedRetryClicked
     | SketchRestartClicked
     | SketchClosed
 
@@ -217,8 +213,8 @@ type Msg
 type Out
     = OutNone
     | OutCreate { name : String, title : String, w : Int, h : Int, starter : String }
-    | OutFetchFamilies
-    | OutFetchGenesisPrompt { family : String, direction : String }
+    | OutFetchGenres
+    | OutFetchGenesisPrompt { genre : String, direction : String }
     | OutCopyPrompt String
     | OutToast String
     | OutCopyPromptAndOpen { dir : String, prompt : String, sketchFile : { path : String, content : String } }
@@ -228,51 +224,51 @@ update : Msg -> Model -> ( Model, Out )
 update msg model =
     case msg of
         Toggled ->
-            if not model.open && model.families == FamiliesNotAsked then
+            if not model.open && model.genres == GenresNotAsked then
                 -- 初めて開いた時だけジャンル一覧を取り寄せる(404 はプリセットに倒す)
-                ( { model | open = True, families = FamiliesLoading }, OutFetchFamilies )
+                ( { model | open = True, genres = GenresLoading }, OutFetchGenres )
 
             else
                 ( { model | open = not model.open }, OutNone )
 
-        FamilyChosen id ->
+        GenreChosen id ->
             if isPolling model then
-                -- つくっている最中のカードの選び直しは受けない — 押したカードを誕生の扱いに
+                -- つくっている最中のカードの選び直しは受けない — 押したカードを作成の扱いに
                 -- 混ぜてしまう事故(ラフ発なのに自動で飛ぶ等)を入口で断つ
                 ( model, OutNone )
 
             else
             let
-                -- born(誕生情報)はここで消さない — 他のカードを見て回って戻った時に
-                -- 合成依頼文ごと失われ、作り直し(同名 409)へ誘い込むため
+                -- created(作成の結果)はここで消さない — 他のカードを見て回って戻った時に
+                -- 合成プロンプトごと失われ、作り直し(同名 409)へ誘い込むため
                 m1 =
-                    { model | family = Just id, error = Nothing, genesisCopied = False }
+                    { model | genre = Just id, error = Nothing, genesisCopied = False }
             in
-            if id == sketchFamilyId then
-                case model.born of
+            if id == sketchGenreId then
+                case model.created of
                     Just _ ->
-                        -- 誕生済みなら誕生画面へ戻すだけ。blank を取り直すと
+                        -- 作成済みなら作成画面へ戻すだけ。blank を取り直すと
                         -- 合成前の土台で画面が巻き戻ってしまう
                         ( m1, OutNone )
 
                     Nothing ->
-                        -- 依頼文の土台(blank の公式文)は選んだ足で裏に取り寄せておく
-                        -- (誕生の後に取りに行くと、そこで人を待たせてしまう)
+                        -- プロンプトの土台(blank の公式文)は選んだ足で裏に取り寄せておく
+                        -- (作成の後に取りに行くと、そこで人を待たせてしまう)
                         ( { m1 | genesisPrompt = GenesisLoading }
-                        , OutFetchGenesisPrompt { family = "blank", direction = "" }
+                        , OutFetchGenesisPrompt { genre = "blank", direction = "" }
                         )
 
             else
-            case selectedFamily { m1 | family = Just id } of
-                Just family ->
-                    if family.starter /= "" || family.id == "free" then
+            case selectedGenre { m1 | genre = Just id } of
+                Just genre ->
+                    if genre.starter /= "" || genre.id == "free" then
                         -- テンプレートつきは名前入力へ、free は言葉(direction)を待つ
                         ( { m1 | genesisPrompt = GenesisIdle }, OutNone )
 
                     else
                         -- starter 無し: 選んだ瞬間に公式プロンプトを取りに行く
                         ( { m1 | genesisPrompt = GenesisLoading }
-                        , OutFetchGenesisPrompt { family = id, direction = "" }
+                        , OutFetchGenesisPrompt { genre = id, direction = "" }
                         )
 
                 Nothing ->
@@ -294,7 +290,7 @@ update msg model =
 
                     direction ->
                         ( { model | genesisPrompt = GenesisLoading, genesisCopied = False }
-                        , OutFetchGenesisPrompt { family = "free", direction = direction }
+                        , OutFetchGenesisPrompt { genre = "free", direction = direction }
                         )
 
         GenesisPromptEdited text_ ->
@@ -313,33 +309,32 @@ update msg model =
                 _ ->
                     ( model, OutNone )
 
-        BornPromptEdited text_ ->
-            case model.born of
-                Just born ->
-                    ( { model | born = Just { born | prompt = text_ } }, OutNone )
+        CreatedPromptEdited text_ ->
+            case model.created of
+                Just created ->
+                    ( { model | created = Just { created | prompt = text_ } }, OutNone )
 
                 Nothing ->
                     ( model, OutNone )
 
-        BornRetryClicked ->
-            -- 空の依頼文で産まれた時の取り直し。届いたら gotGenesisPrompt が
-            -- ラフと合成し直して born.prompt を埋める
+        CreatedRetryClicked ->
+            -- 空のプロンプトで作成された時の取り直し。届いたら gotGenesisPrompt が
+            -- ラフと合成し直して created.prompt を埋める
             ( { model | genesisPrompt = GenesisLoading }
-            , OutFetchGenesisPrompt { family = "blank", direction = "" }
+            , OutFetchGenesisPrompt { genre = "blank", direction = "" }
             )
 
         SketchRestartClicked ->
-            -- ここでだけ誕生状態を捨てる — カードの行き来では消さない約束の唯一の例外。
+            -- ここでだけ作成状態を捨てる — カードの行き来では消さない約束の唯一の例外。
             -- 「新しいラフでもう一度」は人の明示の意思なので、塗りごと白紙に戻す
             ( { model
                 | sketch = SketchPad.init
-                , sketchNote = ""
-                , born = Nothing
+                , created = Nothing
                 , dir = Nothing
                 , genesisCopied = False
                 , genesisPrompt = GenesisLoading
               }
-            , OutFetchGenesisPrompt { family = "blank", direction = "" }
+            , OutFetchGenesisPrompt { genre = "blank", direction = "" }
             )
 
         NameEdited text_ ->
@@ -392,19 +387,16 @@ update msg model =
                 ( model, OutNone )
 
             else
-                -- 外すのは選択だけ。塗り・補足・誕生情報は残すので、開き直せば続きから
-                ( { model | family = Nothing }, OutNone )
+                -- 外すのは選択だけ。塗り・補足・作成の結果は残すので、開き直せば続きから
+                ( { model | genre = Nothing }, OutNone )
 
-        SketchNoteEdited text_ ->
-            ( { model | sketchNote = text_ }, OutNone )
-
-        OpenBornClicked ->
-            case model.born of
-                Just born ->
-                    case ( born.dir, born.prompt ) of
+        OpenCreatedClicked ->
+            case model.created of
+                Just created ->
+                    case ( created.dir, created.prompt ) of
                         ( Just dir, prompt ) ->
                             if prompt == "" then
-                                -- 空の依頼文をコピーさせない(取り直しの導線が出ている)
+                                -- 空のプロンプトをコピーさせない(取り直しの導線が出ている)
                                 ( model, OutNone )
 
                             else
@@ -439,7 +431,7 @@ submit model =
             String.trim model.name
 
         sketchMode =
-            model.family == Just sketchFamilyId
+            model.genre == Just sketchGenreId
 
         size =
             if sketchMode then
@@ -458,7 +450,7 @@ submit model =
                         )
     in
     if name == "" then
-        ( { model | error = Just "なまえを入れてください(半角の小文字)" }, OutNone )
+        ( { model | error = Just "フォルダ名を入れてください(半角の小文字)" }, OutNone )
 
     else
         case nameError name of
@@ -474,7 +466,7 @@ submit model =
                             sketchStarter
 
                         else
-                            selectedFamily model
+                            selectedGenre model
                                 |> Maybe.map .starter
                                 |> Maybe.withDefault ""
                 in
@@ -523,7 +515,26 @@ isValidName name =
             False
 
 
-{-| いま画面に出ている失敗の理由(テストの覗き窓)。 -}
+{-| つくれる状態か。フォルダ名とタイトルが埋まって規則に合うまでは押させない —
+押してから「入れてください」と言うより、押せない形で先に見せる。
+-}
+canCreate : Model -> Bool
+canCreate model =
+    not (isPolling model)
+        && model.name /= ""
+        && nameError model.name == Nothing
+        && String.trim model.title /= ""
+
+
+{-| ラフのカードでつくれる状態か。1 マスも塗らずに作れると、できあがる物が
+「まっさら」のカードと同じになり、カードの名前と食い違う。
+-}
+canCreateSketch : Model -> Bool
+canCreateSketch model =
+    canCreate model && SketchPad.promptSection model.sketch /= Nothing
+
+
+{-| いま画面に出ている失敗の理由(テストが読む値)。 -}
 shownError : Model -> Maybe String
 shownError model =
     model.error
@@ -541,45 +552,45 @@ unavailable model =
     { model | phase = Idle, error = Just "この機能はまだ準備中です(サーバが古い可能性があります)" }
 
 
-{-| GET /genesis/families 成功。並びはサーバの順のまま(人気順が仕様)。 -}
-gotFamilies : List Family -> Model -> Model
-gotFamilies families model =
-    { model | families = FamiliesReady families }
+{-| GET /genesis/genres 成功。並びはサーバの順のまま(人気順が仕様)。 -}
+gotGenres : List Genre -> Model -> Model
+gotGenres genres model =
+    { model | genres = GenresReady genres }
 
 
-{-| /genesis/families が無い・読めない(旧サーバ)。従来のプリセット入力に
+{-| /genesis/genres が無い・読めない(旧サーバ)。従来のプリセット入力に
 倒す(fail-open — 新しいゲームは作れなくならない)。
 -}
-familiesUnavailable : Model -> Model
-familiesUnavailable model =
-    { model | families = FamiliesUnavailable }
+genresUnavailable : Model -> Model
+genresUnavailable model =
+    { model | genres = GenresUnavailable }
 
 
 {-| GET /prompt/genesis 成功。届いた下書きは編集可になる。
 
-誕生画面(ラフのカードで born あり)に居る間の門番:
-遅れて届いた応答で合成依頼文を黙って上書きしない。人がクイック編集した文が
-音もなく消える事故を防ぐ。例外は born.prompt が空の時だけ — それは
+作成画面(ラフのカードで created あり)に居る間の門番:
+遅れて届いた応答で合成プロンプトを黙って上書きしない。人がクイック編集した文が
+音もなく消える事故を防ぐ。例外は created.prompt が空の時だけ — それは
 「取り直し待ち」なので、届いた土台をラフと合成し直して埋める。
 
 -}
 gotGenesisPrompt : String -> Model -> Model
 gotGenesisPrompt prompt model =
-    case model.born of
-        Just born ->
-            if model.family == Just sketchFamilyId then
-                if born.prompt == "" then
+    case model.created of
+        Just created ->
+            if model.genre == Just sketchGenreId then
+                if created.prompt == "" then
                     let
                         m1 =
                             { model | genesisPrompt = GenesisReady prompt }
                     in
-                    { m1 | born = Just { born | prompt = buildSketchPrompt m1 } }
+                    { m1 | created = Just { created | prompt = buildSketchPrompt m1 } }
 
                 else
                     model
 
             else
-                -- 他のカードを見ている間の応答はそのカードの下書き(合成文は born が守る)
+                -- 他のカードを見ている間の応答はそのカードの下書き(合成文は created が守る)
                 { model | genesisPrompt = GenesisReady prompt, genesisCopied = False }
 
         Nothing ->
@@ -592,19 +603,19 @@ genesisPromptFailed message model =
     { model | genesisPrompt = GenesisFailed (cleanReason message) }
 
 
-{-| いま画面の下書きに映っている依頼文(テストの覗き窓)。
-ラフのカードの誕生画面では合成済みの born.prompt が映っている(空は取り直し導線)。
+{-| いま画面の下書きに映っているプロンプト(テストが読む値)。
+ラフのカードの作成画面では合成済みの created.prompt が映っている(空は取り直し導線)。
 -}
 shownGenesisPrompt : Model -> Maybe String
 shownGenesisPrompt model =
-    case model.born of
-        Just born ->
-            if model.family == Just sketchFamilyId then
-                if born.prompt == "" then
+    case model.created of
+        Just created ->
+            if model.genre == Just sketchGenreId then
+                if created.prompt == "" then
                     Nothing
 
                 else
-                    Just born.prompt
+                    Just created.prompt
 
             else
                 shownDraftPrompt model
@@ -624,25 +635,25 @@ shownDraftPrompt model =
 
 
 {-| いま選んでいるジャンルのカード。 -}
-selectedFamily : Model -> Maybe Family
-selectedFamily model =
-    case ( model.families, model.family ) of
-        ( FamiliesReady families, Just id ) ->
-            List.head (List.filter (\f -> f.id == id) families)
+selectedGenre : Model -> Maybe Genre
+selectedGenre model =
+    case ( model.genres, model.genre ) of
+        ( GenresReady genres, Just id ) ->
+            List.head (List.filter (\f -> f.id == id) genres)
 
         _ ->
             Nothing
 
 
-{-| GET /genesis/families。id 以外の欠けは空文字に倒す(fail-open)。 -}
-familiesDecoder : D.Decoder (List Family)
-familiesDecoder =
-    D.field "families" (D.list familyDecoder)
+{-| GET /genesis/genres。id 以外の欠けは空文字に倒す(fail-open)。 -}
+genresDecoder : D.Decoder (List Genre)
+genresDecoder =
+    D.field "genres" (D.list genreDecoder)
 
 
-familyDecoder : D.Decoder Family
-familyDecoder =
-    D.map6 Family
+genreDecoder : D.Decoder Genre
+genreDecoder =
+    D.map6 Genre
         (D.field "id" D.string)
         (stringOr "name")
         (stringOr "verb")
@@ -671,8 +682,8 @@ cleanReason message =
             message
 
 
-{-| POST /projects/new の 202 応答。dir(産まれるゲームの絶対パス)を覚える。
-旧サーバは dir を返さない = Nothing のまま(誕生時は /projects 再取得だけ)。
+{-| POST /projects/new の 202 応答。dir(作成されるゲームの絶対パス)を覚える。
+旧サーバは dir を返さない = Nothing のまま(作成時は /projects 再取得だけ)。
 -}
 accepted : Maybe String -> Model -> Model
 accepted dir model =
@@ -698,14 +709,14 @@ type alias Log =
 
 
 {-| ログの流し込み。つくり待ちの間だけ意味を持つ(古い応答は無視)。
-exitCode 0 = 誕生(Main が /projects を取り直し、202 で覚えた dir を開く。
+exitCode 0 = 作成(Main が /projects を取り直し、202 で覚えた dir を開く。
 dir 不明の旧サーバは Nothing — 取り直しだけに倒す)。
 失敗の時だけはログを隠さない(自動で全文展開)。
 -}
 type LogResult
     = LogContinue
     | LogSuccess { dir : Maybe String }
-    | LogSketchBorn
+    | LogSketchCreated
     | LogFailure
 
 
@@ -720,20 +731,20 @@ gotLog log model =
                 case log.exitCode of
                     Just 0 ->
                         -- ラフ発かは phase に焼き込んだ印で見る — 今選んでいるカードで見ると、
-                        -- 待ち中に他のカードを眺めただけで誕生の扱いを取り違える
+                        -- 待ち中に他のカードを眺めただけで作成の扱いを取り違える
                         if creating.sketch then
-                            -- ラフのカードはここで飛ばない — 依頼文を差し出したままにして、
+                            -- ラフのカードはここで飛ばない — プロンプトを差し出したままにして、
                             -- 開く(コピー)は人のひと押しに乗せる。
-                            -- 名前・題名はここで空に戻す — 残すと「もう一度うむ」で
+                            -- 名前・題名はここで空に戻す — 残すと「もう一度作成」で
                             -- 同名 409 へまっすぐ落ちるため
                             ( { model
                                 | phase = Idle
                                 , name = ""
                                 , title = ""
                                 , genesisCopied = False
-                                , born = Just { dir = model.dir, prompt = buildSketchPrompt model }
+                                , created = Just { dir = model.dir, prompt = buildSketchPrompt model }
                               }
-                            , LogSketchBorn
+                            , LogSketchCreated
                             )
 
                         else
@@ -754,10 +765,10 @@ gotLog log model =
             ( model, LogContinue )
 
 
-{-| ラフのカードの依頼文。並びは
+{-| ラフのカードのプロンプト。並びは
 公式文(「あなたの言葉」節は抜く) → ラフの節 → あなたから → インタビューの催促。
 
-世界・主人公・エッセンスの節は依頼文から外す — インタビュー後の会話で
+世界・主人公・エッセンスの節はプロンプトから外す — インタビュー後の会話で
 決める方が自然で、書きかけの例文を渡すと AI がそれを本気にするため。
 
 中身が何も無ければ空のまま — 空は「取り直し待ち」の印なので、
@@ -779,17 +790,9 @@ buildSketchPrompt model =
         section =
             SketchPad.promptSection model.sketch
 
-        note =
-            String.trim model.sketchNote
-
         parts =
             [ official
             , Maybe.withDefault "" section
-            , if note == "" then
-                ""
-
-              else
-                "あなたから: " ++ note
             ]
                 |> List.filter (\part -> part /= "")
     in
@@ -819,7 +822,7 @@ isYourWordsLine line =
 
 
 {-| インタビューの催促。/style-interview は AGENTS.md 経由の間接発火で、
-依頼文から始めると確実には起きないため明示で頼む。
+プロンプトから始めると確実には起きないため明示で頼む。
 カメラの一文はラフを塗った時だけ — 塗っていないラフの視点は人の意思ではないので、
 視点の質問を勝手に飛ばさせない。
 -}
@@ -858,10 +861,10 @@ sketchResizeActive model =
     SketchPad.resizeActive model.sketch
 
 
-{-| ラフを塗る窓が出ているか(Main がこの間だけ Esc を購読する)。 -}
+{-| ラフを塗るウィンドウが出ているか(Main がこの間だけ Esc を購読する)。 -}
 sketchWindowOpen : Model -> Bool
 sketchWindowOpen model =
-    model.open && model.family == Just sketchFamilyId
+    model.open && model.genre == Just sketchGenreId
 
 
 {-| GET /projects/new/log。欠けは既定値に倒す(fail-open)。 -}
@@ -919,15 +922,15 @@ view model =
 -}
 viewBody : Model -> List (Html Msg)
 viewBody model =
-    case model.families of
-        FamiliesReady families ->
-            viewGenesis families model
+    case model.genres of
+        GenresReady genres ->
+            viewGenesis genres model
 
-        FamiliesUnavailable ->
+        GenresUnavailable ->
             viewForm model
 
         _ ->
-            [ div [ HA.class "newgame-families-loading mt-2 text-[11px] text-ink-soft" ]
+            [ div [ HA.class "newgame-genres-loading mt-2 text-[11px] text-ink-soft" ]
                 [ text "⏳ ジャンルの一覧を取り寄せています…" ]
             ]
 
@@ -936,25 +939,22 @@ viewBody model =
 -- ジャンルえらび(genesis)
 
 
-viewGenesis : List Family -> Model -> List (Html Msg)
-viewGenesis families model =
+viewGenesis : List Genre -> Model -> List (Html Msg)
+viewGenesis genres model =
     [ div [ HA.class "mt-1 text-[11px] leading-relaxed text-ink-soft" ]
         [ text "まっさらな画面はありません。動くテンプレートから選ぶ — サイズも操作もテンプレートが決めてくれます(変えたい人は project.json を直接)。" ]
-    , div [ HA.class "mt-0.5 text-[10px] text-ink-faint" ]
-        [ text "並びは、昔の家庭用ゲーム機で人気だった順。" ]
-
     -- カード一覧は内側スクロール。確認バー(次の一歩)は下に常設 —
     -- 選ぶ前から、選んだ後に何が起きる場所かが見えている
-    , div [ HA.class "newgame-families mt-2 grid max-h-[38vh] grid-cols-2 gap-1.5 overflow-y-auto pr-1 md:grid-cols-3" ]
-        (viewSketchCard (isPolling model) model.family
-            :: List.map (viewFamilyCard (isPolling model) model.family) families
+    , div [ HA.class "newgame-genres mt-2 grid max-h-[38vh] grid-cols-2 gap-1.5 overflow-y-auto pr-1 md:grid-cols-3" ]
+        (viewSketchCard (isPolling model) model.genre
+            :: List.map (viewGenreCard (isPolling model) model.genre) genres
         )
     , div [ HA.class "newgame-confirm mt-3 border-t border-edge pt-3" ]
-        (case selectedFamily model of
+        (case selectedGenre model of
             Nothing ->
                 if sketchWindowOpen model then
                     [ div [ HA.class "text-[11px] text-ink-faint" ]
-                        [ text "🎨 ラフを塗る窓をひらいています" ]
+                        [ text "🎨 ラフを塗るウィンドウをひらいています" ]
                     ]
 
                 else
@@ -966,12 +966,12 @@ viewGenesis families model =
                         ]
                     ]
 
-            Just family ->
-                viewConfirm family model
+            Just genre ->
+                viewConfirm genre model
         )
     ]
         ++ (if sketchWindowOpen model then
-                -- 一覧と同じ幅の中では塗り場が潰れるので、窓へ浮かせて広さを取る
+                -- 一覧と同じ幅の中ではキャンバスが潰れるので、ウィンドウへ浮かせて広さを取る
                 [ SketchPad.viewWindow
                     { title = "🎨 画面のラフから"
                     , hint =
@@ -979,7 +979,7 @@ viewGenesis families model =
                             "つくり終わるまで閉じられません"
 
                         else
-                            "閉じるとカードの選択が外れます(塗った絵は残ります)"
+                            ""
 
                     -- つくっている間は閉じさせない — 選択が外れると、
                     -- つくり終わるまでカードを選び直せず進み具合が見えなくなる
@@ -989,8 +989,9 @@ viewGenesis families model =
 
                         else
                             Just SketchClosed
+                    , footer = (viewSketchConfirm model).footer
                     }
-                    (viewSketchConfirm model)
+                    (viewSketchConfirm model).body
                 ]
 
             else
@@ -998,46 +999,46 @@ viewGenesis families model =
            )
 
 
-{-| ラフのカード。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
+{-| ラフのカード。サーバの genres には無いローカルの特別席なので、絵は 🎨 で代える
 (リファレンス画像の顔を配るメカニクスに乗れない)。
 -}
 viewSketchCard : Bool -> Maybe String -> Html Msg
 viewSketchCard locked chosen =
     button
         [ HA.classList
-            [ ( "newgame-family newgame-family-sketch cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
-            , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just sketchFamilyId )
-            , ( "border-edge", chosen /= Just sketchFamilyId )
+            [ ( "newgame-genre newgame-genre-sketch cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
+            , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just sketchGenreId )
+            , ( "border-edge", chosen /= Just sketchGenreId )
             ]
 
         -- つくっている最中はカードの選び直しを受けない(update のゲートと二重の守り)
         , HA.disabled locked
-        , HE.onClick (FamilyChosen sketchFamilyId)
+        , HE.onClick (GenreChosen sketchGenreId)
         ]
         [ div [ HA.class "mb-1.5 flex w-full items-center justify-center rounded border border-edge/60 bg-black/20 py-2 text-3xl" ]
             [ text "🎨" ]
         , div [ HA.class "text-xs font-semibold text-ink" ] [ text "画面のラフから" ]
         , div [ HA.class "mt-0.5 text-[11px] text-ink-soft" ] [ text "画面の絵を描いて、それを土台にゲームを作ってもらう" ]
-        , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text "塗った絵とカメラ視点が、そのまま依頼文になります" ]
+        , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text "塗った絵とカメラ視点が、そのままプロンプトになります" ]
         ]
 
 
-viewFamilyCard : Bool -> Maybe String -> Family -> Html Msg
-viewFamilyCard locked chosen family =
+viewGenreCard : Bool -> Maybe String -> Genre -> Html Msg
+viewGenreCard locked chosen genre =
     button
         [ HA.classList
-            [ ( "newgame-family cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
-            , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just family.id )
-            , ( "border-edge", chosen /= Just family.id )
+            [ ( "newgame-genre cursor-pointer rounded-lg border p-2 text-left transition-colors hover:bg-white/5", True )
+            , ( "border-accent/70 ring-1 ring-accent/40", chosen == Just genre.id )
+            , ( "border-edge", chosen /= Just genre.id )
             ]
         , HA.disabled locked
-        , HE.onClick (FamilyChosen family.id)
+        , HE.onClick (GenreChosen genre.id)
         ]
         [ -- 公式テンプレートつきのジャンルは、その reference/title.png がカードの顔になる
           -- (サーバが配る。テンプレート無しのジャンルは絵なしのまま)
-          if family.starter /= "" then
+          if genre.starter /= "" then
             Html.img
-                [ HA.src ("/genesis/title?family=" ++ family.id)
+                [ HA.src ("/genesis/title?genre=" ++ genre.id)
                 , HA.alt ""
                 , HA.class "scene-shot mb-1.5 w-full rounded border border-edge/60"
                 ]
@@ -1045,35 +1046,35 @@ viewFamilyCard locked chosen family =
 
           else
             text ""
-        , div [ HA.class "text-xs font-semibold text-ink" ] [ text family.name ]
-        , div [ HA.class "mt-0.5 text-[11px] text-ink-soft" ] [ text family.verb ]
-        , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text ("含む: " ++ family.includes) ]
-        , div [ HA.class "mt-0.5 font-mono text-[10px] text-ink-faint" ] [ text ("操作: " ++ family.controls) ]
+        , div [ HA.class "text-xs font-semibold text-ink" ] [ text genre.name ]
+        , div [ HA.class "mt-0.5 text-[11px] text-ink-soft" ] [ text genre.verb ]
+        , div [ HA.class "mt-1 text-[10px] leading-relaxed text-ink-faint" ] [ text ("含む: " ++ genre.includes) ]
+        , div [ HA.class "mt-0.5 font-mono text-[10px] text-ink-faint" ] [ text ("操作: " ++ genre.controls) ]
         ]
 
 
 {-| 確認バーの中身(選んだジャンルの次の一歩)。 -}
-viewConfirm : Family -> Model -> List (Html Msg)
-viewConfirm family model =
-    if family.starter /= "" then
-        -- 公式テンプレートつき: 名前を決めて、テンプレートの複製で生まれる(既存フロー)
+viewConfirm : Genre -> Model -> List (Html Msg)
+viewConfirm genre model =
+    if genre.starter /= "" then
+        -- 公式テンプレートつき: 名前を決めて、テンプレートの複製で作られる(既存フロー)
         div [ HA.class "text-[11px] leading-relaxed text-ink-soft" ]
-            [ span [ HA.class "font-semibold text-ink" ] [ text family.name ]
+            [ span [ HA.class "font-semibold text-ink" ] [ text genre.name ]
             , text
-                (if family.id == "blank" then
-                    " — いちばん小さい骨組み(主人公を動かせるだけ)の複製から。名前を決めるだけで生まれます。"
+                (if genre.id == "blank" then
+                    " — いちばん小さい骨組み(主人公を動かせるだけ)の複製から。名前を決めるだけで作れます。"
 
                  else
-                    " — 公式テンプレートつき。名前を決めるだけで生まれます。"
+                    " — 公式テンプレートつき。名前を決めるだけで作れます。"
                 )
             ]
             :: viewStarterForm model
 
-    else if family.id == "free" then
-        viewFreeConfirm family model
+    else if genre.id == "free" then
+        viewFreeConfirm genre model
 
     else
-        viewPromptConfirm family model
+        viewPromptConfirm genre model
 
 
 {-| テンプレートつきジャンルの作成フォーム。サイズはテンプレートが決めるので聞かない
@@ -1085,7 +1086,7 @@ viewStarterForm model =
         ++ [ div [ HA.class "mt-3" ]
                 [ button
                     [ HA.class "btn btn-primary"
-                    , HA.disabled (isPolling model)
+                  , HA.disabled (not (canCreate model))
                     , HE.onClick CreateClicked
                     ]
                     [ text
@@ -1105,10 +1106,10 @@ viewStarterForm model =
 {-| なまえ・題名の入力(テンプレートのカードとラフのカードで同じ姿・同じ検証)。 -}
 viewNameTitle : Model -> List (Html Msg)
 viewNameTitle model =
-    [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
+    [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "フォルダ名" ]
     , input
         [ HA.class "field mt-1 w-full font-mono text-xs"
-        , HA.placeholder "半角の小文字の名前"
+        , HA.placeholder "[a-z][a-z0-9_]*"
         , HA.value model.name
         , HE.onInput NameEdited
         ]
@@ -1119,10 +1120,10 @@ viewNameTitle model =
 
         Nothing ->
             text ""
-    , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "題名" ]
+    , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "タイトル" ]
     , input
         [ HA.class "field mt-1 w-full text-xs"
-        , HA.placeholder "日本語でかまいません"
+        , HA.placeholder "ゲームタイトル"
         , HA.value model.title
         , HE.onInput TitleEdited
         ]
@@ -1130,90 +1131,94 @@ viewNameTitle model =
     ]
 
 
-{-| ラフのカードの次の一歩。誕生前は塗り場と名前、誕生後は依頼文の差し出し。 -}
-viewSketchConfirm : Model -> List (Html Msg)
+{-| ラフのウィンドウの中身。作成前はキャンバスと名前、作成後はプロンプトの差し出し。
+次の一歩(作成ボタン・押せない理由・進捗)は footer へ回す —
+キャンバスは縦に伸びるので、本体に置くとスクロールの下に隠れて見つからない。
+-}
+viewSketchConfirm : Model -> { body : List (Html Msg), footer : List (Html Msg) }
 viewSketchConfirm model =
-    case model.born of
-        Just born ->
-            viewSketchBorn born model
+    case model.created of
+        Just created ->
+            { body = viewSketchCreated created model, footer = [] }
 
         Nothing ->
             viewSketchDraw model
 
 
-viewSketchDraw : Model -> List (Html Msg)
+viewSketchDraw : Model -> { body : List (Html Msg), footer : List (Html Msg) }
 viewSketchDraw model =
-    [ div [ HA.class "newgame-sketch rounded-lg border border-edge bg-black/10 p-2" ]
-        [ Html.map SketchMsg (SketchPad.viewInline model.sketch) ]
+    -- キャンバスの広さに引きずられて入力欄まで横に伸びると、打った字が追いにくい
+    { body =
+        [ div [ HA.class "max-w-xl" ] (viewNameTitle model)
+        , div [ HA.class "newgame-sketch-lead mt-3 text-[11px] leading-relaxed text-ink-soft" ]
+            [ text "最初に作りたい画面やキャラクターなどをラフで描いてみましょう。AI が再現を手伝ってくれます。" ]
+        , div [ HA.class "newgame-sketch mt-2 rounded-lg border border-edge bg-black/10 p-2" ]
+            [ Html.map SketchMsg (SketchPad.viewInline model.sketch) ]
+        ]
+    , footer =
+        [ div [ HA.class "flex items-center gap-3" ]
+            [ button
+                [ HA.class "btn btn-primary"
+                , HA.disabled (not (canCreateSketch model))
+                , HE.onClick CreateClicked
+                ]
+                [ text
+                    (if isPolling model then
+                        "⏳ つくっています…"
 
-    -- 塗り場の広さに引きずられて入力欄まで横に伸びると、打った字が追いにくい
-    , div [ HA.class "mt-3 max-w-xl" ]
-        (viewNameTitle model
-            ++ [ -- 説明もプレースホルダも付けない — 例文を見せると、それに寄せた
-                 -- 言葉しか出てこなくなるため
-                 div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "伝えたいこと(任意)" ]
-               , Html.textarea
-                    [ HA.class "newgame-sketch-note field mt-1 h-auto w-full resize-y py-1.5 text-xs leading-relaxed"
-                    , HA.rows 3
-                    , HA.value model.sketchNote
-                    , HE.onInput SketchNoteEdited
-                    ]
-                    []
-               , div [ HA.class "mt-3" ]
-                    [ button
-                        [ HA.class "btn btn-primary"
-                        , HA.disabled (isPolling model || nameError model.name /= Nothing)
-                        , HE.onClick CreateClicked
-                        ]
-                        [ text
-                            (if isPolling model then
-                                "⏳ つくっています…"
+                     else
+                        "ラフを元に作成 →"
+                    )
+                ]
 
-                             else
-                                "この絵からうむ →"
-                            )
-                        ]
-                    ]
-               , viewCreateError model
-               ]
+            -- 押せない理由はボタンの隣に置く。別の場所に出すと、
+            -- 押せないボタンだけ見えて理由が探せない
+            , if canCreate model && not (canCreateSketch model) then
+                span [ HA.class "newgame-sketch-empty text-[11px] text-ink-faint" ]
+                    [ text "ラフを 1 マスでも塗ってください" ]
+
+              else
+                text ""
+            , div [ HA.class "min-w-0 flex-1" ] [ viewCreateError model ]
+            ]
+        ]
             ++ viewProgress model
-        )
-    ]
+    }
 
 
-{-| 誕生の後。依頼文は自動でコピーしない — 開くと画面が切り替わるので、
+{-| 作成の後。プロンプトは自動でコピーしない — 開くと画面が切り替わるので、
 コピー(と移動)は人のひと押しに乗せる。
 -}
-viewSketchBorn : { dir : Maybe String, prompt : String } -> Model -> List (Html Msg)
-viewSketchBorn born model =
-    [ div [ HA.class "newgame-sketch-born text-[11px] leading-relaxed text-ink-soft" ]
-        [ span [ HA.class "font-semibold text-ink" ] [ text "うまれました。" ] ]
+viewSketchCreated : { dir : Maybe String, prompt : String } -> Model -> List (Html Msg)
+viewSketchCreated created model =
+    [ div [ HA.class "newgame-sketch-created text-[11px] leading-relaxed text-ink-soft" ]
+        [ span [ HA.class "font-semibold text-ink" ] [ text "作成しました。" ] ]
     ]
-        ++ (if born.prompt == "" then
-                -- 空の依頼文はコピーさせない — 何も塗らず公式文も届いていない誕生。
+        ++ (if created.prompt == "" then
+                -- 空のプロンプトはコピーさせない — 何も塗らず公式文も届いていない作成。
                 -- コピー釦の代わりに取り直しの導線へ倒す
                 [ div [ HA.class "mt-2" ]
                     [ if model.genesisPrompt == GenesisLoading then
                         div [ HA.class "newgame-genesis-loading text-[11px] text-ink-soft" ]
-                            [ text "⏳ 依頼文を取り寄せています…" ]
+                            [ text "⏳ プロンプトを取り寄せています…" ]
 
                       else
-                        button [ HA.class "newgame-born-retry btn btn-primary w-full", HE.onClick BornRetryClicked ]
-                            [ text "依頼文を取得できませんでした — 取り直す" ]
+                        button [ HA.class "newgame-created-retry btn btn-primary w-full", HE.onClick CreatedRetryClicked ]
+                            [ text "プロンプトを取得できませんでした — 取り直す" ]
                     ]
                 ]
 
             else
-                [ viewPromptTextarea BornPromptEdited born.prompt
+                [ viewPromptTextarea CreatedPromptEdited created.prompt
                 , div [ HA.class "mt-2" ]
-                    [ button [ HA.class "newgame-sketch-open btn btn-primary w-full", HE.onClick OpenBornClicked ]
+                    [ button [ HA.class "newgame-sketch-open btn btn-primary w-full", HE.onClick OpenCreatedClicked ]
                         [ text
-                            (case ( model.genesisCopied, born.dir ) of
+                            (case ( model.genesisCopied, created.dir ) of
                                 ( True, Just _ ) ->
                                     "✓ コピーしました — 開いています…"
 
                                 ( False, Just _ ) ->
-                                    "📋 依頼文をコピーして開く →"
+                                    "📋 プロンプトをコピーして開く →"
 
                                 -- dir を教えない旧サーバでは開けない。コピーだけ差し出し、
                                 -- プロジェクトは一覧から選んでもらう(fail-open)
@@ -1221,7 +1226,7 @@ viewSketchBorn born model =
                                     "✓ コピーしました — 一覧からプロジェクトを開いてください"
 
                                 ( False, Nothing ) ->
-                                    "📋 依頼文をコピー"
+                                    "📋 プロンプトをコピー"
                             )
                         ]
                     ]
@@ -1235,23 +1240,23 @@ viewSketchBorn born model =
 
 
 {-| starter 無しのジャンル: 公式プロンプト(編集可)を差し出す。 -}
-viewPromptConfirm : Family -> Model -> List (Html Msg)
-viewPromptConfirm family model =
+viewPromptConfirm : Genre -> Model -> List (Html Msg)
+viewPromptConfirm genre model =
     div [ HA.class "text-[11px] leading-relaxed text-ink-soft" ]
-        [ span [ HA.class "font-semibold text-ink" ] [ text family.name ]
-        , text " — このジャンルのテンプレートは公式プロンプトから生まれます。骨格と合格条件は組み込み済み — 下の「あなたの言葉」を書き換えて、詳細を詰めてから渡して構いません。"
+        [ span [ HA.class "font-semibold text-ink" ] [ text genre.name ]
+        , text " — このジャンルのテンプレートは公式プロンプトから作れます。骨格と合格条件は組み込み済み — 下の「あなたの言葉」を書き換えて、詳細を詰めてから渡して構いません。"
         ]
         :: viewGenesisPrompt model
         ++ [ div [ HA.class "mt-2 text-[10px] leading-relaxed text-ink-faint" ]
-                [ text "良いテンプレートが生まれたら公式テンプレートになります — 次からこのジャンルは名前を決めるだけではじめられます。" ]
+                [ text "良いテンプレートが作れたら公式テンプレートになります — 次からこのジャンルは名前を決めるだけではじめられます。" ]
            ]
 
 
 {-| フリージャンル: 「どんなゲーム?」の言葉が必須。 -}
-viewFreeConfirm : Family -> Model -> List (Html Msg)
-viewFreeConfirm family model =
+viewFreeConfirm : Genre -> Model -> List (Html Msg)
+viewFreeConfirm genre model =
     [ div [ HA.class "text-[11px] leading-relaxed text-ink-soft" ]
-        [ span [ HA.class "font-semibold text-ink" ] [ text family.name ]
+        [ span [ HA.class "font-semibold text-ink" ] [ text genre.name ]
         , text " — ジャンルに当てはまらないときは、言葉で。AI はいちばん近いジャンルのテンプレートを土台に変形します(ゼロからは作りません)。"
         ]
     , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "どんなゲーム?" ]
@@ -1279,7 +1284,7 @@ viewFreeConfirm family model =
                     "⏳ 作っています…"
 
                  else
-                    "依頼文を作る"
+                    "プロンプトを作る"
                 )
             ]
         ]
@@ -1301,7 +1306,7 @@ viewGenesisPrompt model =
 
         GenesisFailed reason ->
             [ div [ HA.class "newgame-genesis-error mt-2 text-[11px] text-danger" ]
-                [ text ("依頼文を作れませんでした — " ++ reason) ]
+                [ text ("プロンプトを作れませんでした — " ++ reason) ]
             ]
 
         GenesisReady prompt ->
@@ -1322,8 +1327,8 @@ viewGenesisPrompt model =
             ]
 
 
-{-| 依頼文の編集可 textarea(ジャンルの下書きとラフのカードの誕生後で共用)。
-書き先が違う(下書き / 合成済みの誕生文)ので、送る Msg は呼び手が決める。
+{-| プロンプトの編集可 textarea(ジャンルの下書きとラフのカードの作成後で共用)。
+書き先が違う(下書き / 合成済みの作成文)ので、送る Msg は呼び手が決める。
 -}
 viewPromptTextarea : (String -> Msg) -> String -> Html Msg
 viewPromptTextarea onEdit prompt =
@@ -1352,10 +1357,10 @@ viewCreateError model =
 
 viewForm : Model -> List (Html Msg)
 viewForm model =
-    [ div [ HA.class "mt-1 text-[11px] text-ink-soft" ] [ text "なまえ(フォルダ名になります)" ]
+    [ div [ HA.class "mt-1 text-[11px] text-ink-soft" ] [ text "フォルダ名" ]
     , input
         [ HA.class "field mt-1 w-full font-mono text-xs"
-        , HA.placeholder "半角の小文字の名前"
+        , HA.placeholder "[a-z][a-z0-9_]*"
         , HA.value model.name
         , HE.onInput NameEdited
         ]
@@ -1366,10 +1371,10 @@ viewForm model =
 
         Nothing ->
             text ""
-    , div [ HA.class "mt-3 text-[11px] text-ink-soft" ] [ text "題名" ]
+    , div [ HA.class "mt-3 text-[11px] text-ink-soft" ] [ text "タイトル" ]
     , input
         [ HA.class "field mt-1 w-full text-xs"
-        , HA.placeholder "日本語でかまいません"
+        , HA.placeholder "ゲームタイトル"
         , HA.value model.title
         , HE.onInput TitleEdited
         ]
@@ -1397,7 +1402,7 @@ viewForm model =
     , div [ HA.class "mt-3" ]
         [ button
             [ HA.class "btn btn-primary"
-            , HA.disabled (isPolling model)
+          , HA.disabled (not (canCreate model))
             , HE.onClick CreateClicked
             ]
             [ text

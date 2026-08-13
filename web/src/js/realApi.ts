@@ -310,20 +310,18 @@ export function realApi(base: string): Api {
           }
           return res.json();
         }
-        // Elm 側の port 名の付け替え中なので新旧どちらのタグでも受ける
         case "genesisGenres":
-        case "genesisFamilies":
           // ジャンル一覧。404(旧サーバ)は Elm 側がプリセット入力に倒す
           return getJson(`${base}/genesis/genres`);
         case "promptGenesis": {
           // 公式プロンプト。free だけ direction 必須(400 は日本語の理由が契約)
-          const q = new URLSearchParams({ genre: String(payload.genre ?? payload.family) });
+          const q = new URLSearchParams({ genre: String(payload.genre ?? "") });
           const direction = String(payload.direction ?? "");
           if (direction !== "") q.set("direction", direction);
           return getJson(`${base}/prompt/genesis?${q}`);
         }
         case "promptExtend": {
-          // 「ゲームを広げる」の依頼文の下書き。404(旧サーバ)は Elm 側が「準備中」に倒す
+          // 「ゲームを広げる」のプロンプトの下書き。404(旧サーバ)は Elm 側が「準備中」に倒す
           const q = new URLSearchParams({ kind: String(payload.kind) });
           return getJson(`${base}/prompt/extend?${q}`);
         }

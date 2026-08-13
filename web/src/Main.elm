@@ -466,7 +466,7 @@ type alias Model =
     , tab : Tab
     , journey : Journey.Model
 
-    -- アノテーションチケット(ゲーム内 F8 で切ったアノテーションに一言を添えて AI へ運ぶ窓)
+    -- アノテーションチケット(ゲーム内 F8 で切ったアノテーションに一言を添えて AI へ運ぶウィンドウ)
     , tickets : Tickets.Model
 
     -- 見た目の自動検査(/journey/changes)。baking = エンジンが全場面を
@@ -565,13 +565,13 @@ type alias Model =
     -- 応答の行き先が違うので別に控える
     , sketchSaveReq : Maybe Int
 
-    -- ラフのカードから産まれた直後の「開けたら 1 回だけラフを書き残す」控え。
+    -- ラフのカードから作成された直後の「開けたら 1 回だけラフを書き残す」控え。
     -- PUT /file はプロジェクト選択が前提なので、selectProject の成功を待つ。
     -- dir を添えるのは、途中で別プロジェクトを選んだ時に書き間違えないため
     , pendingSketchSave : Maybe { dir : String, path : String, content : String }
 
     -- その putFile の id。失敗をトーストで知らせる相手を見分ける
-    , bornSketchReq : Maybe Int
+    , createdSketchReq : Maybe Int
 
     -- 保存ボタンを押した瞬間の本文(往復中に編集が進んでも、送るのはこれ)
     , savingText : Maybe String
@@ -962,7 +962,7 @@ init _ =
         , putReq = Nothing
         , sketchSaveReq = Nothing
       , pendingSketchSave = Nothing
-      , bornSketchReq = Nothing
+      , createdSketchReq = Nothing
         , savingText = Nothing
         , conflict = Nothing
         , staleMtime = Nothing
@@ -1449,7 +1449,7 @@ update msg model =
                         m1
 
                 Atelier.OutFetchExtendPrompt kind ->
-                    -- 「ゲームを広げる」の依頼文の下書き(genesisPrompt と同じ流儀)
+                    -- 「ゲームを広げる」のプロンプトの下書き(genesisPrompt と同じ流儀)
                     request "promptExtend"
                         (E.object [ ( "kind", E.string kind ) ])
                         m1
@@ -1619,14 +1619,14 @@ update msg model =
                         )
                         m1
 
-                NewGame.OutFetchFamilies ->
+                NewGame.OutFetchGenres ->
                     -- ジャンル一覧(人気順)。404(旧サーバ)はプリセット入力に倒れる
-                    ( m1, requestInfo "genesisFamilies" )
+                    ( m1, requestInfo "genesisGenres" )
 
                 NewGame.OutFetchGenesisPrompt info ->
                     request "promptGenesis"
                         (E.object
-                            [ ( "family", E.string info.family )
+                            [ ( "genre", E.string info.genre )
                             , ( "direction", E.string info.direction )
                             ]
                         )
@@ -6343,9 +6343,9 @@ handleOkByKind env model =
         "gameStart" ->
             -- 202(受理)。409(すでに起動中)も realApi が ok に均しており、
             -- どちらも「起動処理は走っている」— ポーリングが本当の姿を教える。
-            -- 窓が開くまでコンパイルで数分かかることがあり、黙っていると
+            -- ウィンドウが開くまでコンパイルで数分かかることがあり、黙っていると
             -- 「押したのに何も起きない」に見えるので、待ち時間の見込みを知らせる
-            showToast "ゲームを起動しています — 初回は数分かかることがあります(窓が開くまでお待ちください)"
+            showToast "ゲームを起動しています — 初回は数分かかることがあります(ウィンドウが開くまでお待ちください)"
                 { model | atelier = Atelier.gameStarted model.atelier }
 
         "gameStop" ->
@@ -6438,14 +6438,14 @@ handleOkByKind env model =
             -- オーバーレイの祝いへ(閉じた時に候補・提案を取り直す)
             ( { model | atelier = Atelier.promoted retired model.atelier }, Effect.none )
 
-        "genesisFamilies" ->
+        "genesisGenres" ->
             -- ジャンルえらびのカード。読めない応答は従来のプリセット入力に倒す(fail-open)
-            case D.decodeValue NewGame.familiesDecoder env.body of
-                Ok families ->
-                    ( { model | newGame = NewGame.gotFamilies families model.newGame }, Effect.none )
+            case D.decodeValue NewGame.genresDecoder env.body of
+                Ok genres ->
+                    ( { model | newGame = NewGame.gotGenres genres model.newGame }, Effect.none )
 
                 Err _ ->
-                    ( { model | newGame = NewGame.familiesUnavailable model.newGame }, Effect.none )
+                    ( { model | newGame = NewGame.genresUnavailable model.newGame }, Effect.none )
 
         "promptGenesis" ->
             case D.decodeValue (D.field "prompt" D.string) env.body of
@@ -6464,9 +6464,9 @@ handleOkByKind env model =
                     ( { model | atelier = Atelier.extendPromptFailed "応答が読めませんでした" model.atelier }, Effect.none )
 
         "projectNew" ->
-            -- 202(受理)。応答の dir(産まれるゲームの絶対パス)を覚え、
+            -- 202(受理)。応答の dir(作成されるゲームの絶対パス)を覚え、
             -- すぐ最初のログを取りに行く(以後は 2 秒のポーリング)。
-            -- dir の無い旧サーバは Nothing(誕生時は /projects 再取得だけに倒す)
+            -- dir の無い旧サーバは Nothing(作成時は /projects 再取得だけに倒す)
             ( { model
                 | newGame =
                     NewGame.accepted
@@ -6488,12 +6488,12 @@ handleOkByKind env model =
                     in
                     case result of
                         NewGame.LogSuccess info ->
-                            -- 誕生。候補を取り直しつつ、202 で覚えた dir を
+                            -- 作成。候補を取り直しつつ、202 で覚えた dir を
                             -- 既存の選択フローでそのまま開く(成功でホームへ)。
                             -- dir 不明(旧サーバ)は取り直しだけ(fail-open)
                             let
                                 ( m2, toastFx ) =
-                                    showToast "うまれました。ホームの『次のやること』からどうぞ" m1
+                                    showToast "作成しました。ホームの『次のやること』からどうぞ" m1
 
                                 ( m3, selectFx ) =
                                     case info.dir of
@@ -6505,12 +6505,12 @@ handleOkByKind env model =
                             in
                             ( m3, Effect.batch [ toastFx, requestInfo "projects", selectFx ] )
 
-                        NewGame.LogSketchBorn ->
-                            -- ラフのカードの誕生。ここでは開かない — パネルが依頼文を
+                        NewGame.LogSketchCreated ->
+                            -- ラフのカードの作成。ここでは開かない — パネルがプロンプトを
                             -- 差し出したままにして、開く(コピー)は人のひと押しに乗せる
                             let
                                 ( m2, toastFx ) =
-                                    showToast "うまれました。依頼文をコピーして AI に渡してください" m1
+                                    showToast "作成しました。プロンプトをコピーして AI に渡してください" m1
                             in
                             ( m2, Effect.batch [ toastFx, requestInfo "projects" ] )
 
@@ -6628,7 +6628,7 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
 
-                        -- ラフのカードから産まれた直後だけ、ラフの写しをこのタイミングで書く
+                        -- ラフのカードから作成された直後だけ、ラフの写しをこのタイミングで書く
                         -- (PUT /file は選択が前提なので、これより早くは書けない)。
                         -- dir が違えば黙って捨てる — 別プロジェクトへ書き込まないため
                         ( m3, sketchFx ) =
@@ -6641,7 +6641,7 @@ handleOkByKind env model =
                                                     (E.object [ ( "path", E.string pending.path ), ( "content", E.string pending.content ) ])
                                                     { m2 | pendingSketchSave = Nothing }
                                         in
-                                        ( { mA | bornSketchReq = Just mA.reqCounter }, fx )
+                                        ( { mA | createdSketchReq = Just mA.reqCounter }, fx )
 
                                     else
                                         ( { m2 | pendingSketchSave = Nothing }, Effect.none )
@@ -6884,7 +6884,7 @@ handleOkByKind env model =
                         ( { model | loadReq = Nothing, notice = Just "file 応答が読めませんでした" }, Effect.none )
 
                     else if Just env.id == model.sketchDraftReq then
-                        -- 控えを消さないと「読み込んでいます…」が窓に残り続ける
+                        -- 控えを消さないと「読み込んでいます…」がウィンドウに残り続ける
                         ( { model
                             | sketchDraftReq = Nothing
                             , sketchCompare = SketchCompare.loadFailed "ラフを読めませんでした" model.sketchCompare
@@ -7203,9 +7203,9 @@ handleOkByKind env model =
             )
 
         "putFile" ->
-            if Just env.id == model.bornSketchReq then
-                -- ラフのカードの誕生直後の写し。成功は黙る(誕生の祝いは既に出ている)
-                ( { model | bornSketchReq = Nothing }, Effect.none )
+            if Just env.id == model.createdSketchReq then
+                -- ラフのカードの作成直後の写し。成功は黙る(作成の祝いは既に出ている)
+                ( { model | createdSketchReq = Nothing }, Effect.none )
 
             else if Just env.id == model.sketchSaveReq then
                 -- アトリエのラフ塗りの保存。本文の保存(下の分岐)とは別の道。
@@ -7618,9 +7618,9 @@ handleErrByKind env message model =
                 (E.object [])
                 { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
 
-        "genesisFamilies" ->
+        "genesisGenres" ->
             -- 旧サーバ(404 等)。従来のプリセット入力に倒す(fail-open)
-            ( { model | newGame = NewGame.familiesUnavailable model.newGame }, Effect.none )
+            ( { model | newGame = NewGame.genresUnavailable model.newGame }, Effect.none )
 
         "promptGenesis" ->
             -- 404(旧サーバ)は「準備中」、400 は日本語の理由をその場に出す
@@ -7660,7 +7660,7 @@ handleErrByKind env message model =
                 ( { model | texturesReq = Nothing }, Effect.none )
 
             else if Just env.id == model.sketchDraftReq then
-                -- 消えたラフ・読めないラフ。窓は開けたまま理由だけ出す
+                -- 消えたラフ・読めないラフ。ウィンドウは開けたまま理由だけ出す
                 ( { model
                     | sketchDraftReq = Nothing
                     , sketchCompare = SketchCompare.loadFailed ("ラフを読めませんでした — " ++ message) model.sketchCompare
@@ -7702,10 +7702,10 @@ handleErrByKind env message model =
                 ( model, Effect.none )
 
         "putFile" ->
-            if Just env.id == model.bornSketchReq then
-                -- 誕生直後のラフの写しの失敗。作成そのものは成功しているので、
-                -- トーストで知らせるだけ(依頼文には塗りの全文が入っていて先へ進める)
-                showToast ("ラフを保存できませんでした — " ++ message) { model | bornSketchReq = Nothing }
+            if Just env.id == model.createdSketchReq then
+                -- 作成直後のラフの写しの失敗。作成そのものは成功しているので、
+                -- トーストで知らせるだけ(プロンプトには塗りの全文が入っていて先へ進める)
+                showToast ("ラフを保存できませんでした — " ++ message) { model | createdSketchReq = Nothing }
 
             else if Just env.id == model.sketchSaveReq then
                 -- ラフ塗りの保存失敗。理由は塗りパネルの保存ボタンの脇に出す
@@ -7825,7 +7825,7 @@ handleErrByKind env message model =
             showToast ("アーカイブへ移せませんでした — " ++ message) model
 
         "annotationsCreate" ->
-            -- 窓の中に理由を残す(窓を閉じずに書き直せるように)
+            -- ウィンドウの中に理由を残す(ウィンドウを閉じずに書き直せるように)
             ( { model | sketchCompare = SketchCompare.submitFailed message model.sketchCompare }
             , Effect.none
             )
@@ -7920,7 +7920,7 @@ handleErrByKind env message model =
         "gameLog" ->
             -- ログ口が無い・落ちた。回し続けても仕方ないので待つのはやめるが、
             -- ボタンだけ黙って戻すと「押したのに何も起きない」に見える
-            showToast "起動の様子が分からなくなりました — ゲームの窓が出たか確かめてください"
+            showToast "起動の様子が分からなくなりました — ゲームのウィンドウが出たか確かめてください"
                 { model | atelier = Atelier.gameStartFailed model.atelier }
 
         "runnerLog" ->
@@ -8255,7 +8255,7 @@ viewPlayButton model =
             _ ->
                 button
                     [ HA.class "btn btn-mini inline-flex shrink-0 items-center gap-1"
-                    , HA.title "ゲームの窓を開いて、遊びながら調整する"
+                    , HA.title "ゲームのウィンドウを開いて、遊びながら調整する"
                     , HE.onClick MiniStartClicked
                     ]
                     [ playIconSvg, text "プレイ" ]
@@ -8398,8 +8398,8 @@ viewSearchButton =
         [ searchIconSvg, text "検索" ]
 
 
-{-| ラフと見比べる窓の入口。ラフが 1 本も無いプロジェクトでは出さない
-(見比べる相手が居ないので、押しても空の窓になる)。
+{-| ラフと見比べるウィンドウの入口。ラフが 1 本も無いプロジェクトでは出さない
+(見比べる相手が居ないので、押しても空のウィンドウになる)。
 -}
 viewSketchCompareButton : Model -> Html Msg
 viewSketchCompareButton model =
@@ -8509,7 +8509,7 @@ miniHandlers =
     }
 
 
-{-| 小窓が映すのに要る状態だけを渡す。走っているか(running)と起動しかけか
+{-| ミニパネルが映すのに要る状態だけを渡す。走っているか(running)と起動しかけか
 (starting)は、起動の事情を知っている Main が判じてから渡す。
 -}
 miniState : Model -> SceneView.State
@@ -8885,7 +8885,7 @@ viewPicker canReturn newGame picker =
                         text ""
                     ]
               -- ワークスペース = ゲームを集める作業フォルダ (Godot のプロジェクト一覧と同じ考え方)。
-              -- 決めてあれば下の「見つかった」はこの配下、新しいゲームもここに産まれる
+              -- 決めてあれば下の「見つかった」はこの配下、新しいゲームもここに作成される
               , viewWorkspaceRow picker.workspace
 
               , div [ HA.class "picker-open-row mb-2 flex gap-2" ]
@@ -9760,7 +9760,7 @@ viewBakePanel model =
                 button
                     [ HA.class "perform-run btn btn-mini"
                     , HA.disabled (baking || waking || model.performReq /= Nothing)
-                    , HA.title "実機(ゲームの窓)で、選んでいるカットから演じさせます"
+                    , HA.title "実機(ゲームのウィンドウ)で、選んでいるカットから演じさせます"
                     , HE.onClick PerformClicked
                     ]
                     [ text "▶ 実機で再生" ]
@@ -11138,7 +11138,7 @@ viewDashboardRow openId dash =
 -- ダッシュボード(中央+右ペインの代わりに出す閲覧ボード)
 
 
-{-| 左が主リソースのエントリ一覧、右が選択エントリの要約と ref ののぞき窓。
+{-| 左が主リソースのエントリ一覧、右が選択エントリの要約と ref のプレビュー。
 編集はここでは受けない — カードのジャンプで元のファイルを開いてから行う。
 -}
 viewDashboard : Model -> DashState -> Html Msg
@@ -11258,7 +11258,7 @@ viewDashEntry model selected item =
 
 
 {-| 攻略本の右ページ: 額装の肖像+名前(大)+フレーバー(引用風)+
-メーター/%%/重み棒/のぞき窓のフィールド行。
+メーター/%%/重み棒/プレビューのフィールド行。
 -}
 viewDashDetail : Model -> Maybe Dashboards.Detail -> List (Html Msg)
 viewDashDetail model detail =
@@ -11384,7 +11384,7 @@ weightText value =
         String.fromFloat value
 
 
-{-| ref ののぞき窓。参照先が引けたら要約カード(肖像サムネ+クリックで元データへ
+{-| ref のプレビュー。参照先が引けたら要約カード(肖像サムネ+クリックで元データへ
 ジャンプ)、引けなければ赤の「見つかりません」— 黙って隠すとぶら下がりに気づけない。
 -}
 viewPeek : Model -> { target : String, id : String, peek : Maybe Dashboards.Peek } -> Html Msg
@@ -14435,7 +14435,7 @@ subscriptions model =
             Sub.none
 
         -- ラフ塗り(アトリエ / 新しいゲームのラフのカード)の一筆も同じ。
-        -- 塗り場は画面上に同時に 1 つしか出ないので、届け先は active な方だけでよい
+        -- キャンバスは画面上に同時に 1 つしか出ないので、届け先は active な方だけでよい
         , if Atelier.sketchStrokeActive model.atelier then
             Browser.Events.onMouseUp (D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.StrokeEnded)))
 
@@ -14469,15 +14469,15 @@ subscriptions model =
           else
             Sub.none
 
-        -- ラフを塗る窓が出ている間だけ Esc で閉じる。オーバーレイは押しても閉じない口なので、
-        -- 塗り場から手を離さずに畳める道はここだけ
+        -- ラフを塗るウィンドウが出ている間だけ Esc で閉じる。オーバーレイは押しても閉じない口なので、
+        -- キャンバスから手を離さずに畳める道はここだけ
         , if Atelier.sketchOpen model.atelier then
             Browser.Events.onKeyDown
                 (D.field "key" D.string
                     |> D.andThen
                         (\key ->
                             if key == "Escape" then
-                                D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.ToggleOpen))
+                                D.succeed (AtelierMsg (Atelier.SketchMsg SketchPad.CloseRequested))
 
                             else
                                 D.fail "他のキーは素通し"
@@ -14538,7 +14538,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- 見比べの窓が開いている間だけ Esc で閉じる
+        -- 見比べのウィンドウが開いている間だけ Esc で閉じる
         , if ReferenceView.isOpen model.reference then
             Browser.Events.onKeyDown
                 (D.field "key" D.string
@@ -14555,7 +14555,7 @@ subscriptions model =
           else
             Sub.none
 
-        -- ラフと見比べる窓も同じく Esc で閉じる
+        -- ラフと見比べるウィンドウも同じく Esc で閉じる
         , if SketchCompare.isOpen model.sketchCompare then
             Browser.Events.onKeyDown
                 (D.field "key" D.string

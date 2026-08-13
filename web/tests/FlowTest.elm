@@ -1250,7 +1250,7 @@ searched app =
         |> respondOk 8 "search" searchBody
 
 
-{-| 一覧の行を右クリックする(カーソル位置と窓の大きさを添える)。 -}
+{-| 一覧の行を右クリックする(カーソル位置とウィンドウの大きさを添える)。 -}
 rightClickFileRow : App -> App
 rightClickFileRow =
     ProgramTest.simulateDomEvent
@@ -1264,7 +1264,7 @@ rightClickFileRow =
         )
 
 
-{-| 横断検索の窓に打つ。 -}
+{-| 横断検索のウィンドウに打つ。 -}
 typeSearch : String -> App -> App
 typeSearch value =
     ProgramTest.simulateDomEvent
@@ -1616,7 +1616,7 @@ suite =
             \() ->
                 landingWith resourcesBody
                     |> ProgramTest.clickButton "ゲームを広げる"
-                    |> ProgramTest.ensureViewHas [ text "足したいものを選ぶと、AI に渡す依頼文の下書きができます。あなたの言葉を足して仕上げてください。" ]
+                    |> ProgramTest.ensureViewHas [ text "足したいものを選ぶと、AI に渡すプロンプトの下書きができます。あなたの言葉を足して仕上げてください。" ]
                     |> ProgramTest.clickButton "場面を足す"
                     -- 押した瞬間に反応(取得中でも黙らせない)
                     |> ProgramTest.ensureViewHas [ text "⏳ 下書きを作っています…" ]
@@ -1956,7 +1956,7 @@ suite =
                             (D.at [ "payload", "offset" ] D.float)
                         )
                         (Expect.equal [ ( "playSound", "moonlight.wav", 0 ) ])
-        , test "描き出した絵の見比べ: 数字を押すと窓が開き、割れた物が先に並ぶ" <|
+        , test "描き出した絵の見比べ: 数字を押すとウィンドウが開き、割れた物が先に並ぶ" <|
             \() ->
                 booted
                     |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
@@ -1972,7 +1972,7 @@ suite =
                 booted
                     |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
                     |> ProgramTest.clickButton "⚠ 1 / 3"
-                    -- 窓を開いた拍の見比べ直し(採番外)を挟んでから更新が飛ぶ
+                    -- ウィンドウを開いた拍の見比べ直し(採番外)を挟んでから更新が飛ぶ
                     |> ensureKinds [ "referenceStatus" ]
                     |> ProgramTest.clickButton "リファレンス画像を更新"
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"

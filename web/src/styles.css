@@ -337,7 +337,7 @@ sl-alert.notice::part(message) {
   flex: 1;
   min-height: 15rem;
   /* 並べ方は「画面の広さ」でなく「このコンテナの広さ」で決める。右のプレビュー枠
-     (狭い)へ移しても、窓が広いままだと画面基準の切り替えは効かないため */
+     (狭い)へ移しても、ウィンドウが広いままだと画面基準の切り替えは効かないため */
   container-type: inline-size;
   border: 1px solid var(--color-edge);
   border-radius: 3px;
@@ -683,4 +683,22 @@ sl-alert.notice::part(message) {
 @keyframes jump-flash {
   from { background-color: color-mix(in srgb, var(--color-accent) 30%, transparent); }
   to   { background-color: transparent; }
+}
+
+/* グリッドのつまみ。普段は完全に消す — セルの線が一面に走るキャンバスでは、
+   薄く置くだけでも絵と競合する。キャンバス全体のホバーでも出さない(塗っている間ずっと
+   出たままになる)。出るのは、そのつまみの上に来た時だけ。見つけ方は外周に入ると
+   カーソルが変わる方が担う(表の列幅と同じ道) */
+.sketch-handle-mark {
+  opacity: 0;
+  transition: opacity 0.12s ease-out, background-color 0.12s ease-out;
+}
+
+.sketch-handle:hover .sketch-handle-mark {
+  opacity: 1;
+  background-color: var(--color-accent);
+}
+
+.sketch-handle-mark.is-dragging {
+  opacity: 1;
 }

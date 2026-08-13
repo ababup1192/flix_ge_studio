@@ -82,6 +82,11 @@ pickerModel =
         |> updateM (Main.GotApiResponse (envelope "health" True (E.object [ ( "ok", E.bool False ) ])))
 
 
+init : NewGame.Model
+init =
+    NewGame.init
+
+
 suite : Test
 suite =
     describe "まっさらから(新しいゲーム)"
@@ -116,7 +121,7 @@ suite =
                 \_ ->
                     NewGame.isPolling creating
                         |> Expect.equal True
-            , test "running の間は回り続け、exitCode 0 で止まって 202 の dir で誕生を告げる" <|
+            , test "running の間は回り続け、exitCode 0 で止まって 202 の dir で作成を告げる" <|
                 \_ ->
                     let
                         ( m1, r1 ) =
@@ -159,12 +164,12 @@ suite =
                         |> Tuple.second
                         |> kindsOf
                         |> Expect.equal [ "projectNew" ]
-            , test "誕生(exitCode 0)で /projects を取り直し、202 の dir で選択フローに乗る" <|
+            , test "作成(exitCode 0)で /projects を取り直し、202 の dir で選択フローに乗る" <|
                 \_ ->
                     pickerModel
                         |> updateM (Main.NewGameMsg (NewGame.NameEdited "poyo"))
                         |> updateM (Main.NewGameMsg NewGame.CreateClicked)
-                        -- 202 応答が dir(産まれるゲームの絶対パス)を教える
+                        -- 202 応答が dir(作成されるゲームの絶対パス)を教える
                         |> updateM
                             (Main.GotApiResponse
                                 (envelope "projectNew"
@@ -233,10 +238,10 @@ suite =
                             (Ok { running = False, exitCode = Nothing, lines = [] })
             ]
         , describe "ジャンルえらび(genesis)"
-            [ test "/genesis/families の橋渡し: 並びはそのまま、id 以外の欠けは空文字に倒す" <|
+            [ test "/genesis/genres の橋渡し: 並びはそのまま、id 以外の欠けは空文字に倒す" <|
                 \_ ->
-                    D.decodeString NewGame.familiesDecoder
-                        """{"families":[
+                    D.decodeString NewGame.genresDecoder
+                        """{"genres":[
                              {"id":"action","name":"アクション","verb":"走って、跳んで、壊す","includes":"ブロック崩し","controls":"←→ + スペース","starter":"templates/game-starter"},
                              {"id":"free"}
                            ]}"""
@@ -249,18 +254,18 @@ suite =
             , test "starter 無しのジャンルを選ぶと、その場で公式プロンプトを取りに行く" <|
                 \_ ->
                     begin
-                        |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
-                        |> step (NewGame.FamilyChosen "rpg")
+                        |> Tuple.mapFirst (NewGame.gotGenres genesisGenres)
+                        |> step (NewGame.GenreChosen "rpg")
                         |> Tuple.second
                         |> Expect.equal
-                            (NewGame.OutFetchGenesisPrompt { family = "rpg", direction = "" })
+                            (NewGame.OutFetchGenesisPrompt { genre = "rpg", direction = "" })
             , test "free は言葉(direction)が必須 — 空では飛ばず、書けば飛ぶ" <|
                 \_ ->
                     let
                         chosen =
                             begin
-                                |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
-                                |> step (NewGame.FamilyChosen "free")
+                                |> Tuple.mapFirst (NewGame.gotGenres genesisGenres)
+                                |> step (NewGame.GenreChosen "free")
 
                         empty =
                             chosen
@@ -276,22 +281,22 @@ suite =
                     ( empty, written )
                         |> Expect.equal
                             ( NewGame.OutNone
-                            , NewGame.OutFetchGenesisPrompt { family = "free", direction = "猫が屋根を跳びわたる" }
+                            , NewGame.OutFetchGenesisPrompt { genre = "free", direction = "猫が屋根を跳びわたる" }
                             )
             ]
         , describe "画面のラフから(ラフのカード)"
-            [ test "ラフのカードを選ぶと、依頼文の土台(blank の公式文)を裏で取りに行く" <|
+            [ test "ラフのカードを選ぶと、プロンプトの土台(blank の公式文)を裏で取りに行く" <|
                 \_ ->
                     begin
-                        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+                        |> step (NewGame.GenreChosen NewGame.sketchGenreId)
                         |> Tuple.second
                         |> Expect.equal
-                            (NewGame.OutFetchGenesisPrompt { family = "blank", direction = "" })
-            , test "ラフのカードを選ぶと、塗るための窓が出る" <|
+                            (NewGame.OutFetchGenesisPrompt { genre = "blank", direction = "" })
+            , test "ラフのカードを選ぶと、塗るためのウィンドウが出る" <|
                 \_ ->
                     NewGame.sketchWindowOpen sketchWindowPainted
                         |> Expect.equal True
-            , test "窓を閉じるとカードの選択だけ外れ、塗った絵は残る" <|
+            , test "ウィンドウを閉じるとカードの選択だけ外れ、塗った絵は残る" <|
                 \_ ->
                     let
                         closed =
@@ -303,11 +308,11 @@ suite =
                     , NewGame.buildSketchPrompt closed |> String.contains "## 画面のラフ"
                     )
                         |> Expect.equal ( False, True )
-            , test "閉じたあとカードを選び直すと、窓がまた出る" <|
+            , test "閉じたあとカードを選び直すと、ウィンドウがまた出る" <|
                 \_ ->
                     ( sketchWindowPainted, NewGame.OutNone )
                         |> step NewGame.SketchClosed
-                        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+                        |> step (NewGame.GenreChosen NewGame.sketchGenreId)
                         |> Tuple.first
                         |> NewGame.sketchWindowOpen
                         |> Expect.equal True
@@ -327,7 +332,7 @@ suite =
                         |> step NewGame.CreateClicked
                         |> Tuple.second
                         |> Expect.equal NewGame.OutNone
-            , test "依頼文 = 公式文 + ラフの節 + 催促とカメラの一文" <|
+            , test "プロンプト = 公式文 + ラフの節 + 催促とカメラの一文" <|
                 \_ ->
                     let
                         prompt =
@@ -348,7 +353,7 @@ suite =
                         |> Tuple.first
                         |> NewGame.buildSketchPrompt
                         |> Expect.equal ("公式文のつもり\n\n" ++ interviewAsk)
-            , test "公式文の「あなたの言葉」節(--- 行と世界・主人公・エッセンス行)は依頼文から消える" <|
+            , test "公式文の「あなたの言葉」節(--- 行と世界・主人公・エッセンス行)はプロンプトから消える" <|
                 \_ ->
                     let
                         prompt =
@@ -372,56 +377,22 @@ suite =
                         |> Tuple.first
                         |> NewGame.buildSketchPrompt
                         |> Expect.equal ("節の無い公式文\n\n" ++ interviewAsk)
-            , test "「伝えたいこと」を書いて誕生すると「あなたから:」の節が入る(複数行もそのまま)" <|
+            , test "作成でパネルは畳まれず、組み立てたプロンプトが差し出される" <|
                 \_ ->
                     let
-                        prompt =
-                            sketchPainted
-                                |> step (NewGame.SketchNoteEdited "夜の温泉街が舞台。\nちょうちんの光で照らしたい。")
-                                |> Tuple.first
-                                |> NewGame.buildSketchPrompt
-                    in
-                    String.contains "あなたから: 夜の温泉街が舞台。\nちょうちんの光で照らしたい。" prompt
-                        |> Expect.equal True
-            , test "「伝えたいこと」が空(空白だけ)なら「あなたから:」の節ごと無い" <|
-                \_ ->
-                    sketchPainted
-                        |> step (NewGame.SketchNoteEdited "  \n  ")
-                        |> Tuple.first
-                        |> NewGame.buildSketchPrompt
-                        |> String.contains "あなたから"
-                        |> Expect.equal False
-            , test "「あなたから:」の節はラフの節の後・催促の前に入る" <|
-                \_ ->
-                    sketchPainted
-                        |> step (NewGame.SketchNoteEdited "夜の温泉街")
-                        |> Tuple.first
-                        |> NewGame.buildSketchPrompt
-                        |> String.split "\n\n"
-                        |> List.filter
-                            (\block ->
-                                String.startsWith "## 画面のラフ" block
-                                    || String.startsWith "あなたから:" block
-                                    || String.startsWith interviewAsk block
-                            )
-                        |> List.map (String.left 4)
-                        |> Expect.equal [ "## 画", "あなたか", "実装に入" ]
-            , test "誕生でパネルは畳まれず、組み立てた依頼文が差し出される" <|
-                \_ ->
-                    let
-                        ( born, result ) =
+                        ( created, result ) =
                             sketchPainted
                                 |> step NewGame.CreateClicked
                                 |> Tuple.mapFirst (NewGame.accepted (Just "/games/rough_game"))
                                 |> (\( m, _ ) -> NewGame.gotLog { running = False, exitCode = Just 0, lines = [] } m)
                     in
                     ( result
-                    , NewGame.isPolling born
-                    , NewGame.shownGenesisPrompt born
+                    , NewGame.isPolling created
+                    , NewGame.shownGenesisPrompt created
                         |> Maybe.map (String.contains "## 画面のラフ")
                     )
-                        |> Expect.equal ( NewGame.LogSketchBorn, False, Just True )
-            , test "「コピーして開く」は依頼文と、保存すべきラフの写し(screen)を運ぶ" <|
+                        |> Expect.equal ( NewGame.LogSketchCreated, False, Just True )
+            , test "「コピーして開く」はプロンプトと、保存すべきラフの写し(screen)を運ぶ" <|
                 \_ ->
                     let
                         out =
@@ -429,7 +400,7 @@ suite =
                                 |> step NewGame.CreateClicked
                                 |> Tuple.mapFirst (NewGame.accepted (Just "/games/rough_game"))
                                 |> (\( m, _ ) -> NewGame.gotLog { running = False, exitCode = Just 0, lines = [] } m)
-                                |> (\( m, _ ) -> NewGame.update NewGame.OpenBornClicked m)
+                                |> (\( m, _ ) -> NewGame.update NewGame.OpenCreatedClicked m)
                                 |> Tuple.second
                     in
                     case out of
@@ -443,76 +414,76 @@ suite =
                         _ ->
                             Expect.fail "OutCopyPromptAndOpen が出ていません"
             ]
-        , describe "つくり待ち・誕生後のカードの行き来"
+        , describe "つくり待ち・作成後のカードの行き来"
             [ test "つくっている最中のカードの選び直しは無視される(封筒も飛ばない)" <|
                 \_ ->
                     let
                         ( model, out ) =
                             sketchPainted
                                 |> step NewGame.CreateClicked
-                                |> step (NewGame.FamilyChosen "action")
+                                |> step (NewGame.GenreChosen "action")
                     in
-                    ( model.family, out )
-                        |> Expect.equal ( Just NewGame.sketchFamilyId, NewGame.OutNone )
-            , test "ラフ発の作成待ち中に他のカードを押しても、誕生はラフの誕生画面になる" <|
+                    ( model.genre, out )
+                        |> Expect.equal ( Just NewGame.sketchGenreId, NewGame.OutNone )
+            , test "ラフ発の作成待ち中に他のカードを押しても、作成はラフの作成画面になる" <|
                 \_ ->
                     let
-                        ( born, result ) =
+                        ( created, result ) =
                             sketchPainted
                                 |> step NewGame.CreateClicked
                                 |> Tuple.mapFirst (NewGame.accepted (Just "/games/rough_game"))
-                                |> step (NewGame.FamilyChosen "action")
+                                |> step (NewGame.GenreChosen "action")
                                 |> (\( m, _ ) -> NewGame.gotLog { running = False, exitCode = Just 0, lines = [] } m)
                     in
-                    ( result, born.born /= Nothing )
-                        |> Expect.equal ( NewGame.LogSketchBorn, True )
-            , test "誕生後に他のカード→ラフのカードと戻っても、合成依頼文は残っている" <|
+                    ( result, created.created /= Nothing )
+                        |> Expect.equal ( NewGame.LogSketchCreated, True )
+            , test "作成後に他のカード→ラフのカードと戻っても、合成プロンプトは残っている" <|
                 \_ ->
                     let
                         back =
-                            sketchBorn
-                                |> (\m -> NewGame.gotFamilies genesisFamilies m)
+                            sketchCreated
+                                |> (\m -> NewGame.gotGenres genesisGenres m)
                                 |> (\m -> ( m, NewGame.OutNone ))
-                                |> step (NewGame.FamilyChosen "rpg")
-                                |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+                                |> step (NewGame.GenreChosen "rpg")
+                                |> step (NewGame.GenreChosen NewGame.sketchGenreId)
                                 |> Tuple.first
                     in
                     NewGame.shownGenesisPrompt back
                         |> Maybe.map (String.contains "## 画面のラフ")
                         |> Expect.equal (Just True)
-            , test "誕生でなまえ・題名は空に戻る(同名でもう一度うんで 409 に落とさない)" <|
+            , test "作成でなまえ・題名は空に戻る(同名でもう一度うんで 409 に落とさない)" <|
                 \_ ->
-                    ( sketchBorn.name, sketchBorn.title )
+                    ( sketchCreated.name, sketchCreated.title )
                         |> Expect.equal ( "", "" )
-            , test "誕生後に遅れて届いた公式文は、合成依頼文を上書きしない" <|
+            , test "作成後に遅れて届いた公式文は、合成プロンプトを上書きしない" <|
                 \_ ->
-                    sketchBorn
+                    sketchCreated
                         |> NewGame.gotGenesisPrompt "遅れて届いた別の公式文"
                         |> NewGame.shownGenesisPrompt
                         |> Maybe.map (String.contains "## 画面のラフ")
                         |> Expect.equal (Just True)
-            , test "「新しいラフでもう一度」で誕生状態が捨てられ、土台を取り直しに行く" <|
+            , test "「新しいラフでもう一度」で作成状態が捨てられ、土台を取り直しに行く" <|
                 \_ ->
                     let
                         ( model, out ) =
-                            NewGame.update NewGame.SketchRestartClicked sketchBorn
+                            NewGame.update NewGame.SketchRestartClicked sketchCreated
                     in
-                    ( model.born, out )
+                    ( model.created, out )
                         |> Expect.equal
                             ( Nothing
-                            , NewGame.OutFetchGenesisPrompt { family = "blank", direction = "" }
+                            , NewGame.OutFetchGenesisPrompt { genre = "blank", direction = "" }
                             )
-            , test "「新しいラフでもう一度」で「伝えたいこと」も空に戻る" <|
+            , test "「新しいラフでもう一度」で塗りが白紙に戻る" <|
                 \_ ->
                     sketchPainted
-                        |> step (NewGame.SketchNoteEdited "夜の温泉街")
                         |> step NewGame.SketchRestartClicked
                         |> Tuple.first
-                        |> .sketchNote
-                        |> Expect.equal ""
-            , test "未塗り + 公式文の失敗で誕生すると、依頼文は空(コピーではなく取り直しの導線)" <|
+                        |> .sketch
+                        |> SketchPad.promptSection
+                        |> Expect.equal Nothing
+            , test "未塗り + 公式文の失敗で作成すると、プロンプトは空(コピーではなく取り直しの導線)" <|
                 \_ ->
-                    ( sketchBornEmpty.born, NewGame.shownGenesisPrompt sketchBornEmpty )
+                    ( sketchCreatedEmpty.created, NewGame.shownGenesisPrompt sketchCreatedEmpty )
                         |> Expect.equal
                             ( Just { dir = Just "/games/rough_game", prompt = "" }
                             , Nothing
@@ -521,7 +492,7 @@ suite =
                 \_ ->
                     let
                         ( retried, out ) =
-                            NewGame.update NewGame.BornRetryClicked sketchBornEmpty
+                            NewGame.update NewGame.CreatedRetryClicked sketchCreatedEmpty
 
                         shown =
                             retried
@@ -530,30 +501,53 @@ suite =
                     in
                     ( out, shown )
                         |> Expect.equal
-                            ( NewGame.OutFetchGenesisPrompt { family = "blank", direction = "" }
+                            ( NewGame.OutFetchGenesisPrompt { genre = "blank", direction = "" }
                             , Just ("公式文のつもり\n\n" ++ interviewAsk)
                             )
             ]
-        , describe "ラフのカードの Main の配線"
-            [ test "誕生(exitCode 0)でも自動では開かない — /projects の取り直しだけ" <|
+        , describe "つくるボタンの入り口(必要な欄が埋まるまで押させない)"
+            [ test "フォルダ名もタイトルも空なら押せない" <|
                 \_ ->
-                    sketchBornMain
+                    NewGame.canCreate NewGame.init |> Expect.equal False
+            , test "フォルダ名だけではまだ押せない" <|
+                \_ ->
+                    NewGame.canCreate { init | name = "my_game" } |> Expect.equal False
+            , test "タイトルだけでもまだ押せない" <|
+                \_ ->
+                    NewGame.canCreate { init | title = "わたしのゲーム" } |> Expect.equal False
+            , test "両方そろえば押せる" <|
+                \_ ->
+                    NewGame.canCreate { init | name = "my_game", title = "わたしのゲーム" }
+                        |> Expect.equal True
+            , test "ラフのカードは 1 マスも塗っていなければ押せない" <|
+                \_ ->
+                    NewGame.canCreateSketch { init | name = "my_game", title = "わたしのゲーム" }
+                        |> Expect.equal False
+            , test "規則に合わないフォルダ名では押せない" <|
+                \_ ->
+                    NewGame.canCreate { init | name = "My Game", title = "わたしのゲーム" }
+                        |> Expect.equal False
+            ]
+        , describe "ラフのカードの Main の配線"
+            [ test "作成(exitCode 0)でも自動では開かない — /projects の取り直しだけ" <|
+                \_ ->
+                    sketchCreatedMain
                         |> Tuple.second
                         |> kindsOf
                         |> Expect.equal [ "projects" ]
             , test "「コピーして開く」でコピーと選択フローが同時に飛ぶ" <|
                 \_ ->
-                    sketchBornMain
+                    sketchCreatedMain
                         |> Tuple.first
-                        |> Main.update (Main.NewGameMsg NewGame.OpenBornClicked)
+                        |> Main.update (Main.NewGameMsg NewGame.OpenCreatedClicked)
                         |> Tuple.second
                         |> kindsOf
                         |> Expect.equal [ "copyClipboard", "selectProject" ]
             , test "開けたら 1 回だけ、ラフの写しが新プロジェクトへ書かれる" <|
                 \_ ->
-                    sketchBornMain
+                    sketchCreatedMain
                         |> Tuple.first
-                        |> updateM (Main.NewGameMsg NewGame.OpenBornClicked)
+                        |> updateM (Main.NewGameMsg NewGame.OpenCreatedClicked)
                         |> Main.update
                             (Main.GotApiResponse
                                 (envelope "selectProject"
@@ -574,7 +568,7 @@ suite =
         ]
 
 
-{-| 依頼文の末尾に必ず入るインタビューの催促。 -}
+{-| プロンプトの末尾に必ず入るインタビューの催促。 -}
 interviewAsk : String
 interviewAsk =
     "実装に入る前に、まず /style-interview を実行して画風を私に質問して決めてください。"
@@ -598,7 +592,7 @@ officialWithYourWords =
 sketchChosen : ( NewGame.Model, NewGame.Out )
 sketchChosen =
     begin
-        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+        |> step (NewGame.GenreChosen NewGame.sketchGenreId)
         |> Tuple.mapFirst (NewGame.gotGenesisPrompt "公式文のつもり")
 
 
@@ -618,22 +612,22 @@ sketchPainted =
         |> step (NewGame.SketchMsg SketchPad.StrokeEnded)
 
 
-{-| パネルを開いてラフのカードを選び、1 セル塗った状態(窓が出ている)。 -}
+{-| パネルを開いてラフのカードを選び、1 セル塗った状態(ウィンドウが出ている)。 -}
 sketchWindowPainted : NewGame.Model
 sketchWindowPainted =
     begin
         |> step NewGame.Toggled
-        |> Tuple.mapFirst (NewGame.gotFamilies genesisFamilies)
-        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+        |> Tuple.mapFirst (NewGame.gotGenres genesisGenres)
+        |> step (NewGame.GenreChosen NewGame.sketchGenreId)
         |> Tuple.mapFirst (NewGame.gotGenesisPrompt "公式文のつもり")
         |> step (NewGame.SketchMsg (SketchPad.CellDown ( 0, 0 )))
         |> step (NewGame.SketchMsg SketchPad.StrokeEnded)
         |> Tuple.first
 
 
-{-| ラフのカードで誕生(exitCode 0)まで進めた状態(合成依頼文あり)。 -}
-sketchBorn : NewGame.Model
-sketchBorn =
+{-| ラフのカードで作成(exitCode 0)まで進めた状態(合成プロンプトあり)。 -}
+sketchCreated : NewGame.Model
+sketchCreated =
     sketchPainted
         |> step NewGame.CreateClicked
         |> Tuple.mapFirst (NewGame.accepted (Just "/games/rough_game"))
@@ -641,11 +635,11 @@ sketchBorn =
         |> Tuple.first
 
 
-{-| 何も塗らず、公式文も失敗したまま誕生した状態(依頼文が空)。 -}
-sketchBornEmpty : NewGame.Model
-sketchBornEmpty =
+{-| 何も塗らず、公式文も失敗したまま作成した状態(プロンプトが空)。 -}
+sketchCreatedEmpty : NewGame.Model
+sketchCreatedEmpty =
     begin
-        |> step (NewGame.FamilyChosen NewGame.sketchFamilyId)
+        |> step (NewGame.GenreChosen NewGame.sketchGenreId)
         |> Tuple.mapFirst (NewGame.genesisPromptFailed "HTTP 500: /prompt/genesis — こわれた")
         |> step (NewGame.NameEdited "rough_game")
         |> step NewGame.CreateClicked
@@ -654,11 +648,11 @@ sketchBornEmpty =
         |> Tuple.first
 
 
-{-| Main 側でラフのカードの誕生(exitCode 0)まで進めた状態。 -}
-sketchBornMain : ( Main.Model, Effect )
-sketchBornMain =
+{-| Main 側でラフのカードの作成(exitCode 0)まで進めた状態。 -}
+sketchCreatedMain : ( Main.Model, Effect )
+sketchCreatedMain =
     pickerModel
-        |> updateM (Main.NewGameMsg (NewGame.FamilyChosen NewGame.sketchFamilyId))
+        |> updateM (Main.NewGameMsg (NewGame.GenreChosen NewGame.sketchGenreId))
         |> updateM
             (Main.GotApiResponse
                 (envelope "promptGenesis" True (E.object [ ( "prompt", E.string "公式文のつもり" ) ]))
@@ -689,8 +683,8 @@ sketchBornMain =
 
 
 {-| ジャンルのカードのサンプル(starter 有り / 無し / free)。 -}
-genesisFamilies : List NewGame.Family
-genesisFamilies =
+genesisGenres : List NewGame.Genre
+genesisGenres =
     [ { id = "action", name = "アクション", verb = "走って、跳んで、壊す", includes = "ブロック崩し", controls = "←→ + スペース", starter = "templates/game-starter" }
     , { id = "rpg", name = "RPG", verb = "歩いて、話して、強くなる", includes = "剣と探索", controls = "←→↑↓ + 話す", starter = "" }
     , { id = "free", name = "フリージャンル", verb = "言葉から始める", includes = "ここにない、全部", controls = "あなたが決める", starter = "" }

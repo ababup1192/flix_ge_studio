@@ -1,7 +1,7 @@
 module SketchPadTest exposing (suite)
 
 {-| ラフ塗りの純ロジックだけを検査する: コードの自動割り振り・sketch.json の
-往復・依頼文の一節づくり・依頼文への差し込み・一筆の undo。
+往復・プロンプトの一節づくり・プロンプトへの差し込み・一筆の undo。
 見た目(チップの並び・色の見え方)はテストしない。
 -}
 
@@ -19,6 +19,11 @@ import Test exposing (Test, describe, test)
     . . . . . F
 
 -}
+init : SketchPad.Model
+init =
+    SketchPad.init
+
+
 cornerModel : SketchPad.Model
 cornerModel =
     withRows [ "W.....", "......", "......", ".....F" ] { paintedModel | size = { w = 6, h = 4 } }
@@ -45,7 +50,7 @@ activeSheet model =
 {-| 角のつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
 dragCorner : ( Float, Float ) -> SketchPad.Model -> SketchPad.Model
 dragCorner ( dx, dy ) model =
-    dragEdge SketchPad.CornerEdge ( dx, dy ) model
+    dragEdge SketchPad.BottomRightEdge ( dx, dy ) model
 
 
 {-| 好きなつまみを (dx, dy) だけ引く 1 ドラッグ。 -}
@@ -101,7 +106,7 @@ layeredModel =
     }
 
 
-{-| レイヤーを持たない頃に保存されたラフ(比較の窓が読み戻す形)。 -}
+{-| レイヤーを持たない頃に保存されたラフ(比較のウィンドウが読み戻す形)。 -}
 oldSketchJson : String
 oldSketchJson =
     """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"top-down","fidelity":1,"legend":[{"char":"W","name":"壁","fill":"#8a6d3b","desc":"崩れかけた石壁"},{"char":"F","name":"床","fill":"#d9cfb8"}],"rows":["W.",".."],"note":"左が入り口"}"""
@@ -113,7 +118,7 @@ idLayeredSketchJson =
     """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"camera":"top-down","fidelity":1,"legend":[{"char":"W","name":"壁","fill":"#8a6d3b","desc":"崩れかけた石壁"},{"char":"F","name":"床","fill":"#d9cfb8"}],"rows":["WF","F."],"layers":[{"id":"back","rows":["..","F."]},{"id":"main","rows":["W.",".."]},{"id":"front","rows":[".F",".."]}],"note":"左が入り口"}"""
 
 
-{-| サーバの依頼文の形(必ず【やること】の行を持つ)を模した最小の下書き。 -}
+{-| サーバのプロンプトの形(必ず【やること】の行を持つ)を模した最小の下書き。 -}
 promptFixture : String
 promptFixture =
     String.join "\n"
@@ -153,8 +158,8 @@ suite =
             , test "壊れた JSON は Nothing" <|
                 \_ -> SketchPad.decode "{ こわれてる" |> Expect.equal Nothing
             ]
-        , describe "promptSection(依頼文の一節)"
-            [ test "何も塗らず補足も空なら Nothing(依頼文は今まで通り)" <|
+        , describe "promptSection(プロンプトの一節)"
+            [ test "何も塗らず補足も空なら Nothing(プロンプトは今まで通り)" <|
                 \_ -> SketchPad.promptSection SketchPad.init |> Expect.equal Nothing
             , test "塗りがあれば、凡例(ひとこと付き)・セル目・補足・原本パスが 1 節にまとまる" <|
                 \_ ->
@@ -173,7 +178,7 @@ suite =
                                 )
                             )
             ]
-        , describe "spliceInto(依頼文への差し込み)"
+        , describe "spliceInto(プロンプトへの差し込み)"
             [ test "【やること】の直前(説明の直後)に入る" <|
                 \_ ->
                     SketchPad.spliceInto "## 画面のラフ" promptFixture
@@ -231,7 +236,7 @@ suite =
                     in
                     ( shrunk.size, SketchPad.activeRows shrunk )
                         |> Expect.equal ( { w = 4, h = 3 }, [ "W...", "....", "...." ] )
-            , test "縮めた後の保存 JSON と依頼文は、見えている範囲だけを載せる" <|
+            , test "縮めた後の保存 JSON とプロンプトは、見えている範囲だけを載せる" <|
                 \_ ->
                     let
                         shrunk =
@@ -582,13 +587,64 @@ suite =
                     , String.contains "セル単位でできるだけ忠実に再現してください。" section
                     )
                         |> Expect.equal ( True, True )
-            , test "スライダー入力は 1〜4 に丸め、数字でない入力は無視する" <|
+            , test "ボタンで選んだ段階がそのまま入る" <|
                 \_ ->
-                    ( stepAll [ SketchPad.FidelityEdited "9" ] cornerModel |> Tuple.first |> .fidelity
-                    , stepAll [ SketchPad.FidelityEdited "0" ] cornerModel |> Tuple.first |> .fidelity
-                    , stepAll [ SketchPad.FidelityEdited "abc" ] { cornerModel | fidelity = 2 } |> Tuple.first |> .fidelity
-                    )
-                        |> Expect.equal ( 4, 1, 2 )
+                    stepAll [ SketchPad.FidelityPicked 3 ] cornerModel
+                        |> Tuple.first
+                        |> .fidelity
+                        |> Expect.equal 3
+            , test "範囲外の JSON は 1(雰囲気再現)に倒す" <|
+                \_ ->
+                    SketchPad.decode """{"version":1,"kind":"sketch","preset":"map","size":{"w":2,"h":2},"legend":[],"rows":["..",".."],"note":"","fidelity":9}"""
+                        |> Maybe.map .fidelity
+                        |> Expect.equal (Just 1)
+            ]
+        , describe "閉じる前の確認"
+            [ test "塗ってあるまま閉じようとすると、まだ閉じずに確認へ入る" <|
+                \_ ->
+                    stepAll [ SketchPad.CloseRequested ] { paintedModel | open = True }
+                        |> Tuple.first
+                        |> (\m -> ( m.open, m.closeAsked ))
+                        |> Expect.equal ( True, True )
+            , test "何も描いていなければ引き止めずに閉じる" <|
+                \_ ->
+                    stepAll [ SketchPad.CloseRequested ] { init | open = True }
+                        |> Tuple.first
+                        |> .open
+                        |> Expect.equal False
+            , test "「やめる」で確認だけ畳み、開いたまま残る" <|
+                \_ ->
+                    stepAll [ SketchPad.CloseRequested, SketchPad.CloseCancelled ] { paintedModel | open = True }
+                        |> Tuple.first
+                        |> (\m -> ( m.open, m.closeAsked ))
+                        |> Expect.equal ( True, False )
+            ]
+        , describe "幅・高さを数で打つ"
+            [ test "範囲に収まった数はその軸だけ変える" <|
+                \_ ->
+                    stepAll [ SketchPad.WidthTyped "12" ] cornerModel
+                        |> Tuple.first
+                        |> .size
+                        |> Expect.equal { w = 12, h = 4 }
+            , test "打ちかけ(最小未満)は絵に反映しない — 2 桁目が打てなくなるため" <|
+                \_ ->
+                    stepAll [ SketchPad.WidthTyped "1" ] cornerModel
+                        |> Tuple.first
+                        |> .size
+                        |> Expect.equal { w = 6, h = 4 }
+            , test "打ちかけのまま欄を離れると、欄は実際の寸法へ戻る" <|
+                \_ ->
+                    stepAll [ SketchPad.WidthTyped "1", SketchPad.SizeBlurred ] cornerModel
+                        |> Tuple.first
+                        |> .sizeDraft
+                        |> .w
+                        |> Expect.equal "6"
+            , test "数で広げた後も元に戻せる" <|
+                \_ ->
+                    stepAll [ SketchPad.WidthTyped "12", SketchPad.UndoClicked ] cornerModel
+                        |> Tuple.first
+                        |> .size
+                        |> Expect.equal { w = 6, h = 4 }
             ]
         , describe "カメラ(保存と読み戻し)"
             [ test "encode → decode でカメラが保たれる" <|
@@ -643,7 +699,7 @@ suite =
                         |> .camera
                         |> Expect.equal SketchPad.FirstPerson
             ]
-        , describe "カメラ(依頼文への反映)"
+        , describe "カメラ(プロンプトへの反映)"
             [ test "見出しにカメラとサイズが出る" <|
                 \_ ->
                     SketchPad.promptSection { paintedModel | camera = SketchPad.SideView }
@@ -862,7 +918,7 @@ suite =
                         |> Tuple.first
                         |> SketchPad.layerRows 0
                         |> Expect.equal [ "..", ".." ]
-            , test "レイヤーに分けたラフの依頼文は、レイヤーごとにセル目を 1 枚ずつ書く" <|
+            , test "レイヤーに分けたラフのプロンプトは、レイヤーごとにセル目を 1 枚ずつ書く" <|
                 \_ ->
                     SketchPad.promptSection layeredModel
                         |> Expect.equal
@@ -886,7 +942,7 @@ suite =
                                     ]
                                 )
                             )
-            , test "レイヤーを増やしただけ(塗ったのは 1 枚)の依頼文は、1 枚で描いたときと同じ" <|
+            , test "レイヤーを増やしただけ(塗ったのは 1 枚)のプロンプトは、1 枚で描いたときと同じ" <|
                 \_ ->
                     stepAll [ SketchPad.LayerAdded ] paintedModel
                         |> Tuple.first
