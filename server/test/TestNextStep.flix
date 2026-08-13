@@ -8,7 +8,7 @@ mod TestNextStep {
 
     def checks(candidates: Int32, stale: Bool, diffs: Int32): NextStep.Checks =
         { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
-          goldenEmpty = false, hasStarterDoc = false, gameRunning = false }
+          referenceEmpty = false, hasStarterDoc = false, gameRunning = false }
 
     def idNav(suggestion: NextStep.Suggestion): (String, String) =
         (suggestion#id, suggestion#nav)
@@ -45,7 +45,7 @@ mod TestNextStep {
     def testLaunchArrange(): Unit \ Assert =
         def withStarter(candidates: Int32, unseen: Int32, running: Bool): (String, String) =
             idNav(NextStep.suggest({ atelierCandidates = candidates, staleGallery = false,
-                                    diffCount = 0, goldenEmpty = false, hasStarterDoc = true,
+                                    diffCount = 0, referenceEmpty = false, hasStarterDoc = true,
                                     gameRunning = running }, unseen));
         Assert.assertEq(
             expected = (("launch", "launch"), ("arrange", "arrange"),
@@ -55,6 +55,6 @@ mod TestNextStep {
              fst(withStarter(1, 0, false)),
              fst(withStarter(0, 2, true)),
              NextStep.suggest({ atelierCandidates = 0, staleGallery = false,
-                               diffCount = 0, goldenEmpty = false, hasStarterDoc = false,
+                               diffCount = 0, referenceEmpty = false, hasStarterDoc = false,
                                gameRunning = true }, 0)#id))
 }

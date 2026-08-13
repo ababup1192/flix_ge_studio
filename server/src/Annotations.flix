@@ -1,4 +1,4 @@
-// Annotations — ゲーム内で切った「違和感チケット」(debug/annotations/) を Studio に見せる窓口。
+// Annotations — ゲーム内で切った「注釈チケット」(debug/annotations/) を Studio に見せる窓口。
 // チケットの中身 (world.json 等) は解釈しない — 読むのは README のタイトル行とコメント欄だけで、
 // あとはパスを運ぶ。ゲームの言葉を Studio に持ち込まないための線引き。
 

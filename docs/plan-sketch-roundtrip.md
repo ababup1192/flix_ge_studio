@@ -1,4 +1,4 @@
-# 違和感チケットのパネル(旧・sketch roundtrip 案2改)
+# 注釈チケットのパネル(旧・sketch roundtrip 案2改)
 
 状態: 実装済み(2026-08-12)。旧・段階2/3(盤面グリッドの往復・差分再送)は見送り。
 
@@ -29,9 +29,9 @@ annotation.json・world.json が書き出される(`render_gl/src/LwjglLayer.fli
   - `POST /annotations/comment {id,comment}` … README の「## コメント」欄を差し替え
   - `POST /annotations/archive {id}` … `debug/annotations/archive/` へ移動(消さない)
   - ルートは Editor.flix の dispatch(withProject 包み)。テストは server/test/TestAnnotations.flix
-- **web/src/Tickets.elm** — ホーム(viewHome)の「🎫 違和感チケット」パネル。
+- **web/src/Tickets.elm** — ホーム(viewHome)の「🎫 注釈チケット」パネル。
   - コメント入力(プレースホルダ「ここに不具合の内容を記述」、blur で保存)
-  - 「📋 違和感を報告」= `buildTicketPrompt`(純関数)で依頼文を作りコピー。一言が空なら押せない
+  - 「📋 注釈チケットを報告」= `buildTicketPrompt`(純関数)で依頼文を作りコピー。一言が空なら押せない
   - 「🗄 アーカイブ」。チケット 0 件ならパネルごと出さない。404 サーバは fail-open で畳む
   - 取得はホームを開いた足の 1 回(`gotoTab HomeTab` + 起動時)。ポーリング無し
   - テストは web/tests/TicketsTest.elm。realApi.ts に kind 3 つ追加
@@ -62,7 +62,7 @@ annotation.json・world.json が書き出される(`render_gl/src/LwjglLayer.fli
 
 ## 今後
 
-- 案1(one-click genesis)が入ったら、「違和感を報告」のコピーを
+- 案1(one-click genesis)が入ったら、「注釈チケットを報告」のコピーを
   「Studio に任せる」(claude ヘッドレス起動)に育てる。
 - 生成された物の側から「どのラフのどのバージョンから来たか」を覚え書きに吐くのは engine 側の
   変更なので、着手前に人へ相談する(まだ入っていない)。

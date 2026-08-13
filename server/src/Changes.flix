@@ -5,7 +5,7 @@
 //   1. 素材が絵より新しい (stale) → 走行権が空いていれば焼きを裏で起こす。
 //      このプロジェクトのゲームが走っていて命令口 (DEBUG_HTTP_PORT) を覚えていれば
 //      走行中のゲームに頼み (速い)、それ以外は従来の make bake
-//   2. 焼きたてで基準 (golden) と違う絵がある → 旧基準を golden/archive/ の vN へ退避し、
+//   2. 焼きたてでリファレンス画像と違う絵がある → 旧いリファレンス画像を reference/archive/ の vN へ退避し、
 //      新しい絵を基準にする (自動追随)。変わった場面を記録し、未読の知らせにする
 //   3. 初めての場面 (基準が無い) は黙って基準になる (知らせない)
 //
@@ -30,7 +30,7 @@ mod Changes {
     pub def pump(state: State, runner: Runner.State, game: Game.Runtime, dir: String): Json \ IO =
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
-        let firsts = items |> List.filter(item -> snd(item) == "missingGolden") |> List.map(fst);
+        let firsts = items |> List.filter(item -> snd(item) == "missingReference") |> List.map(fst);
         let running = Runner.runningTarget(runner) == Some("bake");
         let stale = NextStep.staleGalleryOf(dir);
         let baking =
@@ -41,14 +41,14 @@ mod Changes {
                 running;
         // 焼きたての時だけ追随する (stale の間の差分は古い絵との比較なので信用しない)
         if (not stale and not baking and (not List.isEmpty(diffs) or not List.isEmpty(firsts))) {
-            discard new JFile("${dir}/golden").mkdirs();
-            discard new JFile("${dir}/golden/archive").mkdirs();
+            discard new JFile("${dir}/reference").mkdirs();
+            discard new JFile("${dir}/reference/archive").mkdirs();
             foreach (name <- firsts)
-                copyFile("${dir}/gallery/${name}", "${dir}/golden/${name}");
+                copyFile("${dir}/gallery/${name}", "${dir}/reference/${name}");
             foreach (name <- diffs) {
                 let ver = nextVer(dir, name);
-                copyFile("${dir}/golden/${name}", "${dir}/golden/archive/${versionName(name, ver)}");
-                copyFile("${dir}/gallery/${name}", "${dir}/golden/${name}");
+                copyFile("${dir}/reference/${name}", "${dir}/reference/archive/${versionName(name, ver)}");
+                copyFile("${dir}/gallery/${name}", "${dir}/reference/${name}");
                 record(state, dir, name, ver)
             }
         } else ();
@@ -102,8 +102,8 @@ mod Changes {
                 JObject(Map#{
                     "name"   => JString(name),
                     "ver"    => JNumber(JsonCodec.intToBd(ver)),
-                    "before" => JString("golden/archive/${versionName(name, ver)}"),
-                    "after"  => JString("golden/${name}")
+                    "before" => JString("reference/archive/${versionName(name, ver)}"),
+                    "after"  => JString("reference/${name}")
                 })
             }) |> List.toVector)
         })
@@ -121,14 +121,14 @@ mod Changes {
 
     /// この相対パスへの保存が検査 (pump) をその場で蹴る対象か —
     /// 見た目に効き得る素材 (assets/ の JSON) だけ。stale 判定が見るのも assets/ の
-    /// JSON なので、それに合わせる。gallery/ や golden/ や debug/ への書き込みでは
+    /// JSON なので、それに合わせる。gallery/ や reference/ や debug/ への書き込みでは
     /// 蹴らない — 焼きの成果物の保存がまた焼きを呼ぶ、という堂々巡りをここで断つ。
     /// 対象を広めに拾っても pump は冪等 (stale と走行権で守られる) なので安全。
     pub def kicksPumpOnSave(relPath: String): Bool =
         String.startsWith(prefix = "assets/", relPath)
             and String.endsWith(suffix = ".json", relPath)
 
-    /// 基準の退避先の名前: "title.png" と 3 → "title.v3.png"。
+    /// リファレンス画像の退避先の名前: "title.png" と 3 → "title.v3.png"。
     pub def versionName(name: String, n: Int32): String =
         if (String.endsWith(suffix = ".png", name))
             "${String.dropRight(4, name)}.v${n}.png"
@@ -171,7 +171,7 @@ mod Changes {
     // ── ファイル ──────────────────────────────────────────
 
     def nextVer(dir: String, scene: String): Int32 \ IO =
-        let entries = new JFile("${dir}/golden/archive").listFiles();
+        let entries = new JFile("${dir}/reference/archive").listFiles();
         let names = if (Object.isNull(entries)) Nil
             else Array.toList(entries)
                 |> List.filter(file -> file.isFile())

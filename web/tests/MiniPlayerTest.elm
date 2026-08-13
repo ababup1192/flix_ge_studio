@@ -22,8 +22,8 @@ change : String -> Int -> Journey.Change
 change name ver =
     { name = name
     , ver = ver
-    , before = "golden/archive/" ++ name
-    , after = "golden/" ++ name
+    , before = "reference/archive/" ++ name
+    , after = "reference/" ++ name
     }
 
 
@@ -78,9 +78,9 @@ suite =
                     |> Expect.equal (Just "cave.png")
         , test "絵の URL はプロジェクトごとに異なる(定番名 title.png でもキャッシュが混ざらない)" <|
             \() ->
-                SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_village" "golden" "title.png"
+                SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_village" "reference" "title.png"
                     |> Expect.notEqual
-                        (SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_dungeon" "golden" "title.png")
+                        (SceneView.galleryImageUrl "" "/Users/me/Desktop/flix_ge_dungeon" "reference" "title.png")
         , test "プロジェクト切り替えでピン・場面一覧・知らせが初期化される" <|
             \() ->
                 let

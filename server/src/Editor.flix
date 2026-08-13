@@ -161,13 +161,13 @@ mod Editor {
             // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
             // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
             // 横断検索。宣言済み Doc の文字列値だけを単純一致で探す (大きな生成物は名前だけ)
-            // 焼き直した絵と音が「前と同じか」。golden/ があるプロジェクトだけ生きる
-            case ("GET", "/golden/status") => withProject(selection, exchange, dir -> {
-                let (status, json) = Golden.status(dir);
+            // 焼き直した絵と音が「前と同じか」。reference/ があるプロジェクトだけ生きる
+            case ("GET", "/reference/status") => withProject(selection, exchange, dir -> {
+                let (status, json) = Reference.status(dir);
                 sendJson(status, json, exchange)
             })
-            case ("POST", "/golden/bless") => withProject(selection, exchange, dir -> {
-                let (status, json) = Golden.bless(dir, readBody(exchange));
+            case ("POST", "/reference/update") => withProject(selection, exchange, dir -> {
+                let (status, json) = Reference.update(dir, readBody(exchange));
                 sendJson(status, json, exchange)
             })
             // 焼き係(ゲーム側の常駐サーバ)への取り次ぎ。宛先は宣言(bakeUrl)から来る
@@ -262,7 +262,7 @@ mod Editor {
                 let (status, json) = Changes.markSeen(changes, dir);
                 sendJson(status, json, exchange)
             })
-            // 違和感チケット (ゲーム内 F8 の注釈)。一覧・スクショ・一言の保存・アーカイブ。
+            // 注釈チケット (ゲーム内 F8)。一覧・スクショ・一言の保存・アーカイブ。
             case ("GET", "/annotations/list") => withProject(selection, exchange, dir ->
                 sendJson(200, Annotations.listJson(dir), exchange))
             case ("GET", "/annotations/shot") => withProject(selection, exchange, dir ->
@@ -855,7 +855,7 @@ mod Editor {
     /// GET /gallery/sound?name=… — 焼き上がった WAV のバイト列。無ければ 404。
     /// ゲームが焼いた assets/sfx/ と、検証用の debug/sounds/ の両方を見る。
     def handleGallerySound(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
-        // dir を添えると、その置き場だけを見る(正 golden/sfx と今 assets/sfx は
+        // dir を添えると、その置き場だけを見る(リファレンス画像側 reference/sfx と今 assets/sfx は
         // 同じ名前なので、聴き比べには置き場の指定が要る)
         let found = match (Map.get("name", params), Map.get("dir", params)) {
             case (Some(name), Some(sub)) => SfxShape.findBytesIn(dir, sub, name)

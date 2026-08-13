@@ -89,7 +89,7 @@ server が裏で叩く engine は `EDITOR_ENGINE`。`.app` では app が同梱 
 
 「新しいゲーム」のジャンル 9 枚は `server/src/Genesis.flix` の genres。`starter` が非空の
 ジャンルは複製で始まり（`templates/<name>` を engine の `make new-game`）、カードのサムネは
-その `golden/title.png`（無ければ golden の最初の絵に倒れる安全網あり）。テンプレを足す
+その `reference/title.png`（無ければ reference/ の最初の絵に倒れる安全網あり）。テンプレを足す
 全手順は engine の CLAUDE.md「テンプレートを足す・更新する」に集約。足したら Studio 側で
 `starter` を差して **`make swap-jar`**。
 

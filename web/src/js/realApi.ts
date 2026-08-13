@@ -150,10 +150,10 @@ export function realApi(base: string): Api {
           const url = String((payload as { url: string }).url ?? "");
           return getJson(url);
         }
-        case "goldenStatus":
-          return getJson(`${base}/golden/status`);
-        case "goldenBless":
-          return sendJsonReason("POST", `${base}/golden/bless`, payload);
+        case "referenceStatus":
+          return getJson(`${base}/reference/status`);
+        case "referenceUpdate":
+          return sendJsonReason("POST", `${base}/reference/update`, payload);
         case "search":
           return getJson(`${base}/search?q=${encodeURIComponent(String((payload as { q: string }).q ?? ""))}`);
         // 検索結果から飛んだ欄まで画面を送る。描き終わるのは Elm の次の描画なので
@@ -228,7 +228,7 @@ export function realApi(base: string): Api {
           // 「全場面を見る」の一覧(読むだけ)
           return getJson(`${base}/gallery/list`);
         case "annotationsList":
-          // 違和感チケットの一覧(読むだけ)
+          // 注釈チケットの一覧(読むだけ)
           return getJson(`${base}/annotations/list`);
         case "sketchList":
           // ラフ塗りの一覧(読むだけ) — 次に書くバージョン番号の元

@@ -131,7 +131,7 @@ mod Genesis {
         path != "" and (genres() |> List.exists(f -> f#starter == path))
 
     /// GET /genesis/title?genre=… — ジャンルカードの絵。公式テンプレートの
-    /// golden/title.png のバイト列。テンプレート無し・絵無し・engine 不在は None
+    /// reference/title.png のバイト列。テンプレート無し・絵無し・engine 不在は None
     /// (呼び手が 404 = 絵なしカードに倒す)。
     pub def titleBytes(params: Map[String, String]): Option[Array[Int8, Static]] \ IO =
         let starter = Map.get("genre", params)
@@ -141,19 +141,19 @@ mod Genesis {
         match starter {
             case None => None
             case Some(path) =>
-                let base = "${Scaffold.engineDir()}/${path}/golden";
+                let base = "${Scaffold.engineDir()}/${path}/reference";
                 let title = new JFile("${base}/title.png");
-                let pick = if (title.isFile()) Some(title) else firstGoldenPng(base);
+                let pick = if (title.isFile()) Some(title) else firstReferencePng(base);
                 match pick {
                     case Some(file) => Some(Files.readAllBytes(file.toPath()))
                     case None       => None
                 }
         }
 
-    /// golden/ の中の絵。title.png が無い starter でも最初の .png（名前順）を顔にして、
+    /// reference/ の中の絵。title.png が無い starter でも最初の .png（名前順）を顔にして、
     /// 空絵に倒れないための安全網（新テンプレで title.png を焼き忘れてもカードが絵を持つ）。
     /// 名前取り出し（getName は IO）は先に済ませ、並べ替えは純粋な文字列で行う。
-    def firstGoldenPng(dir: String): Option[JFile] \ IO =
+    def firstReferencePng(dir: String): Option[JFile] \ IO =
         let entries = new JFile(dir).listFiles();
         if (Object.isNull(entries)) None
         else {
@@ -185,7 +185,7 @@ mod Genesis {
             :: "骨格: ${f#skeleton}"
             :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。プレイヤーの目に入る文言は必ず Doc に置く(既定値はコード側。コード直書きの表示文字列は違反)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
             :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
-            :: "完了条件: make check / make test を緑に、golden を作って make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
+            :: "完了条件: make check / make test を緑に、リファレンス画像を作って make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
             :: ""
             :: "--- ここから あなたの言葉(書き換えて詳細を) ---"
             :: "世界: ${wordOr("world", "(例: 夜の温泉街)", params)}"
@@ -194,7 +194,7 @@ mod Genesis {
             :: Nil)
 
     /// フリージャンル: ゼロから書かせない。いちばん近いジャンルのテンプレートを
-    /// 土台に選ばせる(土台のテストと golden ごと引き継ぐ)。
+    /// 土台に選ばせる(土台のテストとリファレンス画像ごと引き継ぐ)。
     pub def freePrompt(direction: String): String =
         String.unlines(
             "新しいゲームのテンプレートを作ってください。"
@@ -203,6 +203,6 @@ mod Genesis {
             :: "決めること: 操作・動かせるもの・終わり方(私の言葉から補って)"
             :: "守ること: AGENTS.md と .claude/skills の規約に従う。ルール・当たり判定・進行はコード、見た目と数値は Doc(material / tuning を仕分け)。プレイヤーの目に入る文言は必ず Doc に置く(既定値はコード側。コード直書きの表示文字列は違反)。テストはルール・進行・収支だけ(期待値は Doc から導く)。"
             :: "エンジン API 優先: 実装の前に engine の docs/module-index.md(やりたいこと → モジュールの逆引き)を引き、エンジンにある物(UI・スクロール・文字折り・当たり判定等)を自前で書かない。"
-            :: "完了条件: make check / make test を緑に、土台の golden を引き継いで make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
+            :: "完了条件: make check / make test を緑に、土台のリファレンス画像を引き継いで make bake まで。報告の前に /critique-code で自己批評し、指摘を潰す。gallery の絵を見せて報告する。"
             :: Nil)
 }

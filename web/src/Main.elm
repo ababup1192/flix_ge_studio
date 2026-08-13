@@ -27,7 +27,7 @@ import EditHistory
 import Effect exposing (Effect)
 import EntryOps
 import EntryTable
-import GoldenView
+import ReferenceView
 import FileVerbs
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
@@ -466,7 +466,7 @@ type alias Model =
     , tab : Tab
     , journey : Journey.Model
 
-    -- 違和感チケット(ゲーム内 F8 の注釈に一言を添えて AI へ運ぶ窓)
+    -- 注釈チケット(ゲーム内 F8 で切った注釈に一言を添えて AI へ運ぶ窓)
     , tickets : Tickets.Model
 
     -- 見た目の自動検査(/journey/changes)。baking = エンジンが全場面を
@@ -666,8 +666,8 @@ type alias Model =
     -- 1 枚焼きが返した注意(飛ばしたカットの報せ)
     , frameNotes : List String
 
-    -- 焼き上がりの見比べ(golden)。数字はステータスバーに出す
-    , golden : GoldenView.Model
+    -- 焼き上がりの見比べ(リファレンス画像との差分)。数字はステータスバーに出す
+    , reference : ReferenceView.Model
 
     -- 生成された絵とラフの見比べ。ラフの中身の往復は id で見分ける
     -- (ファイルを開く道と同じ "getFile" の口を使うので、札を分けないと取り違える)
@@ -992,7 +992,7 @@ init _ =
         , frameReq = Nothing
         , saveGen = 0
         , frameNotes = []
-        , golden = GoldenView.init
+        , reference = ReferenceView.init
         , sketchCompare = SketchCompare.init
         , sketchDraftReq = Nothing
         , wakeReq = Nothing
@@ -1123,13 +1123,13 @@ type Msg
     | BakeTick
     | FilmAdvanced
     | FramePeeked Int
-    | GoldenOpened
-    | GoldenClosed
-    | GoldenSelected String
-    | GoldenModeChosen GoldenView.Mode
-    | GoldenOpacityChanged String
-    | GoldenBlessed Api.GoldenItem
-    | GoldenPlayClicked { name : String, dir : String }
+    | ReferenceOpened
+    | ReferenceClosed
+    | ReferenceSelected String
+    | ReferenceModeChosen ReferenceView.Mode
+    | ReferenceOpacityChanged String
+    | ReferenceUpdated Api.ReferenceItem
+    | ReferencePlayClicked { name : String, dir : String }
     | SketchCompareOpened
     | SketchCompareClosed
     | SketchCompareSceneChosen String
@@ -1901,27 +1901,27 @@ update msg model =
             else
                 ( model, Effect.none )
 
-        GoldenOpened ->
+        ReferenceOpened ->
             -- 開くたびに見比べ直す(焼き直した直後に開くのが普通の使い方)。
             -- 読み取りだけの封筒なので採番外(往復の番号をずらさない)
-            ( { model | golden = GoldenView.open model.golden }, requestInfo "goldenStatus" )
+            ( { model | reference = ReferenceView.open model.reference }, requestInfo "referenceStatus" )
 
-        GoldenClosed ->
-            ( { model | golden = GoldenView.close model.golden }, Effect.none )
+        ReferenceClosed ->
+            ( { model | reference = ReferenceView.close model.reference }, Effect.none )
 
-        GoldenSelected name ->
-            paintGoldenDiff { model | golden = GoldenView.select name model.golden }
+        ReferenceSelected name ->
+            paintReferenceDiff { model | reference = ReferenceView.select name model.reference }
 
-        GoldenModeChosen mode ->
-            paintGoldenDiff { model | golden = GoldenView.setMode mode model.golden }
+        ReferenceModeChosen mode ->
+            paintReferenceDiff { model | reference = ReferenceView.setMode mode model.reference }
 
-        GoldenOpacityChanged text_ ->
-            ( { model | golden = GoldenView.setOpacity text_ model.golden }, Effect.none )
+        ReferenceOpacityChanged text_ ->
+            ( { model | reference = ReferenceView.setOpacity text_ model.reference }, Effect.none )
 
-        GoldenBlessed item ->
-            request "goldenBless" (E.object [ ( "name", E.string item.name ) ]) model
+        ReferenceUpdated item ->
+            request "referenceUpdate" (E.object [ ( "name", E.string item.name ) ]) model
 
-        GoldenPlayClicked info ->
+        ReferencePlayClicked info ->
             request "playSound"
                 (E.object
                     [ ( "name", E.string info.name )
@@ -5961,7 +5961,7 @@ handleOkByKind env model =
                     -- 既定の画面はホームなので、その中身も最初に取っておく
                     ( m2
                     , Effect.batch
-                        [ c1, c2, requestInfo "goldenStatus", requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ]
+                        [ c1, c2, requestInfo "referenceStatus", requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ]
                     )
 
                 Ok (Api.HealthErr _) ->
@@ -6178,7 +6178,7 @@ handleOkByKind env model =
                                 other ->
                                     other
 
-                        -- 描き直しが終わった瞬間(true → false)。golden/ の絵は
+                        -- 描き直しが終わった瞬間(true → false)。reference/ の絵は
                         -- この時に入れ替わる — ミニプレイヤーのキャッシュ破りの
                         -- 目盛りを進め、知らせの列が実際に動いた時だけ
                         -- 「✓ 差し替わりました」を点す(2 秒で消える)
@@ -6895,17 +6895,17 @@ handleOkByKind env model =
                     else
                         ( { model | notice = Just "file 応答が読めませんでした" }, Effect.none )
 
-        "goldenStatus" ->
-            case D.decodeValue Api.goldenStatusDecoder env.body of
+        "referenceStatus" ->
+            case D.decodeValue Api.referenceStatusDecoder env.body of
                 Ok status ->
-                    paintGoldenDiff { model | golden = GoldenView.withStatus status model.golden }
+                    paintReferenceDiff { model | reference = ReferenceView.withStatus status model.reference }
 
                 Err _ ->
                     ( model, Effect.none )
 
-        -- 祝福したら見比べ直す(直った物が一覧から消える)
-        "goldenBless" ->
-            ( model, requestInfo "goldenStatus" )
+        -- リファレンス画像を更新したら見比べ直す(直った物が一覧から消える)
+        "referenceUpdate" ->
+            ( model, requestInfo "referenceStatus" )
 
         "diffImages" ->
             ( model, Effect.none )
@@ -8203,7 +8203,7 @@ viewShell model content =
 
         -- 検索はどの画面からでも開ける(ホームで開いた結果もエディタへ飛ぶ)
         , viewSearchPanel model
-        , viewGoldenWindow model
+        , viewReferenceWindow model
         , viewSketchCompareWindow model
         , viewFailureDialog model
         ]
@@ -8224,7 +8224,7 @@ viewTopbarRow model extras =
          , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
             [ viewSearchButton
             , viewFailureBadge model
-            , viewGoldenBadge model
+            , viewReferenceBadge model
             , viewSketchCompareButton model
             , viewProjectSwitch
             ]
@@ -8355,11 +8355,11 @@ viewFailureDialog model =
 
 
 {-| 焼き上がりの見張りの数字。割れていれば琥珀、揃っていれば静かな緑。
-golden/ を持たないプロジェクトでは出さない(見張る決まりが無い)。
+reference/ を持たないプロジェクトでは出さない(見張る決まりが無い)。
 -}
-viewGoldenBadge : Model -> Html Msg
-viewGoldenBadge model =
-    case model.golden.status of
+viewReferenceBadge : Model -> Html Msg
+viewReferenceBadge model =
+    case model.reference.status of
         Just status ->
             if not status.enabled || status.total == 0 then
                 text ""
@@ -8367,12 +8367,12 @@ viewGoldenBadge model =
             else
                 button
                     [ HA.classList
-                        [ ( "golden-badge btn btn-ghost btn-mini shrink-0", True )
+                        [ ( "reference-badge btn btn-ghost btn-mini shrink-0", True )
                         , ( "text-amber-300", status.broken > 0 )
                         , ( "text-ok", status.broken == 0 )
                         ]
                     , HA.title "焼き上がりが前と同じかを見比べる"
-                    , HE.onClick GoldenOpened
+                    , HE.onClick ReferenceOpened
                     ]
                     [ text
                         (if status.broken > 0 then
@@ -8432,18 +8432,18 @@ viewSketchCompareWindow model =
         model.sketchCompare
 
 
-viewGoldenWindow : Model -> Html Msg
-viewGoldenWindow model =
-    GoldenView.view
-        { onSelect = GoldenSelected
-        , onMode = GoldenModeChosen
-        , onOpacity = GoldenOpacityChanged
-        , onBless = GoldenBlessed
-        , onPlay = GoldenPlayClicked
-        , onClose = GoldenClosed
+viewReferenceWindow : Model -> Html Msg
+viewReferenceWindow model =
+    ReferenceView.view
+        { onSelect = ReferenceSelected
+        , onMode = ReferenceModeChosen
+        , onOpacity = ReferenceOpacityChanged
+        , onUpdate = ReferenceUpdated
+        , onPlay = ReferencePlayClicked
+        , onClose = ReferenceClosed
         }
-        { golden = goldenUrl model, baked = bakedUrl model }
-        model.golden
+        { reference = referenceUrl model, baked = bakedUrl model }
+        model.reference
 
 
 viewSearchPanel : Model -> Html Msg
@@ -8494,7 +8494,7 @@ viewNavTabs tab =
 
 
 {-| ミニプレイヤー — 「ゲームの今」でなく「編集の今」を映す右下の枠
-(アトリエタブの間だけ)。場面の絵は基準(golden/)の PNG。既定の「自動」は
+(アトリエタブの間だけ)。場面の絵はリファレンス画像(reference/)の PNG。既定の「自動」は
 知らせの最新の場面を追い、場面チップでピン留めできる。知らせの既読(seen)は
 ここでは付けない — 通知と見比べモーダルの責務を侵さない。
 -}
@@ -8671,9 +8671,9 @@ viewChangesModal model =
                                 [ text ("v" ++ String.fromInt current.ver) ]
                             ]
                         , div [ HA.class "flex flex-wrap gap-4" ]
-                            [ changePane "前" (SceneView.galleryImageUrl model.serverBase model.root "golden/archive" (baseName current.before))
+                            [ changePane "前" (SceneView.galleryImageUrl model.serverBase model.root "reference/archive" (baseName current.before))
                             , changePane "今"
-                                (SceneView.galleryImageUrl model.serverBase model.root "golden" (baseName current.after)
+                                (SceneView.galleryImageUrl model.serverBase model.root "reference" (baseName current.after)
                                     -- 中身が入れ替わるファイルなので v でキャッシュを避ける
                                     ++ ("&t=" ++ String.fromInt current.ver)
                                 )
@@ -9080,7 +9080,7 @@ viewEditing model =
                     Nothing ->
                         text ""
                 , viewFileMenu model
-                , viewGoldenWindow model
+                , viewReferenceWindow model
                 , viewSketchCompareWindow model
                 , viewBakeZoom model
                 , viewTilePicker model
@@ -10075,15 +10075,15 @@ viewFilmControls model at last =
 {-| 「違いを塗る」を選んでいる間だけ、画布に 2 枚を重ねて塗ってもらう。
 描くのは JS(画素の計算は Elm の仕事ではない)。
 -}
-paintGoldenDiff : Model -> ( Model, Effect )
-paintGoldenDiff model =
-    case ( model.golden.mode, GoldenView.selectedItem model.golden ) of
-        ( GoldenView.Diff, Just item ) ->
+paintReferenceDiff : Model -> ( Model, Effect )
+paintReferenceDiff model =
+    case ( model.reference.mode, ReferenceView.selectedItem model.reference ) of
+        ( ReferenceView.Diff, Just item ) ->
             request "diffImages"
                 (E.object
-                    [ ( "a", E.string (goldenUrl model item) )
+                    [ ( "a", E.string (referenceUrl model item) )
                     , ( "b", E.string (bakedUrl model item) )
-                    , ( "id", E.string GoldenView.diffCanvasId )
+                    , ( "id", E.string ReferenceView.diffCanvasId )
                     ]
                 )
                 model
@@ -10109,13 +10109,13 @@ loadSketchDraft model =
             ( model, Effect.none )
 
 
-{-| 正(golden)と今(焼き上がり)の絵の URL。置き場だけが違う。 -}
-goldenUrl : Model -> Api.GoldenItem -> String
-goldenUrl model item =
-    SceneView.galleryImageUrl model.serverBase model.root "golden" item.name
+{-| リファレンス画像と今(焼き上がり)の絵の URL。置き場だけが違う。 -}
+referenceUrl : Model -> Api.ReferenceItem -> String
+referenceUrl model item =
+    SceneView.galleryImageUrl model.serverBase model.root "reference" item.name
 
 
-bakedUrl : Model -> Api.GoldenItem -> String
+bakedUrl : Model -> Api.ReferenceItem -> String
 bakedUrl model item =
     SceneView.galleryImageUrl model.serverBase model.root "gallery" item.name
 
@@ -14539,13 +14539,13 @@ subscriptions model =
             Sub.none
 
         -- 見比べの窓が開いている間だけ Esc で閉じる
-        , if GoldenView.isOpen model.golden then
+        , if ReferenceView.isOpen model.reference then
             Browser.Events.onKeyDown
                 (D.field "key" D.string
                     |> D.andThen
                         (\key ->
                             if key == "Escape" then
-                                D.succeed GoldenClosed
+                                D.succeed ReferenceClosed
 
                             else
                                 D.fail "他のキーは素通し"

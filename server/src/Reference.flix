@@ -1,16 +1,16 @@
-// Golden — 焼き直した絵と音が「前と同じか」を見張る窓口。
+// Reference — 焼き直した絵と音が「前と同じか」を見張る窓口。
 //
-// 有効かどうかはファイルの決まりだけで判じる: プロジェクトに golden/ があれば
+// 有効かどうかはファイルの決まりだけで判じる: プロジェクトに reference/ があれば
 // この機能が生きる。ゲームの言葉(場面名・題材)は一切見ない。
 //
 // 見比べるのは 2 組:
-//   golden/*.png      ↔ gallery/*.png     (焼いた絵)
-//   golden/sfx/*.wav  ↔ assets/sfx/*.wav  (焼いた音)
+//   reference/*.png      ↔ gallery/*.png     (焼いた絵)
+//   reference/sfx/*.wav  ↔ assets/sfx/*.wav  (焼いた音)
 //
 // 「割れて何日目か」を言えるように、割れを最初に見つけた時刻だけを
-// .studio/golden-diff.json に控える。控えが無い時の初回は「今」。
+// .studio/reference-diff.json に控える。控えが無い時の初回は「今」。
 // 記録が消えても困らない(日数が 0 日からになるだけ)。
-mod Golden {
+mod Reference {
     import java.io.{File => JFile}
     import java.lang.Exception
     import java.lang.System
@@ -20,11 +20,11 @@ mod Golden {
     use Util.Json.Json.{JArray, JObject, JString, JBool, JNumber}
 
     /// 見張りの記録の置き場(プロジェクトの中の小さな控え)。
-    def recordPath(): String = ".studio/golden-diff.json"
+    def recordPath(): String = ".studio/reference-diff.json"
 
-    /// GET /golden/status — 一覧と、割れの件数。
+    /// GET /reference/status — 一覧と、割れの件数。
     pub def status(dir: String): (Int32, Json) \ IO =
-        if (not new JFile("${dir}/golden").isDirectory())
+        if (not new JFile("${dir}/reference").isDirectory())
             (200, JObject(Map#{"enabled" => JBool(false), "items" => JArray(Vector#{})}))
         else {
             let items = imageItems(dir) ::: soundItems(dir);
@@ -40,8 +40,8 @@ mod Golden {
             }))
         }
 
-    /// POST /golden/bless {name} — 今の焼き上がりを新しい正にする。
-    pub def bless(dir: String, body: String): (Int32, Json) \ IO =
+    /// POST /reference/update {name} — 今の焼き上がりを新しいリファレンス画像にする。
+    pub def update(dir: String, body: String): (Int32, Json) \ IO =
         match (DocJson.parse(body)
                 |> Option.flatMap(JsonCodec.expectObject)
                 |> Option.flatMap(obj -> Map.get("name", obj))
@@ -51,12 +51,12 @@ mod Golden {
                 if (not Gallery.isSafeName(name))
                     (400, errorJson("bad name: ${name}"))
                 else {
-                    let (baked, golden) =
+                    let (baked, reference) =
                         if (String.endsWith(suffix = ".wav", name))
-                            ("assets/sfx/${name}", "golden/sfx/${name}")
+                            ("assets/sfx/${name}", "reference/sfx/${name}")
                         else
-                            ("gallery/${name}", "golden/${name}");
-                    match copyInside(dir, baked, golden) {
+                            ("gallery/${name}", "reference/${name}");
+                    match copyInside(dir, baked, reference) {
                         case Err(message) => (400, errorJson(message))
                         case Ok(_)        => {
                             forget(dir, name);
@@ -68,24 +68,24 @@ mod Golden {
 
     // ── 見比べ ────────────────────────────────────────────
 
-    pub type alias Item = {name = String, kind = String, same = Bool, goldenMtime = Int64}
+    pub type alias Item = {name = String, kind = String, same = Bool, referenceMtime = Int64}
 
     def imageItems(dir: String): List[Item] \ IO =
-        namesIn(dir, "golden", ".png")
+        namesIn(dir, "reference", ".png")
             |> List.map(name -> ({
                 name = name,
                 kind = "image",
-                same = sameBytes(dir, "golden/${name}", "gallery/${name}"),
-                goldenMtime = mtimeOf(dir, "golden/${name}")
+                same = sameBytes(dir, "reference/${name}", "gallery/${name}"),
+                referenceMtime = mtimeOf(dir, "reference/${name}")
             }: Item))
 
     def soundItems(dir: String): List[Item] \ IO =
-        namesIn(dir, "golden/sfx", ".wav")
+        namesIn(dir, "reference/sfx", ".wav")
             |> List.map(name -> ({
                 name = name,
                 kind = "sound",
-                same = sameBytes(dir, "golden/sfx/${name}", "assets/sfx/${name}"),
-                goldenMtime = mtimeOf(dir, "golden/sfx/${name}")
+                same = sameBytes(dir, "reference/sfx/${name}", "assets/sfx/${name}"),
+                referenceMtime = mtimeOf(dir, "reference/sfx/${name}")
             }: Item))
 
     /// その置き場の、拡張子が合うファイル名(名前順)。
@@ -122,8 +122,8 @@ mod Golden {
         if (file.isFile()) file.lastModified() else 0i64
 
     /// 焼き上がりを正へ写す(どちらもプロジェクトの中に限る)。
-    def copyInside(dir: String, bakedRel: String, goldenRel: String): Result[String, Unit] \ IO =
-        match FileIndex.resolveInside(dir, goldenRel) {
+    def copyInside(dir: String, bakedRel: String, referenceRel: String): Result[String, Unit] \ IO =
+        match FileIndex.resolveInside(dir, referenceRel) {
             case None => Err("path is outside the project")
             case Some(dst) =>
                 match readBytes(dir, bakedRel) {
@@ -178,7 +178,7 @@ mod Golden {
             "name"        => JString(item#name),
             "kind"        => JString(item#kind),
             "match"       => JBool(item#same),
-            "goldenMtime" => JNumber(JsonCodec.intToBd(seconds(item#goldenMtime)))
+            "referenceMtime" => JNumber(JsonCodec.intToBd(seconds(item#referenceMtime)))
         };
         match Map.get(item#name, seen) {
             case Some(at) => Map.insert("since", JNumber(JsonCodec.intToBd(at)), base) |> JObject

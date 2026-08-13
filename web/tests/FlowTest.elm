@@ -457,7 +457,7 @@ landingWith resources =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList", "sketchList" ]
+        |> ensureKinds [ "files", "resources", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
@@ -964,19 +964,19 @@ tilePickResourcesBody =
         ]
 
 
-{-| GET /golden/status の応答(採番外 id 0 の読み取り封筒で届く)。 -}
-goldenEnvelope : E.Value -> D.Value
-goldenEnvelope body =
+{-| GET /reference/status の応答(採番外 id 0 の読み取り封筒で届く)。 -}
+referenceEnvelope : E.Value -> D.Value
+referenceEnvelope body =
     E.object
         [ ( "id", E.int 0 )
-        , ( "kind", E.string "goldenStatus" )
+        , ( "kind", E.string "referenceStatus" )
         , ( "ok", E.bool True )
         , ( "body", body )
         ]
 
 
-goldenStatusBody : E.Value
-goldenStatusBody =
+referenceStatusBody : E.Value
+referenceStatusBody =
     E.object
         [ ( "enabled", E.bool True )
         , ( "now", E.int 1785400000 )
@@ -988,20 +988,20 @@ goldenStatusBody =
                     [ ( "name", E.string "chem.png" )
                     , ( "kind", E.string "image" )
                     , ( "match", E.bool True )
-                    , ( "goldenMtime", E.int 1785237743 )
+                    , ( "referenceMtime", E.int 1785237743 )
                     ]
                 , E.object
                     [ ( "name", E.string "pit.png" )
                     , ( "kind", E.string "image" )
                     , ( "match", E.bool False )
-                    , ( "goldenMtime", E.int 1785237743 )
+                    , ( "referenceMtime", E.int 1785237743 )
                     , ( "since", E.int 1785140000 )
                     ]
                 , E.object
                     [ ( "name", E.string "step1.wav" )
                     , ( "kind", E.string "sound" )
                     , ( "match", E.bool True )
-                    , ( "goldenMtime", E.int 1785237743 )
+                    , ( "referenceMtime", E.int 1785237743 )
                     ]
                 ]
           )
@@ -1345,7 +1345,7 @@ suite =
                 start
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
-                    |> expectKinds [ "files", "resources", "goldenStatus", "journeyState", "annotationsList", "sketchList" ]
+                    |> expectKinds [ "files", "resources", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
         , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで提案を取り直す" <|
             \() ->
                 bootedWith resourcesBody
@@ -1380,8 +1380,8 @@ suite =
                                     [ E.object
                                         [ ( "name", E.string "title.png" )
                                         , ( "ver", E.int 3 )
-                                        , ( "before", E.string "golden/archive/title.v3.png" )
-                                        , ( "after", E.string "golden/title.png" )
+                                        , ( "before", E.string "reference/archive/title.v3.png" )
+                                        , ( "after", E.string "reference/title.png" )
                                         ]
                                     ]
                               )
@@ -1959,25 +1959,25 @@ suite =
         , test "焼き上がりの見比べ: 数字を押すと窓が開き、割れた物が先に並ぶ" <|
             \() ->
                 booted
-                    |> ProgramTest.update (Main.GotApiResponse (goldenEnvelope goldenStatusBody))
+                    |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
                     |> ProgramTest.ensureViewHas [ text "⚠ 1 / 3" ]
                     |> ProgramTest.clickButton "⚠ 1 / 3"
                     |> ProgramTest.expectViewHas
                         [ text "1 件 割れています(2 / 3 一致)"
                         , text "pit.png"
-                        , text "この姿を正にする(祝福)"
+                        , text "リファレンス画像を更新"
                         ]
-        , test "焼き上がりの見比べ: 祝福すると、その名前をサーバへ渡して見比べ直す" <|
+        , test "焼き上がりの見比べ: リファレンス画像を更新すると、その名前をサーバへ渡して見比べ直す" <|
             \() ->
                 booted
-                    |> ProgramTest.update (Main.GotApiResponse (goldenEnvelope goldenStatusBody))
+                    |> ProgramTest.update (Main.GotApiResponse (referenceEnvelope referenceStatusBody))
                     |> ProgramTest.clickButton "⚠ 1 / 3"
-                    -- 窓を開いた拍の見比べ直し(採番外)を挟んでから祝福が飛ぶ
-                    |> ensureKinds [ "goldenStatus" ]
-                    |> ProgramTest.clickButton "この姿を正にする(祝福)"
+                    -- 窓を開いた拍の見比べ直し(採番外)を挟んでから更新が飛ぶ
+                    |> ensureKinds [ "referenceStatus" ]
+                    |> ProgramTest.clickButton "リファレンス画像を更新"
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "name" ] D.string))
-                        (Expect.equal [ ( "goldenBless", "pit.png" ) ])
+                        (Expect.equal [ ( "referenceUpdate", "pit.png" ) ])
         , test "行を選ぶと、その瞬間を 1 枚だけ焼いて出す(連打は最後の 1 回だけ)" <|
             \() ->
                 openedCuts

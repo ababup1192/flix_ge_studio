@@ -10,13 +10,13 @@ mod NextStep {
     use Util.Json.Json.{JObject, JString, JNumber, JBool}
 
     /// 判断の材料。atelierCandidates = atelier/ の試作 JSON の数、
-    /// staleGallery = 素材の方が絵より新しい (焼き直しが要る)、diffCount = golden との差分の数、
+    /// staleGallery = 素材の方が絵より新しい (焼き直しが要る)、diffCount = リファレンス画像との差分の数、
     /// gameRunning = このプロジェクトのゲームが走っているか。
     pub type alias Checks = {
         atelierCandidates = Int32,
         staleGallery      = Bool,
         diffCount         = Int32,
-        goldenEmpty       = Bool,
+        referenceEmpty       = Bool,
         hasStarterDoc     = Bool,
         gameRunning       = Bool
     }
@@ -114,15 +114,15 @@ mod NextStep {
         let stale = isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir));
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) != "ok") |> List.length;
-        // お手本がまだ空 = 全項目が「golden に無い」。gallery まで空なら items が空で
-        // diffs も 0 なので、firstBless ではなく create に落ちる。
-        let goldenEmpty = List.forAll(item -> snd(item) == "missingGolden", items);
+        // お手本がまだ空 = 全項目が「reference/ に無い」。gallery まで空なら items が空で
+        // diffs も 0 なので、リファレンス画像の更新ではなく create に落ちる。
+        let referenceEmpty = List.forAll(item -> snd(item) == "missingReference", items);
         // 産まれたてテンプレートの見分け: 雛形 Doc がまだそのまま居るか。
         let hasStarterDoc = new JFile("${dir}/assets/sample.kind.json").isFile();
         // このプロジェクトのゲームが走っているか (GET /game/status と同じ見方)。
         let gameRunning = Game.isRunning(game, dir);
         { atelierCandidates = candidates, staleGallery = stale, diffCount = diffs,
-          goldenEmpty = goldenEmpty, hasStarterDoc = hasStarterDoc, gameRunning = gameRunning }
+          referenceEmpty = referenceEmpty, hasStarterDoc = hasStarterDoc, gameRunning = gameRunning }
 
     /// dir/subdir 直下の *.json の mtime 一覧。無ければ空。
     def jsonMtimes(dir: String, subdir: String): List[Int64] \ IO =

@@ -190,7 +190,7 @@ app: jar web jre
 #   bin/flix.jar  … Flix コンパイラ本体
 #   Makefile      … 新しいゲームを作る (new-game) のに使う
 #   flix.toml     … その new-game が engine の版を読むのに要る
-#   templates/    … その複製元。ジャンル札のサムネ (golden/title.png) もここから読む
+#   templates/    … その複製元。ジャンルカードのサムネ (reference/title.png) もここから読む
 #   engine_full/  … 生まれたゲームの lib/ に置かれる engine の fpkg と toml
 #   agents-pack/  … 生まれたゲームに配る AGENTS.md と skills の元
 #   lib/          … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す
@@ -231,8 +231,8 @@ stage-engine:
 	# 生まれたゲームへ配る道具 (new-game の sync-agents が bin/ と .claude/hooks/ から写す物。
 	# 一覧は engine の Makefile sync-agents の cp と対 — あちらだけ増えると同梱 new-game が転ぶ)
 	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
-	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/golden-bless.sh \
-	   $(ENGINE)/bin/golden-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
+	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/reference-update.sh \
+	   $(ENGINE)/bin/reference-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/bin/precommit.py $(ENGINE)/bin/sync-agents.py $(ENGINE_STAGE)/bin/
 	mkdir -p $(ENGINE_STAGE)/bin/githooks
 	cp $(ENGINE)/bin/githooks/pre-commit $(ENGINE_STAGE)/bin/githooks/
@@ -244,7 +244,9 @@ stage-engine:
 	   $(ENGINE_STAGE)/docs/
 	cp $(ENGINE)/docs/api-digest/*.md $(ENGINE_STAGE)/docs/api-digest/
 	mkdir -p $(ENGINE_STAGE)/.claude/hooks
-	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/session-diet.py $(ENGINE_STAGE)/.claude/hooks/
+	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/after-flix-work.py \
+	   $(ENGINE)/.claude/hooks/after-flix-touch.py $(ENGINE)/.claude/hooks/session-diet.py \
+	   $(ENGINE_STAGE)/.claude/hooks/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
 	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
 	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml

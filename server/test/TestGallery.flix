@@ -1,4 +1,4 @@
-// TestGallery — 配ってよい名前の門番と、golden との見比べ (差分の種類分け) のルールを固定する。
+// TestGallery — 配ってよい名前の門番と、リファレンス画像との見比べ (差分の種類分け) のルールを固定する。
 // ファイルの実読みや HTTP は curl での通し確認に任せ、ここは判定だけを見る。
 
 mod TestGallery {
@@ -15,11 +15,11 @@ mod TestGallery {
              Gallery.isSafeName("")))
 
     /// 差分の種類分け: 両方あり + 一致 = ok、不一致 = diff、
-    /// gallery だけ = missingGolden、golden だけ = missingGallery。
+    /// gallery だけ = missingReference、reference だけ = missingGallery。
     @Test
     def testDiffStatus(): Unit \ Assert =
         Assert.assertEq(
-            expected = ("ok", "diff", "missingGolden", "missingGallery"),
+            expected = ("ok", "diff", "missingReference", "missingGallery"),
             (Gallery.diffStatus(true, true, true),
              Gallery.diffStatus(true, true, false),
              Gallery.diffStatus(true, false, false),
@@ -30,7 +30,7 @@ mod TestGallery {
     def testDiffItemsUnion(): Unit \ Assert =
         Assert.assertEq(
             expected = ("autumn.png", "missingGallery") :: ("spring.png", "ok")
-                    :: ("summer.png", "diff") :: ("winter.png", "missingGolden") :: Nil,
+                    :: ("summer.png", "diff") :: ("winter.png", "missingReference") :: Nil,
             Gallery.diffItems(
                 "spring.png" :: "summer.png" :: "winter.png" :: Nil,
                 "spring.png" :: "summer.png" :: "autumn.png" :: Nil,

@@ -8,14 +8,9 @@
    `case "genesisGenres": case "genesisFamilies":`）。**Elm を付け替えたら、
    その両受けと `?? payload.family` を消す**
    - UI に出ている「家族」も「ジャンル」へ（人からの「家族のカード -> 家族？」の指摘）
-2. **engine 側で `golden/` → `snapshot/` に改名した追随**が要る:
-   - `Makefile` の `stage-engine` の cp リスト: `bin/golden-bless.sh` / `golden-check.sh` →
-     `bin/snapshot-update.sh` / `bin/snapshot-check.sh`
-   - `GET /genesis/title` が読む `templates/<genre>-starter/golden/title.png` →
-     `snapshot/title.png`
-   - `/golden/*` API 一式と `GoldenView.elm` → `snapshot` / `SnapshotView.elm`。
-     UI 文言は**「スナップショットを更新」**で統一（「この姿を正にする」は使わない）
-   - `docs/glossary.md` の見比べのパス（engine 側は `snapshot/archive/<scene>.vN.png` へ更新済み）
+2. **engine 側の `golden/` → `reference/` 改名の追随は完了**（ディスク上のパスに続いて
+   識別子と HTTP の口も改名済み。下の「済んだ物」を見る）。
+   残るのは `docs/glossary.md` の見比べのパス（engine 側は `reference/archive/<scene>.vN.png`）
 3. **反映は未実施**。server も web も変えたので `make swap-jar` と `make swap-web` の両方が要る
 
 ## 済んだ物（2026-08-13 昼・言葉づかい）
@@ -25,6 +20,15 @@
   説明は平易に、の 2 段構え）+ 名前の付け方の節を新設 + `bin/lint-jargon.py` で
   コミット時に止める仕組みを入れた
 - `family` → `genre`（server・realApi.ts・テスト・docs）
+- `golden` → `reference` の識別子と HTTP の口（約 210 箇所）。
+  `/reference/status` `/reference/update`・`server/src/Reference.flix`(`mod Reference`)・
+  `web/src/ReferenceView.elm`・`Api.ReferenceItem` / `referenceMtime` / `referenceStatus`・
+  `reference-*` クラス・`.studio/reference-diff.json`・server 内部の `missingReference`。
+  UI 文言は「リファレンス画像を更新」に統一。
+  **触っていない物**: `PixelEditor.goldenHue`（黄金角）と `TestRunner` の否定例の文字列 `"golden"`
+- `bless`（祝福）→ `update`。`POST /reference/update`・`Reference.update`・
+  Elm の `ReferenceUpdated` / `referenceUpdate` / `onUpdate`・CSS の `reference-update`。
+  日本語の「祝福」も「更新」へ
 
 ## （旧）ラフ 3 点は実装済み（2026-08-13 朝）
 
@@ -61,7 +65,7 @@
 1. 右上「ラフと見比べ」→ 絵とラフを 1 枚ずつ選ぶ → 「重ねる」で透過を動かす
 2. ラフのマスを 1 つ押す（赤枠 + 「左から N・上から M マス目」）→ ひとことを書いて
    「やること一覧へ並べる」
-3. ホームの「🎫 違和感チケット」に「ラフ比較」の印つきで増える
+3. ホームの「🎫 注釈チケット」に「ラフ比較」の印つきで増える
 4. アトリエのラフ描きで層ボタンを切り替え、奥に塗って主役へ戻すと薄く透けること
 
 ## （旧）ラフ比較の窓 = 第 1 段（2026-08-12 深夜）
@@ -76,11 +80,11 @@
   - ラフの一覧 = `GET /sketch/list` → `{sketches:[{name, versions:[3,2,1]}]}`
   - ラフの中身 = `GET /file?path=draft/sketch/<名前>/v<番号>.json`（汎用の口で読める。
     `FileIndex.readInside` はプロジェクト内なら通る）
-  - 生成された絵の一覧 = `GET /gallery/list`（gallery/ golden/ debug/ の PNG）、
+  - 生成された絵の一覧 = `GET /gallery/list`（gallery/ reference/ debug/ の PNG）、
     画像 = `GET /gallery/image?dir=gallery&name=…`
 - **ラフを読み戻す純関数は既にある** — `SketchPad.decode : String -> Maybe Model`（encode と対）
-- **重ねの流儀は `GoldenView.elm` にある** — `Mode = SideBySide | Overlay | Diff`、
-  透過は `opacity : Float` を `HA.style "opacity"` で上の img に掛けるだけ（GoldenView.elm:360-369）。
+- **重ねの流儀は `ReferenceView.elm` にある** — `Mode = SideBySide | Overlay | Diff`、
+  透過は `opacity : Float` を `HA.style "opacity"` で上の img に掛けるだけ（ReferenceView.elm:360-369）。
   `view` が URL を作る関数を引数で受け、口の組み方を呼び側に残す形も踏襲する
 - **ラフの絵はマスの div の並び** — `SketchPad.viewGrid` / `viewCell`（2011-2074 行）。
   色は `legend` の `fill`、空きマスは `emptyChar = '.'` で `bg-black/20`。
@@ -88,7 +92,7 @@
 
 ### 作る物
 
-1. **web/src/SketchCompare.elm**（新設）— GoldenView と同じ「窓」の形
+1. **web/src/SketchCompare.elm**（新設）— ReferenceView と同じ「窓」の形
    （`Model` / `Handlers msg` / `init` / `open` / `close` / `view`）。
    - 選ぶ物は 2 つ: 生成された絵（gallery の名前）と ラフ（名前 + バージョン）
    - 見比べ方は 2 つ: 並べる・重ねる（透過スライダ）。「違いを塗る」は入れない
@@ -99,7 +103,7 @@
 2. **web/src/Main.elm** — 窓の開け閉めと、選ばれたラフの `GET /file` 取得を配線
    （`sketchList` と同じ足回りが 957-959 行あたりにある）
 3. **テスト** — `web/tests/SketchCompareTest.elm`（純関数だけ: 選び直しの残り方・
-   一覧が変わったときの倒れ方。GoldenView.withStatus と同じ考え方）
+   一覧が変わったときの倒れ方。ReferenceView.withStatus と同じ考え方）
 
 反映は web だけなので `make swap-web`。Studio は Cmd+Q → 開き直し。
 
@@ -136,7 +140,7 @@ https://claude.ai/code/artifact/c592edd2-0190-4e1b-b29a-a61498942db5
   サーバの一覧から取るしかない（1 を先に作る理由）。保存は汎用の putFile(OutSave)。
 - `FileIndex.writeInside` は **draft/ 配下だけ親ディレクトリを作る**ので、
   `draft/sketch/<name>/v3.json` は新しい口を足さずに書ける（FileIndex.flix:112 allowsParentCreation）。
-- 一覧に並べるのは既にある「違和感チケット」の列（Tickets.elm + Annotations.flix）。
+- 一覧に並べるのは既にある「注釈チケット」の列（Tickets.elm + Annotations.flix）。
   **印だけ分けて混ぜる**のが第 3 版の決め事で、ラフ専用の一覧は作らない。
 - docs/plan-sketch-roundtrip.md は「グリッド往復は見送り」と書いてあるが、
   **第 3 版はその見送りを覆した物ではない** — 機械の差分判定は入れないまま、
@@ -153,4 +157,4 @@ https://claude.ai/code/artifact/c592edd2-0190-4e1b-b29a-a61498942db5
 ## 済んだ物
 
 - 施策1「作る」ボタン一気通貫: docs/plan-one-click-genesis.md(未着手)
-- 施策2 は「違和感チケットの窓」に絞って実装済み(2026-08-12)。反映は swap-jar と swap-web
+- 施策2 は「注釈チケットの窓」に絞って実装済み(2026-08-12)。反映は swap-jar と swap-web

@@ -10,7 +10,7 @@ module SceneView exposing
     , viewZoom
     )
 
-{-| 焼き上がった場面の絵(golden / gallery の PNG)を見せる物一式。
+{-| 焼き上がった場面の絵(reference / gallery の PNG)を見せる物一式。
 
 今はミニプレイヤー(右下の小さなパネル)と、その拡大表示が住む。絵の URL の組み方と
 「どの場面を映すか」の決めごとも、見せる側と同じ場所に置く — 画面が増えても
@@ -163,7 +163,7 @@ viewChips handlers state =
             )
 
 
-{-| 選択中の場面の絵(golden/ の PNG)。描き直し中はオーバーレイを重ねる。
+{-| 選択中の場面の絵(reference/ の PNG)。描き直し中はオーバーレイを重ねる。
 場面が 1 つも無い時は静かな一言 — 枠は出したまま(下段の起動は生きている)。
 -}
 viewPicture : Handlers msg -> State -> Html msg
@@ -281,7 +281,7 @@ sceneLabel name =
         name
 
 
-{-| 場面の絵(golden/ の PNG)の URL。焼き直しで中身が入れ替わるファイルなので
+{-| 場面の絵(reference/ の PNG)の URL。焼き直しで中身が入れ替わるファイルなので
 v でキャッシュを破る(通知のバージョン + 描き直しの目盛り — 同じ URL のまま古い絵を
 出さない)。ミニプレイヤー本体と拡大表示で同じ式(同じ絵)を使う。
 -}
@@ -295,7 +295,7 @@ imageUrl state name =
                 |> Maybe.map .ver
                 |> Maybe.withDefault 0
     in
-    galleryImageUrl state.serverBase state.root "golden" name
+    galleryImageUrl state.serverBase state.root "reference" name
         ++ ("&v=" ++ String.fromInt ver ++ "-" ++ String.fromInt state.refresh)
 
 

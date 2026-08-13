@@ -1,5 +1,5 @@
-// Gallery — 描き出した絵 (gallery/ debug/) と基準 (golden/) を読むだけの窓口。
-// 一覧・画像・音・差分 (golden とのバイト比較) をエディタ画面へ配る。
+// Gallery — 描き出した絵 (gallery/ debug/) とリファレンス画像 (reference/) を読むだけの窓口。
+// 一覧・画像・音・差分 (リファレンス画像とのバイト比較) をエディタ画面へ配る。
 // 書き込みは一切しない。ディレクトリが無くても止めず、空の一覧で返す (fail-open)。
 
 mod Gallery {
@@ -11,7 +11,7 @@ mod Gallery {
     use Util.Json.Json.{JObject, JArray, JString, JNumber}
 
     /// 画像を配ってよいディレクトリの許可リスト。ここに無い dir 指定は断る。
-    pub def imageDirs(): Set[String] = Set#{"gallery", "golden", "golden/archive", "debug"}
+    pub def imageDirs(): Set[String] = Set#{"gallery", "reference", "reference/archive", "debug"}
 
     /// ブラウザから来るファイル名の門番。区切りや `..` を含む名前はプロジェクトの
     /// 別の場所を指せてしまうので、名前 1 語だけを通す。
@@ -23,12 +23,12 @@ mod Gallery {
 
     // ── 一覧 ──────────────────────────────────────────────
 
-    /// GET /gallery/list の本文。gallery/ golden/ debug/ の PNG と
+    /// GET /gallery/list の本文。gallery/ reference/ debug/ の PNG と
     /// debug/sounds/ の WAV を {name, mtime} の列で返す。
     pub def listJson(dir: String): Json \ IO =
         JObject(Map#{
             "gallery" => entriesJson(listNamed(suffix = ".png", dir, "gallery")),
-            "golden"  => entriesJson(listNamed(suffix = ".png", dir, "golden")),
+            "reference" => entriesJson(listNamed(suffix = ".png", dir, "reference")),
             "debug"   => entriesJson(listNamed(suffix = ".png", dir, "debug")),
             "sounds"  => entriesJson(listNamed(suffix = ".wav", dir, "debug/sounds"))
         })
@@ -106,40 +106,40 @@ mod Gallery {
         let file = new JFile(path);
         if (file.isFile()) Some(Files.readAllBytes(file.toPath())) else None
 
-    // ── 差分 (gallery vs golden) ──────────────────────────
+    // ── 差分 (gallery vs reference) ───────────────────────
 
     /// 1 枚ぶんの見比べ結果。make bench の cmp と同じで、1 バイトでも違えば diff。
-    pub def diffStatus(inGallery: Bool, inGolden: Bool, same: Bool): String =
-        match (inGallery, inGolden) {
+    pub def diffStatus(inGallery: Bool, inReference: Bool, same: Bool): String =
+        match (inGallery, inReference) {
             case (true, true)   => if (same) "ok" else "diff"
-            case (true, false)  => "missingGolden"
+            case (true, false)  => "missingReference"
             case (false, true)  => "missingGallery"
             case (false, false) => "missingGallery"
         }
 
-    /// gallery/ と golden/ の名前の和集合を取り、名前ごとの status を並べる (名前順)。
+    /// gallery/ と reference/ の名前の和集合を取り、名前ごとの status を並べる (名前順)。
     /// `same` はバイト一致の判定 (テストでは差し替えられる)。
-    pub def diffItems(galleryNames: List[String], goldenNames: List[String],
+    pub def diffItems(galleryNames: List[String], referenceNames: List[String],
                       same: String -> Bool \ ef): List[(String, String)] \ ef =
-        List.append(galleryNames, goldenNames)
+        List.append(galleryNames, referenceNames)
             |> List.distinct
             |> List.sort
             |> List.map(name -> {
                 let inGallery = List.memberOf(name, galleryNames);
-                let inGolden = List.memberOf(name, goldenNames);
-                let sameBytes = if (inGallery and inGolden) same(name) else false;
-                (name, diffStatus(inGallery, inGolden, sameBytes))
+                let inReference = List.memberOf(name, referenceNames);
+                let sameBytes = if (inGallery and inReference) same(name) else false;
+                (name, diffStatus(inGallery, inReference, sameBytes))
             })
 
-    /// ディスク上の gallery/ golden/ を見比べる。Changes の自動追随と NextStep が使う。
+    /// ディスク上の gallery/ reference/ を見比べる。Changes の自動追随と NextStep が使う。
     pub def diffItemsOf(dir: String): List[(String, String)] \ IO =
         let galleryNames = listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#name);
-        let goldenNames = listNamed(suffix = ".png", dir, "golden") |> List.map(entry -> entry#name);
-        diffItems(galleryNames, goldenNames, name -> sameBytes(dir, name))
+        let referenceNames = listNamed(suffix = ".png", dir, "reference") |> List.map(entry -> entry#name);
+        diffItems(galleryNames, referenceNames, name -> sameBytes(dir, name))
 
-    /// gallery/name と golden/name のバイト一致。どちらか読めなければ不一致扱い。
+    /// gallery/name と reference/name のバイト一致。どちらか読めなければ不一致扱い。
     def sameBytes(dir: String, name: String): Bool \ IO =
-        match (readBytes("${dir}/gallery/${name}"), readBytes("${dir}/golden/${name}")) {
+        match (readBytes("${dir}/gallery/${name}"), readBytes("${dir}/reference/${name}")) {
             case (Some(a), Some(b)) => Array.sameElements(a, b)
             case _                  => false
         }

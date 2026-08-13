@@ -999,7 +999,7 @@ viewGenesis families model =
 
 
 {-| ラフのカード。サーバの families には無いローカルの特別席なので、絵は 🎨 で代える
-(golden の顔を配る仕組みに乗れない)。
+(リファレンス画像の顔を配る仕組みに乗れない)。
 -}
 viewSketchCard : Bool -> Maybe String -> Html Msg
 viewSketchCard locked chosen =
@@ -1033,7 +1033,7 @@ viewFamilyCard locked chosen family =
         , HA.disabled locked
         , HE.onClick (FamilyChosen family.id)
         ]
-        [ -- 公式テンプレートつきのジャンルは、その golden/title.png がカードの顔になる
+        [ -- 公式テンプレートつきのジャンルは、その reference/title.png がカードの顔になる
           -- (サーバが配る。テンプレート無しのジャンルは絵なしのまま)
           if family.starter /= "" then
             Html.img

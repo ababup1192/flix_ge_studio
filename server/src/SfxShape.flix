@@ -12,7 +12,7 @@ mod SfxShape {
 
     /// 音を配ってよいディレクトリの許可リスト。ゲームが焼いた物 (assets/sfx) と
     /// 検証用に吐いた物 (debug/sounds) だけ。
-    pub def soundDirs(): List[String] = "assets/sfx" :: "debug/sounds" :: "golden/sfx" :: Nil
+    pub def soundDirs(): List[String] = "assets/sfx" :: "debug/sounds" :: "reference/sfx" :: Nil
 
     /// 波形を間引く升目の数 (横)。
     def cols(): Int32 = 160

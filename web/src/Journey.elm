@@ -191,7 +191,7 @@ type alias Changes =
 
 
 {-| 変わった場面 1 件。before/after はプロジェクト相対パス
-(golden/archive/<場面>.vN.png / golden/<場面>.png)。
+(reference/archive/<場面>.vN.png / reference/<場面>.png)。
 -}
 type alias Change =
     { name : String

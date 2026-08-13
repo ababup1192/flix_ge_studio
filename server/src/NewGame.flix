@@ -179,7 +179,7 @@ mod NewGame {
         } else {
             Runner.logLine(state, "[new-game] ${request#gameDir} を作成します (NAME=${request#name} TITLE=${request#title} design=${request#w}x${request#h} TEMPLATE=${request#template})");
             copyTree(skipTopLevel = Set#{"lib"}, templateDir, request#gameDir);
-            foreach (sub <- "gallery" :: "golden" :: "debug" :: "atelier" :: Nil)
+            foreach (sub <- "gallery" :: "reference" :: "debug" :: "atelier" :: Nil)
                 discard new JFile("${request#gameDir}/${sub}").mkdirs();
             renameAssets(request);
             rewriteTokens(request);

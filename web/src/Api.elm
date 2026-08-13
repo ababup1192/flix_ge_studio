@@ -17,8 +17,8 @@ module Api exposing
     , ResourceFile
     , ResourceGroup
     , BakeResult
-    , GoldenItem
-    , GoldenStatus
+    , ReferenceItem
+    , ReferenceStatus
     , Resources
     , SearchHit
     , SearchResults
@@ -38,7 +38,7 @@ module Api exposing
     , FrameShot
     , bakeResultDecoder
     , frameShotDecoder
-    , goldenStatusDecoder
+    , referenceStatusDecoder
     , pngFrameCount
     , runningGamesDecoder
     , searchResultsDecoder
@@ -395,7 +395,7 @@ runningGamesDecoder =
 
 
 {-| プロジェクト root(絶対パス)から短い識別子(数字だけ)を作る。
-golden/ や atelier/ のファイル名(title.png 等)はプロジェクト間で同名に
+reference/ や atelier/ のファイル名(title.png 等)はプロジェクト間で同名に
 なり得るので、絵の URL にこれを混ぜてブラウザキャッシュの混線
 (前のプロジェクトの絵が映る)を断つ。サーバは未知のクエリを無視するので
 サーバ側の変更は要らない。root をそのまま使わないのは長い・記号が混ざるため
@@ -682,42 +682,42 @@ frameBodyDecoder =
         (withDefault [] (D.field "notes" (D.list D.string)))
 
 
-{-| GET /golden/status。enabled=False は「見張る決まりが無い」(golden/ が無い)。
+{-| GET /reference/status。enabled=False は「見張る決まりが無い」(reference/ が無い)。
 now はサーバの時計(秒)で、「割れて何日目か」はこれと since の差で出す。
 -}
-type alias GoldenStatus =
+type alias ReferenceStatus =
     { enabled : Bool
     , now : Int
     , total : Int
     , broken : Int
-    , items : List GoldenItem
+    , items : List ReferenceItem
     }
 
 
-type alias GoldenItem =
+type alias ReferenceItem =
     { name : String
     , kind : String
     , match : Bool
-    , goldenMtime : Int
+    , referenceMtime : Int
     , since : Maybe Int
     }
 
 
-goldenStatusDecoder : D.Decoder GoldenStatus
-goldenStatusDecoder =
-    D.map5 GoldenStatus
+referenceStatusDecoder : D.Decoder ReferenceStatus
+referenceStatusDecoder =
+    D.map5 ReferenceStatus
         (withDefault False (D.field "enabled" D.bool))
         (withDefault 0 (D.field "now" D.int))
         (withDefault 0 (D.field "total" D.int))
         (withDefault 0 (D.field "broken" D.int))
-        (withDefault [] (D.field "items" (D.list goldenItemDecoder)))
+        (withDefault [] (D.field "items" (D.list referenceItemDecoder)))
 
 
-goldenItemDecoder : D.Decoder GoldenItem
-goldenItemDecoder =
-    D.map5 GoldenItem
+referenceItemDecoder : D.Decoder ReferenceItem
+referenceItemDecoder =
+    D.map5 ReferenceItem
         (D.field "name" D.string)
         (withDefault "image" (D.field "kind" D.string))
         (withDefault True (D.field "match" D.bool))
-        (withDefault 0 (D.field "goldenMtime" D.int))
+        (withDefault 0 (D.field "referenceMtime" D.int))
         (opt "since" D.int)

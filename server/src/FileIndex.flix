@@ -10,7 +10,7 @@ mod FileIndex {
     /// 走査から外す置き場。編集対象でない生成物・写し(debug は焼き係と実機が
     /// 書き続ける — 混ぜると /changes の token が絶えず変わり「差分なし」が二度と
     /// 成立しない)。隠しディレクトリは walkJson 側で名前の頭の "." で一律に外す。
-    pub def excludedDirs(): Set[String] = Set#{"build", "lib", "gallery", "node_modules", "debug", "golden"}
+    pub def excludedDirs(): Set[String] = Set#{"build", "lib", "gallery", "node_modules", "debug", "reference"}
 
     /// ディレクトリの中身 1 件 (名前と、ディレクトリかどうか)。
     pub type alias DirEntry = {name = String, isDir = Bool}

@@ -12,7 +12,7 @@ module Tickets exposing
     , view
     )
 
-{-| 違和感チケット — ゲーム内で切った注釈(debug/annotations/)に一言を添えて AI に運ぶパネル。
+{-| 注釈チケット — ゲーム内で切った注釈(debug/annotations/)に一言を添えて AI に運ぶパネル。
 
 チケットの中身(world.json 等)は解釈しない。読むのはタイトルと一言だけで、あとはパスを運ぶ。
 サーバ往復は Main の仕事(Out で頼む)。
@@ -174,7 +174,7 @@ buildTicketPrompt info =
                 )
 
             else
-                ( "【違和感の直し】遊んでいて気になった所があります。"
+                ( "【注釈チケットの直し】遊んでいて気になった所があります。"
                 , [ "- " ++ dir ++ "/README.md(囲った場所と、そこに描かれていた物の一覧)"
                   , "- " ++ dir ++ "/highlighted.png(気になる場所を赤枠で囲ったスクショ)"
                   , "- " ++ dir ++ "/world.json(その瞬間のゲーム状態のダンプ)"
@@ -253,7 +253,7 @@ view ctx model =
             [ div [ HA.class "rounded-lg border border-edge bg-panel p-5" ]
                 (div [ HA.class "flex items-baseline gap-2" ]
                     [ span [ HA.class "text-sm font-semibold text-ink" ]
-                        [ text ("🎫 違和感チケット(" ++ String.fromInt (List.length model.tickets) ++ ")") ]
+                        [ text ("🎫 注釈チケット(" ++ String.fromInt (List.length model.tickets) ++ ")") ]
                     , span [ HA.class "text-[11px] text-ink-faint" ]
                         [ text "ゲーム内で一時停止 → 矩形で囲うと増えます" ]
                     ]
@@ -307,7 +307,7 @@ viewTicket ctx model ticket =
                             "✓ コピーしました"
 
                          else
-                            "📋 違和感を報告"
+                            "📋 注釈チケットを報告"
                         )
                     ]
                 , button

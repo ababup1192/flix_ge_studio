@@ -15,7 +15,7 @@ suite =
     describe "Journey.changesDecoder"
         [ test "baking・seen・changes(name/ver/before/after)を読み取る" <|
             \() ->
-                """{"baking":true,"seen":false,"changes":[{"name":"title.png","ver":3,"before":"golden/archive/title.v3.png","after":"golden/title.png"}]}"""
+                """{"baking":true,"seen":false,"changes":[{"name":"title.png","ver":3,"before":"reference/archive/title.v3.png","after":"reference/title.png"}]}"""
                     |> D.decodeString Journey.changesDecoder
                     |> Expect.equal
                         (Ok
@@ -24,8 +24,8 @@ suite =
                             , changes =
                                 [ { name = "title.png"
                                   , ver = 3
-                                  , before = "golden/archive/title.v3.png"
-                                  , after = "golden/title.png"
+                                  , before = "reference/archive/title.v3.png"
+                                  , after = "reference/title.png"
                                   }
                                 ]
                             }

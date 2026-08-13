@@ -23,7 +23,7 @@ mod TestChanges {
              Changes.nextVerFrom("title.v1.png" :: "title.v3.png" :: "over.v9.png" :: Nil,
                  "title.png")))
 
-    /// 保存が検査を蹴る対象か: assets/ の JSON だけ。焼きの成果物 (gallery/ や golden/) や
+    /// 保存が検査を蹴る対象か: assets/ の JSON だけ。焼きの成果物 (gallery/ や reference/) や
     /// JSON でない物は蹴らない — 保存→焼き→保存…の堂々巡りを判定の段階で断つ。
     @Test
     def testKicksPumpOnSave(): Unit \ Assert =
@@ -31,7 +31,7 @@ mod TestChanges {
             expected = (true, false, false, false),
             (Changes.kicksPumpOnSave("assets/sample.kind.json"),
              Changes.kicksPumpOnSave("gallery/title.png"),
-             Changes.kicksPumpOnSave("golden/title.png"),
+             Changes.kicksPumpOnSave("reference/title.png"),
              Changes.kicksPumpOnSave("assets/title.png")))
 
     /// 既読の判定: 無記録 (器の get が null = None) は「未読なし」に倒して落ちない。
