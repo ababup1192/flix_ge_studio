@@ -30,5 +30,9 @@ app/src-tauri/gen/
 build/
 FlixGEStudio-*.zip
 
+# bin/*.py と .claude/hooks/*.py を走らせると出る Python のキャッシュ
+__pycache__/
+*.pyc
+
 # OS ゴミ
 .DS_Store
