@@ -233,6 +233,9 @@ stage-engine:
 	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/reference-update.sh \
 	   $(ENGINE)/bin/reference-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
+	# 絵の値段の判定 (reference-check.sh と status.py が $(ENGINE)/bin/ から呼ぶ)。
+	# 呼ぶ側はどちらも「無ければ飛ばす」で fail-open するので、落とすと判定が黙って消える。
+	cp $(ENGINE)/bin/check-render-budget.py $(ENGINE_STAGE)/bin/
 	cp $(ENGINE)/bin/precommit.py $(ENGINE)/bin/sync-agents.py $(ENGINE_STAGE)/bin/
 	mkdir -p $(ENGINE_STAGE)/bin/githooks
 	cp $(ENGINE)/bin/githooks/pre-commit $(ENGINE_STAGE)/bin/githooks/
