@@ -34,7 +34,7 @@ JLINK     ?= $(JDK_HOME)/bin/jlink
 #                     通るのに起動の瞬間 ClassNotFoundException で落ちる。
 #   jdk.crypto.ec   … TLS の楕円曲線。抜くと cacerts があっても handshake_failure になり、
 #                     新しいゲームの初回ビルド (Maven から lwjgl を取る) が通らない。
-JRE_MODULES := java.base,java.datatransfer,java.xml,java.prefs,java.desktop,java.logging,java.management,java.security.sasl,java.naming,java.net.http,jdk.httpserver,jdk.unsupported,jdk.crypto.ec
+JRE_MODULES := java.base,java.datatransfer,java.xml,java.prefs,java.desktop,java.logging,java.management,jdk.management,java.security.sasl,java.naming,java.net.http,jdk.httpserver,jdk.unsupported,jdk.crypto.ec
 
 # .app に同梱する Flix コンパイラ。engine の devbox profile が指す nix store の実体から
 # 借りる。engine の bin/flix.jar を既定にしないのは、あれが手で置いた古い版のことが
