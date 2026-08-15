@@ -1,5 +1,7 @@
 // Gallery — 描き出した絵 (gallery/ debug/) とリファレンス画像 (reference/) を読むだけのウィンドウ口。
 // 一覧・画像・音・差分 (リファレンス画像とのバイト比較) をエディタ画面へ配る。
+// 場面の題と一言は SceneNotes (assets/*.scenes.json) から借りて添えるだけで、
+// ここが場面の意味を決めることはない。
 // 書き込みは一切しない。ディレクトリが無くても止めず、空の一覧で返す (fail-open)。
 
 mod Gallery {
@@ -8,7 +10,7 @@ mod Gallery {
     import java.math.{BigDecimal => JBigDecimal}
 
     use Util.Json.Json
-    use Util.Json.Json.{JObject, JArray, JString, JNumber}
+    use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool}
 
     /// 画像を配ってよいディレクトリの許可リスト。ここに無い dir 指定は断る。
     pub def imageDirs(): Set[String] = Set#{"gallery", "reference", "reference/archive", "debug"}
@@ -32,6 +34,39 @@ mod Gallery {
             "debug"   => entriesJson(listNamed(suffix = ".png", dir, "debug")),
             "sounds"  => entriesJson(listNamed(suffix = ".wav", dir, "debug/sounds"))
         })
+
+    /// GET /gallery/scenes の本文。ギャラリー画面 1 枚ぶん — gallery/ の PNG に、
+    /// 場面の説明 Doc のラベルとリファレンスとの差分を添えて名前順に並べる。
+    /// ラベルの無い場面は title / desc が空で出る (画面が名前で代用する)。
+    pub def scenesJson(dir: String): Json \ IO =
+        let notes = SceneNotes.load(dir);
+        let status = diffItemsOf(dir) |> List.toMap;
+        let items = listNamed(suffix = ".png", dir, "gallery")
+            |> List.map(entry -> sceneJson(notes, status, entry));
+        JObject(Map#{
+            "ok"    => JBool(true),
+            "items" => JArray(List.toVector(items))
+        })
+
+    /// 場面 1 つぶんの応答。
+    def sceneJson(notes: Map[String, SceneNotes.Note], status: Map[String, String],
+                  entry: {name = String, mtime = Int64}): Json =
+        let note = Map.getWithDefault(stemOf(entry#name), SceneNotes.defaultNote(), notes);
+        JObject(Map#{
+            "name"      => JString(entry#name),
+            "mtime"     => JNumber(JBigDecimal.valueOf(entry#mtime)),
+            "title"     => JString(note#title),
+            "desc"      => JString(note#desc),
+            "tags"      => JArray(note#tags |> List.map(JString) |> List.toVector),
+            "reference" => JString(Map.getWithDefault(entry#name, "missingReference", status))
+        })
+
+    /// "s3_clear.png" → "s3_clear"。Doc の name は拡張子を持たない。
+    pub def stemOf(fileName: String): String =
+        if (String.endsWith(suffix = ".png", fileName))
+            String.dropRight(String.length(".png"), fileName)
+        else
+            fileName
 
     /// dir/subdir 直下から拡張子一致のファイルを {name, mtime} で集める (名前順)。
     /// ディレクトリが無い・読めないは空の一覧。

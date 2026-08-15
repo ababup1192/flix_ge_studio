@@ -225,8 +225,11 @@ export function realApi(base: string): Api {
             `${base}/sfx/shape?name=${encodeURIComponent(String((payload as { name: string }).name ?? ""))}`,
           );
         case "galleryList":
-          // 「全場面を見る」の一覧(読むだけ)
+          // ミニプレイヤーの場面チップとラフ比較の材料(読むだけ)
           return getJson(`${base}/gallery/list`);
+        case "galleryScenes":
+          // ギャラリータブ 1 枚ぶん(絵 + 場面の説明のラベル + リファレンス差分)
+          return getJson(`${base}/gallery/scenes`);
         case "annotationsList":
           // 注釈チケットの一覧(読むだけ)
           return getJson(`${base}/annotations/list`);

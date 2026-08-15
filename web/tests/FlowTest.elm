@@ -465,6 +465,34 @@ landingWith resources =
         |> ensureKinds [ "atelierCandidates", "gameStatus", "atelierSlots", "atelierArchive", "galleryList", "journeyChanges" ]
 
 
+{-| GET /gallery/scenes の応答。ラベルのある場面と、まだラベルの無い場面を 1 つずつ。 -}
+galleryScenesBody : E.Value
+galleryScenesBody =
+    E.object
+        [ ( "ok", E.bool True )
+        , ( "items"
+          , E.list identity
+                [ E.object
+                    [ ( "name", E.string "s3_clear.png" )
+                    , ( "title", E.string "ライン消し" )
+                    , ( "desc", E.string "下 2 行が満杯・演出の途中で固定" )
+                    , ( "tags", E.list E.string [ "演出" ] )
+                    , ( "mtime", E.int 1000 )
+                    , ( "reference", E.string "ok" )
+                    ]
+                , E.object
+                    [ ( "name", E.string "title.png" )
+                    , ( "title", E.string "" )
+                    , ( "desc", E.string "" )
+                    , ( "tags", E.list E.string [] )
+                    , ( "mtime", E.int 1000 )
+                    , ( "reference", E.string "ok" )
+                    ]
+                ]
+          )
+        ]
+
+
 {-| 入口から調整(Doc エディタ)へ入った状態(編集フローの検査はここから)。 -}
 bootedWith : E.Value -> App
 bootedWith resources =
@@ -1601,6 +1629,19 @@ suite =
                     |> ProgramTest.ensureViewHas [ class "mini-zoom" ]
                     |> ProgramTest.clickButton "閉じる"
                     |> ProgramTest.expectViewHasNot [ class "mini-zoom" ]
+        , test "ギャラリー: ホームの入口からタブへ入ると一覧を取りに行き、ラベルのある場面と無い場面が並ぶ" <|
+            \() ->
+                bootedWith resourcesBody
+                    |> ProgramTest.clickButton "ホーム"
+                    |> ensureKinds [ "journeyState", "annotationsList", "sketchList", "journeyChanges" ]
+                    |> ProgramTest.clickButton "全場面を見る"
+                    |> ensureKinds [ "galleryScenes" ]
+                    |> respondOk 0 "galleryScenes" galleryScenesBody
+                    -- ラベルのある場面は題が出る
+                    |> ProgramTest.ensureViewHas [ text "ライン消し" ]
+                    -- ラベルの無い場面はファイル名で代用し、説明が無いと告げる
+                    |> ProgramTest.ensureViewHas [ text "title" ]
+                    |> ProgramTest.expectViewHas [ text "説明がまだありません" ]
         , test "プロジェクトを選ぶ: 編集中から選択画面を開き、「← いまのゲームに戻る」で編集へ戻れる" <|
             \() ->
                 bootedWith resourcesBody

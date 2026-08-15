@@ -27,6 +27,7 @@ import EditHistory
 import Effect exposing (Effect)
 import EntryOps
 import EntryTable
+import GalleryView
 import ReferenceView
 import FileVerbs
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
@@ -93,10 +94,13 @@ type Screen
     | Editing
 
 
-{-| 上部ナビの現在地。アトリエ = 既存の Doc エディタ一式(3 ペイン)。 -}
+{-| 上部ナビの現在地。アトリエ = 既存の Doc エディタ一式(3 ペイン)。
+ギャラリー = 描き出した場面の絵の一覧(読むだけ)。
+-}
 type Tab
     = HomeTab
     | AtelierTab
+    | GalleryTab
 
 
 {-| プロジェクトピッカーの状態。候補一覧そのものはサーバ応答(Api.Projects)が正で、
@@ -478,8 +482,8 @@ type alias Model =
     -- 「前と今」の見比べモーダル(Nothing = 閉じている)
     , changesModal : Maybe ChangesModal
 
-    -- 「全場面を見る」モーダル(Nothing = 閉じている)
-    , scenes : Maybe Scenes
+    -- ギャラリータブ(描き出した場面の絵の一覧)
+    , gallery : GalleryView.Model
 
     -- 「ゲームのログ」モーダル(Nothing = 閉じている、Just = 表示中の行)。
     -- ターミナルを開けない人(特に Windows)が、遊んでいる間のログを画面だけで
@@ -909,12 +913,6 @@ type ChangesModal
     | ChangesReady { remaining : List Journey.Change, total : Int }
 
 
-{-| 「全場面を見る」モーダル。gallery/ の一覧(読むだけ)。 -}
-type Scenes
-    = ScenesLoading
-    | ScenesReady (List String)
-
-
 init : () -> ( Model, Effect )
 init _ =
     request "health" (E.object [])
@@ -925,7 +923,7 @@ init _ =
         , changesBaking = False
         , changesAvailable = True
         , changesModal = Nothing
-        , scenes = Nothing
+        , gallery = GalleryView.init
         , gameLogView = Nothing
         , atelier = Atelier.init
         , miniPlayerOpen = False
@@ -1240,8 +1238,7 @@ type Msg
     | FileWatchTick
     | ChangesNextClicked
     | ChangesModalClosed
-    | ScenesOpened
-    | ScenesClosed
+    | GalleryMsg GalleryView.Msg
     | GameLogViewOpened
     | GameLogViewClosed
     | GameLogViewRefreshClicked
@@ -1394,11 +1391,20 @@ update msg model =
                 _ ->
                     ( { model | changesModal = Nothing }, Effect.none )
 
-        ScenesOpened ->
-            ( { model | scenes = Just ScenesLoading }, requestInfo "galleryList" )
+        GalleryMsg gmsg ->
+            let
+                ( gallery, out ) =
+                    GalleryView.update gmsg model.gallery
 
-        ScenesClosed ->
-            ( { model | scenes = Nothing }, Effect.none )
+                m1 =
+                    { model | gallery = gallery }
+            in
+            case out of
+                GalleryView.OutNone ->
+                    ( m1, Effect.none )
+
+                GalleryView.OutRefresh ->
+                    ( m1, requestInfo "galleryScenes" )
 
         GameLogViewOpened ->
             ( { model | gameLogView = Just [] }, requestInfo "gameLogView" )
@@ -6226,29 +6232,30 @@ handleOkByKind env model =
         "galleryList" ->
             case D.decodeValue scenesDecoder env.body of
                 Ok names ->
-                    -- ミニプレイヤーの場面チップも同じ出どころ(1 応答で両方養う)
+                    -- ミニプレイヤーの場面チップとラフ比較の材料(1 応答で両方養う)
                     ( { model
                         | miniScenes = names
                         , sketchCompare = SketchCompare.withScenes names model.sketchCompare
-                        , scenes =
-                            if model.scenes == Just ScenesLoading then
-                                Just (ScenesReady names)
-
-                            else
-                                model.scenes
                       }
                     , Effect.none
                     )
 
                 Err _ ->
-                    -- 契約とずれた応答。モーダルは静かに畳み、チップは空へ(fail-open)
+                    -- 契約とずれた応答。チップは空へ(fail-open)
                     ( { model
-                        | scenes = Nothing
-                        , miniScenes = []
+                        | miniScenes = []
                         , sketchCompare = SketchCompare.withScenes [] model.sketchCompare
                       }
                     , Effect.none
                     )
+
+        "galleryScenes" ->
+            case D.decodeValue GalleryView.listDecoder env.body of
+                Ok scenes ->
+                    ( { model | gallery = GalleryView.gotList scenes model.gallery }, Effect.none )
+
+                Err _ ->
+                    ( { model | gallery = GalleryView.listFailed model.gallery }, Effect.none )
 
         "atelierCandidates" ->
             case D.decodeValue Atelier.candidatesDecoder env.body of
@@ -6543,7 +6550,7 @@ handleOkByKind env model =
                                     , changesBaking = False
                                     , changesAvailable = True
                                     , changesModal = Nothing
-                                    , scenes = Nothing
+                                    , gallery = GalleryView.init
 
                                     -- ミニプレイヤーは前のプロジェクトの残骸を持ち越さない —
                                     -- 場面一覧・ピン・知らせ・目盛り・拡大が残ると、次の取得までの間
@@ -7855,9 +7862,13 @@ handleErrByKind env message model =
             ( model, requestInfo "journeyState" )
 
         "galleryList" ->
-            -- 一覧が取れないならモーダルは畳み、ミニプレイヤーは空の一言へ
+            -- 一覧が取れないならミニプレイヤーは空の一言へ
             -- (404 の旧サーバも同じ。パネル自体は出したまま — 起動は生きている)
-            ( { model | scenes = Nothing, miniScenes = [] }, Effect.none )
+            ( { model | miniScenes = [] }, Effect.none )
+
+        "galleryScenes" ->
+            -- 口を持たないサーバ(404)。ギャラリータブに案内だけ出す(fail-open)
+            ( { model | gallery = GalleryView.listFailed model.gallery }, Effect.none )
 
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
@@ -8071,8 +8082,8 @@ closeIfLoading modal =
         modal
 
 
-{-| GET /gallery/list の gallery 節から場面名だけ引く(「全場面を見る」用)。
-節が欠けたサーバでも空で通す(fail-open)。
+{-| GET /gallery/list の gallery 節から場面名だけ引く(ミニプレイヤーの場面チップと
+ラフ比較用)。節が欠けたサーバでも空で通す(fail-open)。
 -}
 scenesDecoder : D.Decoder (List String)
 scenesDecoder =
@@ -8103,6 +8114,12 @@ gotoTab tab model =
                             []
                        )
                 )
+            )
+
+        GalleryTab ->
+            -- 開くたび取り直す。外で make render-all が走っていても最新が出る
+            ( { model | tab = GalleryTab, gallery = GalleryView.loading model.gallery }
+            , requestInfo "galleryScenes"
             )
 
         AtelierTab ->
@@ -8165,6 +8182,15 @@ view model =
                 [ case model.tab of
                     HomeTab ->
                         viewShell model (viewHome model)
+
+                    GalleryTab ->
+                        viewShell model
+                            (Html.map GalleryMsg
+                                (GalleryView.view
+                                    { serverBase = model.serverBase, root = model.root }
+                                    model.gallery
+                                )
+                            )
 
                     AtelierTab ->
                         -- 入口からアセット / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ
@@ -8490,6 +8516,7 @@ viewNavTabs tab =
     div [ HA.class "nav-tabs flex shrink-0 items-center gap-0.5" ]
         [ item HomeTab "ホーム"
         , item AtelierTab "アトリエ"
+        , item GalleryTab "ギャラリー"
         ]
 
 
@@ -8536,8 +8563,8 @@ miniState model =
     }
 
 
-{-| ホーム。提案のカードに、描き出しの実況と「全場面を見る」の入口を添える。
-見比べ・全場面のモーダルもここにぶら下がる。
+{-| ホーム。提案のカードに、描き出しの実況とギャラリータブへの入口を添える。
+見比べのモーダルもここにぶら下がる。
 -}
 viewHome : Model -> Html Msg
 viewHome model =
@@ -8549,16 +8576,10 @@ viewHome model =
         , div [ HA.class "mt-auto flex flex-wrap items-center justify-center gap-5 pt-10" ]
             [ button
                 [ HA.class "all-scenes-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
-                , HE.onClick ScenesOpened
+                , HA.title "描き出した場面の絵を一覧で見ます(上部ナビのギャラリーと同じ)"
+                , HE.onClick (TabClicked GalleryTab)
                 ]
-                [ text
-                    (if model.scenes == Just ScenesLoading then
-                        "⏳ 全場面を見る"
-
-                     else
-                        "全場面を見る"
-                    )
-                ]
+                [ text "全場面を見る" ]
 
             -- ターミナル無しでログを見る口(起動後のログは実況行から消えるため)
             , button
@@ -8583,7 +8604,6 @@ viewHome model =
                 [ text "フォントのキャッシュを捨てる" ]
             ]
         , viewChangesModal model
-        , viewScenesModal model
         , viewGameLogModal model
         ]
 
@@ -8743,62 +8763,6 @@ viewGameLogModal model =
                     [ button [ HA.class "btn", HE.onClick GameLogViewRefreshClicked ] [ text "更新" ]
                     , button [ HA.class "btn", HE.onClick GameLogViewClosed ] [ text "閉じる" ]
                     ]
-                ]
-
-
-{-| 全場面モーダル。gallery/ の絵を格子で眺めるだけ(操作は無い)。 -}
-viewScenesModal : Model -> Html Msg
-viewScenesModal model =
-    let
-        dialog body =
-            Html.node "sl-dialog"
-                [ HA.class "scenes-dialog"
-                , HE.on "sl-request-close" (D.succeed ScenesClosed)
-                , HA.attribute "label" "全場面"
-                , HA.attribute "open" ""
-                , HA.attribute "style" "--width: 64rem"
-                ]
-                (body
-                    ++ [ div [ HA.attribute "slot" "footer", HA.class "flex justify-end" ]
-                            [ button [ HA.class "btn", HE.onClick ScenesClosed ] [ text "閉じる" ] ]
-                       ]
-                )
-    in
-    case model.scenes of
-        Nothing ->
-            text ""
-
-        Just ScenesLoading ->
-            dialog
-                [ div [ HA.class "flex items-center gap-2 text-xs text-ink-soft" ]
-                    [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
-                    , text "読み込んでいます…"
-                    ]
-                ]
-
-        Just (ScenesReady names) ->
-            dialog
-                [ if List.isEmpty names then
-                    div [ HA.class "text-xs text-ink-soft" ] [ text "まだ場面がありません。" ]
-
-                  else
-                    div [ HA.class "grid max-h-[70vh] grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3 overflow-y-auto" ]
-                        (names
-                            |> List.map
-                                (\name ->
-                                    div [ HA.class "overflow-hidden rounded border border-edge bg-panel" ]
-                                        [ img
-                                            [ HA.class "scene-shot block w-full bg-well"
-                                            , HA.src (SceneView.galleryImageUrl model.serverBase model.root "gallery" name)
-                                            , HA.alt name
-                                            , HA.attribute "loading" "lazy"
-                                            ]
-                                            []
-                                        , div [ HA.class "truncate px-2 py-1.5 font-mono text-[10px] text-ink-soft", HA.title name ]
-                                            [ text name ]
-                                        ]
-                                )
-                        )
                 ]
 
 

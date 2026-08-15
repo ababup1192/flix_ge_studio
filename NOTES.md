@@ -1,5 +1,29 @@
 # NOTES
 
+## 次やること（2026-08-16・ギャラリー画面。未コミット）
+
+1. **人の目で確かめる**（`/Applications` へ swap-jar / swap-web / swap-engine 済み。
+   Studio を Cmd+Q → 開き直すだけ）。上部ナビの「ギャラリー」タブ、ホームの
+   「全場面を見る」からも入れる。ラベルの無いゲームで名前だけ並ぶ事も見る
+2. **コミット**（server / web / engine templates の 3 箇所。この環境は git commit が
+   拒否されるので人の手が要る）。engine リポ側 = `templates/*/assets/*.scenes.json` +
+   `scenes.schema.json` + `project.json` + `SceneRender.flix` のコメント
+3. 残り = ギャラリーの並べ替え・絞り込み（今は名前順のみ）と、`debug/` と音を
+   見せるかの判断（今回は `gallery/` だけに絞った）
+
+## 済んだ物（2026-08-16・ギャラリー画面と場面の説明 Doc）
+
+- **場面の説明 Doc を新設**: `assets/*.scenes.json`（`version` + `rows[{name,title,desc,tags}]`）。
+  描き出す場面を決めるのは今までどおり `SceneRender.shotNames()` で、この Doc はラベルを添えるだけ。
+  engine の 6 template 全部に実データつきで配り、`project.json` の `editor.resources` にも宣言
+- **server**: `SceneNotes.flix`（Doc を読むだけ・fail-open）+ `Gallery.scenesJson` +
+  `GET /gallery/scenes`（絵 + ラベル + リファレンス差分を 1 応答で）。`/gallery/list` は
+  ミニプレイヤーとラフ比較が食べているので形を変えていない
+- **web**: `GalleryView.elm` を新設し、上部ナビに「ギャラリー」タブ。旧「全場面」モーダル
+  （`viewScenesModal` / `type Scenes` / `ScenesOpened`）は撤去し、ホームの入口はタブへ送るだけ
+- 確認: server 154 tests / elm-test 688 / vitest 19 / parity 一致。
+  rpg-starter を実際に開いて `/gallery/scenes` を curl し、ラベルあり・ラベルなしの両方を見た
+
 ## 次やること（2026-08-13 昼・言葉づかいの直し。未コミット）
 
 1. **`NewGame.elm` の `family` → `genre` が未着手**（74 箇所）。server とサーバの口は

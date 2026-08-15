@@ -7,6 +7,7 @@ module ApiContractTest exposing (suite)
 import Api
 import Dict
 import Expect
+import GalleryView
 import Json.Decode as D
 import Set
 import Test exposing (Test, describe, test)
@@ -21,6 +22,22 @@ healthFixture =
       "title": "Flix Shapes Gallery",
       "design": { "w": 480, "h": 530 },
       "version": "0.1.0"
+    }
+    """
+
+
+galleryScenesFixture : String
+galleryScenesFixture =
+    """
+    {
+      "ok": true,
+      "items": [
+        { "name": "s3_clear.png", "title": "ライン消し",
+          "desc": "下 2 行が満杯・演出の途中で固定", "tags": ["演出"],
+          "mtime": 1784274206557, "reference": "diff" },
+        { "name": "title.png", "title": "", "desc": "", "tags": [],
+          "mtime": 1784274206557, "reference": "ok" }
+      ]
     }
     """
 
@@ -310,5 +327,37 @@ suite =
                         """{"ok": true, "colors": {"accent": "#ffc95e"}}"""
                         |> Expect.equal
                             (Ok { table = Dict.fromList [ ( "accent", "#ffc95e" ) ], unresolved = Set.empty })
+            ]
+        , describe "/gallery/scenes"
+            [ test "ラベルのある場面は題・一言・タグまで読める" <|
+                \_ ->
+                    D.decodeString GalleryView.listDecoder galleryScenesFixture
+                        |> Result.map (List.filter (\scene -> scene.name == "s3_clear.png"))
+                        |> Expect.equal
+                            (Ok
+                                [ { name = "s3_clear.png"
+                                  , title = "ライン消し"
+                                  , desc = "下 2 行が満杯・演出の途中で固定"
+                                  , tags = [ "演出" ]
+                                  , mtime = 1784274206557
+                                  , reference = "diff"
+                                  }
+                                ]
+                            )
+            , test "ラベルの欄ごと無い応答(説明 Doc を持たないゲーム)でも名前だけで読める" <|
+                \_ ->
+                    D.decodeString GalleryView.listDecoder
+                        """{"ok": true, "items": [{"name": "title.png", "mtime": 1, "reference": "ok"}]}"""
+                        |> Expect.equal
+                            (Ok
+                                [ { name = "title.png"
+                                  , title = ""
+                                  , desc = ""
+                                  , tags = []
+                                  , mtime = 1
+                                  , reference = "ok"
+                                  }
+                                ]
+                            )
             ]
         ]

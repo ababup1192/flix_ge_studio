@@ -222,6 +222,11 @@ mod Editor {
             })
             case ("GET", "/gallery/list") => withProject(selection, exchange, dir ->
                 sendJson(200, Gallery.listJson(dir), exchange))
+            // ギャラリー画面 1 枚ぶん(絵 + 場面の説明 Doc のラベル + リファレンス差分)。
+            // /gallery/list はミニプレイヤーとラフ比較も食べている口なので形を変えず、
+            // 画面用はこちらに分ける
+            case ("GET", "/gallery/scenes") => withProject(selection, exchange, dir ->
+                sendJson(200, Gallery.scenesJson(dir), exchange))
             case ("GET", "/gallery/image") => withProject(selection, exchange, dir ->
                 handleGalleryImage(dir, params, exchange))
             // HEAD も受ける — 画面が「前回の焼きが残っているか」を本文なしで訊く口
