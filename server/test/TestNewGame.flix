@@ -71,6 +71,16 @@ mod TestNewGame {
              NewGame.skillDescriptionOf("description:   そのまま  \n"),
              NewGame.skillDescriptionOf("---\nname: v\n---\n")))
 
+    /// description から一覧に載せる 1 文を選ぶ。「〜使う」で終わる文があればそれ、
+    /// 無ければ先頭の 1 文（engine の bin/sync-agents.py の trigger_sentence と同じ規則）。
+    @Test
+    def testTriggerSentence(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("絵を描くときに使う。", "能書き。", "句点なし。"),
+            (NewGame.triggerSentence("能書き。絵を描くときに使う。あとがき。"),
+             NewGame.triggerSentence("能書き。あとがき。"),
+             NewGame.triggerSentence("句点なし")))
+
     /// スキル一覧の節: 見出し + 空行 + 「- `.claude/skills/名前/SKILL.md` — 説明」を
     /// 渡した順 (呼び手が名前昇順で渡す) に 1 行ずつ。末尾に改行は付かない。
     @Test

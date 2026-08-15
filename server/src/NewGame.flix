@@ -105,6 +105,24 @@ mod NewGame {
             |> Option.map(stripOuterQuotes)
             |> Option.getWithDefault("")
 
+    /// description から「いつ使うか」の 1 文だけを取り出す
+    /// (engine の bin/sync-agents.py の trigger_sentence と同じ規則)。
+    ///
+    /// description は「何をする物か」の能書き + 「〜ときに使う」の引き金 + 補足、の 3 部構成が多い。
+    /// AGENTS.md の一覧に要るのは引き金だけで、能書きは SKILL.md を開けば読める。
+    /// 全文を載せると一覧だけで 7KB を超え、しかも Claude Code のハーネスが同じ一覧を
+    /// 毎ターン注入するので二重になる。引き金が見つからないときは先頭の 1 文へ落とす。
+    pub def triggerSentence(desc: String): String =
+        let parts = String.splitOn(substr = "。", desc)
+            |> List.filter(s -> String.trim(s) != "");
+        match List.find(s -> String.endsWith(suffix = "使う", String.trimRight(s)), parts) {
+            case Some(s) => String.trim(s) + "。"
+            case None    => match List.head(parts) {
+                case Some(s) => String.trim(s) + "。"
+                case None    => desc
+            }
+        }
+
     /// 先頭と末尾の " を 1 個ずつだけ外す (中の " や全部を消すのは規則違い)。
     def stripOuterQuotes(text: String): String =
         let noHead = if (String.startsWith(prefix = "\"", text)) String.dropLeft(1, text) else text;
@@ -379,7 +397,7 @@ mod NewGame {
             |> List.map(name -> (
                 name,
                 readTextIfFile("${engine}/agents-pack/skills/${name}/SKILL.md")
-                    |> Option.map(skillDescriptionOf)
+                    |> Option.map(text -> triggerSentence(skillDescriptionOf(text)))
                     |> Option.getWithDefault("")))
 
     /// manifest の配布計画を実行する。順序は engine 側と同じ copyDirs → copy → copyIfAbsent。
