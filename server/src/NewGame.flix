@@ -56,6 +56,14 @@ mod NewGame {
             + "ENGINE ?= ${line(engine)}\n"
             + (java |> Option.map(exe -> "JAVA ?= ${line(exe)}\n") |> Option.getWithDefault(""))
 
+    /// local.mk を書くか (純粋)。git から clone してきたプロジェクトには local.mk が無い
+    /// (マシンごとに違うので git に入れない)。Makefile を持つプロジェクトを開いた拍に
+    /// 1 枚書いておけば、ターミナルや AI エージェントから打つ make も engine を見つけられる。
+    // WhyNot: 既にあるときは触らない — 人が書いた場所を Studio が奪うと、
+    // 別の engine を指して開き直すたびに設定が入れ替わる。
+    pub def shouldWriteLocalMk(hasMakefile: Bool, hasLocalMk: Bool, engine: Option[String]): Bool =
+        hasMakefile and not hasLocalMk and not Option.isEmpty(engine)
+
     /// プレースホルダの書き換え対象か。テンプレの文字ファイルだけ (絵や音はそのまま写す)。
     pub def isTokenTarget(fileName: String): Bool =
         String.endsWith(suffix = ".flix", fileName)
@@ -258,11 +266,31 @@ mod NewGame {
                 else ())
 
     /// このマシンでの engine / java の場所を local.mk へ書く (Makefile はマシン共有のまま)。
-    /// java は app が同梱 JRE を EDITOR_JAVA で教えてきたときだけ書く (手元開発では PATH の java)。
     def writeLocalMk(request: Request): Unit \ IO =
-        let javaValue = System.getenv("EDITOR_JAVA");
-        let java = if (Object.isNull(javaValue) or String.trim(javaValue) == "") None else Some(javaValue);
-        writeText("${request#gameDir}/local.mk", localMkText(request#engine, java))
+        writeText("${request#gameDir}/local.mk", localMkText(request#engine, javaFromEnv()))
+
+    /// app が同梱 JRE を EDITOR_JAVA で教えてきたときだけ Some (手元開発では PATH の java)。
+    def javaFromEnv(): Option[String] \ IO =
+        let value = System.getenv("EDITOR_JAVA");
+        if (Object.isNull(value) or String.trim(value) == "") None else Some(value)
+
+    /// 開いたプロジェクトに local.mk が無ければ 1 枚書く。書いたら true。
+    /// clone しただけのプロジェクト (local.mk は git に入らない) でも、ターミナルや
+    /// AI エージェントの make が engine を見つけられるようにするため。
+    /// engine の場所は Runner が make へ渡すのと同じ値 (空白を含むなら別名を貼った先)。
+    pub def ensureLocalMk(gameDir: String): Bool \ IO =
+        let engine = EngineHome.forGames();
+        let hasMakefile = new JFile("${gameDir}/Makefile").isFile();
+        let hasLocalMk = new JFile("${gameDir}/local.mk").isFile();
+        if (shouldWriteLocalMk(hasMakefile, hasLocalMk, engine))
+            match engine {
+                case None       => false
+                case Some(home) => {
+                    writeText("${gameDir}/local.mk", localMkText(home, javaFromEnv()));
+                    true
+                }
+            }
+        else false
 
     /// engine_full の fpkg と flix.toml を、ゲームの lib/github/… にバージョン名で置く
     /// (初回ビルドでのダウンロードを不要にする)。バージョンが読めなければ飛ばす —

@@ -459,6 +459,9 @@ mod Editor {
             case Ok(loadedProject) =>
                 Projects.switchTo(dir, selection);
                 Projects.saveRecent(Projects.pushRecent(dir, Projects.loadRecent()));
+                // clone しただけのプロジェクトには local.mk が無い (git に入らない)。
+                // 開いた拍に書いておけば、人や AI が打つ make も engine を見つけられる。
+                if (NewGame.ensureLocalMk(dir)) println("[studio] local.mk を書きました: ${dir}") else ();
                 let config = loadedProject#config;
                 sendJson(200, JObject(Map#{
                     "ok"     => JBool(true),

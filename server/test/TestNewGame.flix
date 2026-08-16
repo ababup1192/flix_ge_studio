@@ -29,6 +29,17 @@ mod TestNewGame {
             (NewGame.localMkText("/engines/e", None),
              NewGame.localMkText("C:\\Studio\\resources\\engine", Some("C:\\Studio\\resources\\jre\\bin\\java.exe"))))
 
+    /// local.mk を書くのは「Makefile があって local.mk がまだ無くて engine の場所が分かる」ときだけ。
+    /// 既にある local.mk は上書きしない。engine が分からなければ何も書かない。
+    @Test
+    def testShouldWriteLocalMk(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false, false),
+            (NewGame.shouldWriteLocalMk(true, false, Some("/engines/e")),
+             NewGame.shouldWriteLocalMk(true, true, Some("/engines/e")),
+             NewGame.shouldWriteLocalMk(false, false, Some("/engines/e")),
+             NewGame.shouldWriteLocalMk(true, false, None)))
+
     /// 書き換え対象は文字ファイル (.flix/.json/.toml/.md/Makefile) だけ。絵や音は写すだけ。
     @Test
     def testIsTokenTarget(): Unit \ Assert =
