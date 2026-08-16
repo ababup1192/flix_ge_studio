@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flix GE Studio ｜ マス目を塗る。作品が動きだす。</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Antique&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Zen+Kurenaido&display=swap" rel="stylesheet">
+<style>
+:root{
+  --sheet:#EAEFEA; --sheet-2:#F6F8F5; --rule:#B9CDC0;
+  --ink:#17233A; --ink-soft:#5A6779; --red:#DC402F; --line:#C8D5CB;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--sheet);
+  background-image:linear-gradient(var(--rule) 1px,transparent 1px),linear-gradient(90deg,rgba(185,205,192,.45) 1px,transparent 1px);
+  background-size:100% 28px,28px 100%;
+  color:var(--ink);
+  font-family:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;
+  font-size:16px; line-height:1.85; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1060px;margin:0 auto;padding:0 20px}
+section{padding:52px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.eyebrow{font-family:"Zen Kurenaido",sans-serif;color:var(--red);font-size:14px;letter-spacing:.22em;margin:0 0 8px;display:flex;align-items:center;gap:10px}
+.eyebrow::after{content:"";flex:1;height:1px;background:var(--red);opacity:.35}
+h2{font-family:"Zen Antique",serif;font-weight:400;font-size:clamp(22px,3.8vw,30px);line-height:1.45;margin:0 0 18px}
+ul.plain{list-style:none;padding:0;margin:0}
+ul.plain li{padding-left:22px;position:relative;margin-bottom:8px}
+ul.plain li::before{content:"";position:absolute;left:0;top:.75em;width:9px;height:9px;background:var(--red)}
+ul.plain li b{font-weight:700;color:var(--ink)}
+
+/* 煽り */
+.shout{text-align:center;padding:76px 0 72px}
+.shout-sub{font-family:"Zen Kurenaido",sans-serif;color:var(--red);letter-spacing:.28em;font-size:14px;margin:0 0 18px}
+.shout-main{font-family:"Zen Antique",serif;font-size:clamp(29px,6.2vw,56px);line-height:1.34;margin:0}
+.shout-main .hl{background:linear-gradient(transparent 60%,rgba(245,200,81,.9) 60%)}
+.shout-foot{color:var(--ink-soft);font-size:15px;margin:22px auto 0;max-width:34em}
+
+/* hero */
+.hero{padding:52px 0 46px;border-bottom:1px solid var(--line)}
+.stamp{display:inline-block;font-family:"Zen Kurenaido",sans-serif;border:1.5px solid var(--red);color:var(--red);padding:2px 12px;font-size:13px;transform:rotate(-2.5deg);margin-bottom:20px;letter-spacing:.1em}
+.hero h1{font-family:"Zen Antique",serif;font-weight:400;font-size:clamp(32px,6.8vw,62px);line-height:1.26;margin:0 0 14px}
+.hero h1 .mark{background:linear-gradient(transparent 62%,rgba(245,200,81,.85) 62%)}
+.hero p{max-width:38em;color:var(--ink-soft);margin:0}
+
+/* figure */
+.figure{margin:32px 0 0;border:1.5px solid var(--ink);background:var(--sheet-2);padding:18px;box-shadow:8px 8px 0 rgba(23,35,58,.1)}
+.figure svg{display:block;width:100%;height:auto}
+
+/* demo */
+.studio{display:grid;grid-template-columns:1fr 300px;border:1.5px solid var(--ink);background:var(--sheet-2);box-shadow:6px 6px 0 rgba(23,35,58,.09);margin-top:22px}
+.panel{padding:20px 22px 24px}
+.tab{font-family:"Zen Kurenaido",sans-serif;font-size:13px;letter-spacing:.14em;color:var(--ink-soft);border-bottom:1px dashed var(--line);padding-bottom:8px;margin-bottom:16px;display:flex;justify-content:space-between}
+.pal{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.pal button{font-family:"Zen Kaku Gothic New",sans-serif;font-size:13px;border:1.5px solid var(--ink);background:var(--sheet-2);padding:5px 11px 5px 8px;cursor:pointer;display:flex;align-items:center;gap:7px}
+.pal button i{width:14px;height:14px;display:block;border:1px solid rgba(23,35,58,.5)}
+.pal button[aria-pressed=true]{border-color:var(--red);color:var(--red);box-shadow:3px 3px 0 rgba(220,64,47,.18)}
+#sheetGrid{display:block;width:100%;height:auto;border:1.5px solid var(--ink);background:#F3EEE1;touch-action:none;cursor:crosshair}
+.field{margin-top:14px}
+.field label{display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:2px}
+.field .val{font-family:"Zen Kurenaido",sans-serif;color:var(--red);font-size:14px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--ink);opacity:.35}
+input[type=range]::-moz-range-track{height:2px;background:var(--ink);opacity:.35}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--red);margin-top:-7px;border:2px solid var(--sheet-2);cursor:grab}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border:2px solid var(--sheet-2);border-radius:50%;background:var(--red)}
+input[type=range]:focus-visible{outline:2px solid var(--ink);outline-offset:4px}
+.save{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:700;font-size:14px;background:var(--ink);color:var(--sheet-2);border:0;padding:11px 20px;cursor:pointer;width:100%;letter-spacing:.08em;margin-top:18px}
+.save:hover{background:var(--red)}
+.toast{font-family:"Zen Kurenaido",sans-serif;color:var(--red);font-size:13px;height:20px;margin-top:6px;opacity:0;transition:opacity .25s}
+.toast.on{opacity:1}
+.screen{border-left:1.5px solid var(--ink);background:#0E1726;display:flex;align-items:center}
+.screen svg{display:block;width:100%;height:auto}
+
+/* steps */
+.sheetbox{border:1.5px solid var(--ink);background:var(--sheet-2)}
+.step{display:grid;grid-template-columns:56px 1fr;border-top:1px solid var(--line)}
+.step:first-child{border-top:0}
+.step .no{font-family:"Zen Antique",serif;font-size:22px;color:var(--red);display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);background:rgba(220,64,47,.05)}
+.step .body{padding:14px 20px}
+.step h3{font-family:"Zen Antique",serif;font-weight:400;font-size:18px;margin:0 0 2px}
+.step p{margin:0;color:var(--ink-soft);font-size:15px}
+
+.disclaimer{font-family:"Zen Kurenaido",sans-serif;color:var(--red);font-size:13px;margin:6px 0 0}
+.price-hero{border:1.5px solid var(--red);background:rgba(245,200,81,.16);padding:16px 20px;margin:0 0 18px}
+.price-hero b{display:block;font-family:"Zen Antique",serif;font-weight:400;font-size:clamp(20px,3.4vw,28px);line-height:1.4}
+.price-hero span{display:block;font-size:15px;color:var(--ink-soft);margin-top:4px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.callout{border:1.5px solid var(--ink);background:var(--sheet-2);padding:20px 22px}
+.callout h3{font-family:"Zen Antique",serif;font-weight:400;font-size:18px;margin:0 0 8px}
+.callout p{margin:0 0 8px;font-size:15px;color:var(--ink-soft)}
+.callout p:last-child{margin:0}
+.qrbox{display:flex;gap:18px;align-items:flex-start;justify-content:space-between}
+.qr{margin:0;text-align:center;flex:0 0 auto}
+.qr img{display:block;width:120px;height:120px;image-rendering:pixelated;border:6px solid #fff;outline:1.5px solid var(--ink)}
+.qr figcaption{font-family:"Zen Kurenaido",sans-serif;font-size:12px;color:var(--red);margin-top:6px}
+@media(max-width:520px){.qrbox{flex-direction:column;align-items:center;text-align:center}}
+a.link{color:var(--red);text-decoration:none;border-bottom:1.5px solid var(--red);font-weight:500}
+a.link:hover{background:rgba(220,64,47,.1)}
+footer{padding:34px 0 60px;font-size:13px;color:var(--ink-soft);font-family:"Zen Kurenaido",sans-serif}
+
+@media(max-width:860px){
+  .studio{grid-template-columns:1fr}
+  .screen{border-left:0;border-top:1.5px solid var(--ink)}
+  .two{grid-template-columns:1fr}
+  .figure{overflow-x:auto;padding:14px}
+  .figure svg{min-width:720px}
+}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<section class="hero">
+  <div class="stamp">絵を描く人のための、動く作品のつくりかた</div>
+  <h1>マス目を塗る。<br><span class="mark">作品が、動きだす。</span></h1>
+  <p>方眼のマスを色分けして、名前をつける。それがそのまま遊べるステージになります。決まった枠の中に何を置くか——そこがあなたの作品です。</p>
+
+  <figure class="figure">
+    <svg id="flow" viewBox="0 0 1100 312" role="img" aria-label="マス目を塗り、ことばで指示を書き、エディタで数値を決めると、動く作品になるまでの流れ図">
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0L10 5 0 10Z" fill="#DC402F"/>
+        </marker>
+      </defs>
+      <g font-family="Zen Antique,serif" font-size="17" fill="#17233A" text-anchor="middle">
+        <text x="125" y="30">① マス目を塗る</text>
+        <text x="407" y="30">② ことばで指示する</text>
+        <text x="689" y="30">③ 演出を決める</text>
+        <text x="971" y="30">④ 遊べる作品</text>
+      </g>
+
+      <!-- ① 方眼 -->
+      <g id="flowSheet" transform="translate(20,46)"></g>
+
+      <path d="M240 124H292" stroke="#DC402F" stroke-width="2" marker-end="url(#arw)"/>
+
+      <!-- ② プロンプト -->
+      <g transform="translate(302,46)">
+        <rect x="5" y="7" width="210" height="156" fill="#DDD6C4"/>
+        <rect width="210" height="156" fill="#F6F8F5" stroke="#17233A" stroke-width="1.6"/>
+        <rect width="210" height="22" fill="#17233A"/>
+        <text x="10" y="16" font-family="Zen Kurenaido,sans-serif" font-size="12" fill="#F6F8F5">AI に伝える</text>
+        <g font-family="Zen Kaku Gothic New,sans-serif" font-size="12.5" fill="#17233A">
+          <text x="12" y="46">主人公は鳥。羽ばたいて</text>
+          <text x="12" y="66">飛べる。</text>
+          <text x="12" y="90">トゲに当たったら倒れる。</text>
+          <text x="12" y="114">ゴールの旗を目指す。</text>
+        </g>
+        <rect x="152" y="103" width="2" height="14" fill="#DC402F"><animate attributeName="opacity" values="1;0;1" dur="1.1s" repeatCount="indefinite"/></rect>
+        <path d="M12 128H198" stroke="#C8D5CB"/>
+        <text x="12" y="146" font-family="Zen Kurenaido,sans-serif" font-size="12" fill="#DC402F">ふるまいは、書いたとおりになる</text>
+      </g>
+
+      <path d="M522 124H574" stroke="#DC402F" stroke-width="2" marker-end="url(#arw)"/>
+
+      <!-- ③ エディタ -->
+      <g transform="translate(584,46)">
+        <rect x="5" y="7" width="210" height="156" fill="#DDD6C4"/>
+        <rect width="210" height="156" fill="#F6F8F5" stroke="#17233A" stroke-width="1.6"/>
+        <rect width="210" height="22" fill="#17233A"/>
+        <circle cx="12" cy="11" r="3.4" fill="#DC402F"/><circle cx="24" cy="11" r="3.4" fill="#F5C851"/><circle cx="36" cy="11" r="3.4" fill="#6FB1A8"/>
+        <g font-family="Zen Kaku Gothic New,sans-serif" font-size="12" fill="#17233A">
+          <text x="14" y="52">色</text><text x="14" y="82">速さ</text><text x="14" y="112">大きさ</text><text x="14" y="142">光</text>
+        </g>
+        <g stroke="#17233A" stroke-width="2" opacity=".32"><path d="M66 48H194M66 78H194M66 108H194M66 138H194"/></g>
+        <g fill="#DC402F"><circle cx="146" cy="48" r="6"/><circle cx="92" cy="78" r="6"/><circle cx="172" cy="108" r="6"/><circle cx="114" cy="138" r="6"/></g>
+      </g>
+
+      <path d="M804 124H856" stroke="#DC402F" stroke-width="2" marker-end="url(#arw)"/>
+      <text x="830" y="112" text-anchor="middle" font-family="Zen Kurenaido,sans-serif" font-size="12" fill="#DC402F">保存＝即反映</text>
+
+      <!-- ④ 画面 -->
+      <g id="flowGame" transform="translate(866,46)"></g>
+
+      <path d="M971 246H125" stroke="#DC402F" stroke-width="1.6" stroke-dasharray="6 6" fill="none" marker-end="url(#arw)"/>
+      <path d="M971 226V246M125 226V246" stroke="#DC402F" stroke-width="1.6"/>
+      <text x="548" y="278" text-anchor="middle" font-family="Zen Kurenaido,sans-serif" font-size="15" fill="#DC402F">遊んで、塗り直して、書き足して、また保存する。ここを何周もするのが本番です。</text>
+    </svg>
+  </figure>
+</section>
+</div>
+
+<!-- 煽り -->
+<div class="wrap">
+<section class="shout">
+  <p class="shout-sub">塗る。書く。決める。それだけ。</p>
+  <p class="shout-main">あなたの絵心と、<br>想像力と、言葉しだいで、<br><span class="hl">表現は、無限大。</span></p>
+  <p class="shout-foot">同じマス目、同じ部品。それでも、出来上がるものは作った人の数だけ違う。</p>
+</section>
+</div>
+
+<!-- こんな人に -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">こんな人に</p>
+  <h2>頭の中にお話がある人、全員。</h2>
+  <ul class="plain">
+    <li><b>ゲームプランナー</b>／企画書のかわりに、遊べるものを出せる。</li>
+    <li><b>ゲームを作ってみたい初心者</b>／最初の1本を、今日はじめられる。</li>
+    <li><b>漫画家</b>／描いたキャラが、読者の手の中で動く。</li>
+    <li><b>小説家</b>／書いた世界のルールを、そのまま遊びにできる。</li>
+    <li><b>子ども</b>／マスを塗って、やりたいことを話しことばで書くだけ。</li>
+  </ul>
+</section>
+</div>
+
+<!-- お金の話 -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">お金の話</p>
+  <h2>プログラミングは、いりません。</h2>
+  <p class="price-hero"><b>エンジンもエディタも、ぜんぶ無料。</b><span>オープンソースだから、ダウンロードしてそのまま使えます。作れる本数にも制限はありません。</span></p>
+  <ul class="plain">
+    <li><b>かかるのは AI の利用料だけ。</b>Claude Pro は月 20 ドル（1ドル155円で約3,100円／消費税別）。ことばの指示を形にしてくれる相棒です。</li>
+    <li>Claude Code はその契約に含まれます。追加の支払いはありません。</li>
+    <li>為替や税で変わるので、最新の金額は公式の料金ページで確認してください。</li>
+  </ul>
+</section>
+</div>
+
+<!-- さわる -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">さわってみる</p>
+  <h2>塗ったところが、そのまま地形になる。</h2>
+  <div class="studio">
+    <div class="panel">
+      <div class="tab"><span>ステージ ／ level.kind.json</span><span>編集中</span></div>
+      <div class="pal" id="pal"></div>
+      <svg id="sheetGrid" viewBox="0 0 360 210" aria-label="マス目を塗るシート"></svg>
+
+      <div class="field">
+        <label>キャラの大きさ <span class="val" id="v-size">1.0 ばい</span></label>
+        <input type="range" id="s-size" min="0.6" max="1.6" step="0.05" value="1">
+      </div>
+      <div class="field">
+        <label>歩く速さ <span class="val" id="v-spd">ふつう</span></label>
+        <input type="range" id="s-spd" min="0.3" max="2" step="0.05" value="1">
+      </div>
+
+      <button class="save" id="save">保存する</button>
+      <div class="toast" id="toast">保存しました。ゲームに反映されています。</div>
+    </div>
+    <div class="screen">
+      <svg id="playScreen" viewBox="0 0 360 210" role="img" aria-label="塗ったマス目から作られたゲーム画面"></svg>
+    </div>
+  </div>
+  <p style="color:#5A6779;font-size:15px;margin:14px 0 0">左のマスをドラッグして塗ってください。右がその結果です。</p>
+  <p class="disclaimer">※ これは仕組みを体験してもらうためのデモです。実際のエディタの画面・遊べる内容とは異なります。</p>
+</section>
+</div>
+
+<!-- 制約 -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">制約について</p>
+  <h2>枠は、原稿用紙とおなじ。</h2>
+  <ul class="plain">
+    <li>仕組みは動かせない。当たり判定・物理・スコアは作り込み済み。</li>
+    <li>表現は全部あなたのもの。色・速さ・大きさ・HP・光・地形の並び。</li>
+    <li>同じ部品を配っても、出来上がるものは塗った人の数だけ違う。</li>
+  </ul>
+</section>
+</div>
+
+<!-- 手順 -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">手順</p>
+  <h2>5コマ。</h2>
+  <div class="sheetbox">
+    <div class="step"><div class="no">1</div><div class="body"><h3>ひらく</h3><p>アプリを開いて、ゲームのフォルダを選ぶ。</p></div></div>
+    <div class="step"><div class="no">2</div><div class="body"><h3>マス目を塗る</h3><p>地面・壁・水・とげ・始点。色を選んでドラッグ。</p></div></div>
+    <div class="step"><div class="no">3</div><div class="body"><h3>数字を決める</h3><p>色、速さ、大きさ、光。スライダーで詰める。</p></div></div>
+    <div class="step"><div class="no">4</div><div class="body"><h3>保存する</h3><p>立ち上げ直し不要。走っているゲームにその場で反映。</p></div></div>
+    <div class="step"><div class="no">5</div><div class="body"><h3>遊んで、塗り直す</h3><p>ここが本番。納得するまで何周でも。</p></div></div>
+  </div>
+</section>
+</div>
+
+<!-- 安心 -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">こわがらなくていい理由</p>
+  <h2>失敗しても、黒い画面にはならない。</h2>
+  <ul class="plain">
+    <li>受け付けない値は、はじめから入力できない。</li>
+    <li>書き損じても止まらず読み込み、警告が出る。直せば戻る。</li>
+    <li>プレビューはゲーム本体が描いた絵。見たままが結果。</li>
+    <li>そのゲームの設定が全部、1画面の目次に並ぶ。</li>
+  </ul>
+</section>
+</div>
+
+<!-- はじめる -->
+<div class="wrap">
+<section>
+  <p class="eyebrow">はじめかた</p>
+  <h2>Windows でも Mac でも。</h2>
+  <div class="two">
+    <div class="callout">
+      <h3>やること</h3>
+      <p>アプリを開く。マスを塗る。ことばで書く。決める。保存する。以上です。</p>
+      <p>Windows / macOS どちらでも動きます。</p>
+    </div>
+    <div class="callout qrbox">
+      <div>
+        <h3>いるもの</h3>
+        <p>パソコン1台と、AI（Claude Code）の利用料だけ。エンジンとエディタは無料です。</p>
+        <p><a class="link" href="https://github.com/ababup1192/flix_ge_studio">flix_ge_studio</a>　<a class="link" href="https://github.com/ababup1192/flix_game_engine">flix_game_engine</a></p>
+      </div>
+      <figure class="qr">
+        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwAQMAAAAEm3vRAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAABqUlEQVRYhe2YTa6DMAyEnVWOkZsSuCnHyIo8zzj8tOrbTyQs1Kb5WNTy2Bkwe+MNlcjd48j74peV3veKy2OXx/gKsGBhiYvYF8eeyZL7YWVrVhv28HMinPvmhZgP74kCSg1VmQUbNVQbJdUKWsK+tSaJHw18Xv/0txg+I3YPb+BmP0IQZ0ifjHpCSfr6EJMutuJDZ2ViMTFjaNauj6H4Me6RTLnynAD7oIeMABJ3vZmfkpLFntUR476VlUn63avJ44eGvA38lLWzMOqYq9qoIRQjcsN6AhxZhafxuWPjVnXMEemBQTk8JYR1n2PCeAsThiOqxK1x6Kpjjvsj5iZLcpyGWB6jDBun5AIfvLMx0AzqOAzZ6FgoaeXddxvo4rC8mO/D3NANb9djqiweTctByR5OPKXqBLjwcPXf+KSzGfJSx14GPibRx6ASS0zMvKvjx/9H37I8n0wVjwYeniD16x2HPkYOCzDtY8zN3G+/JoyRyTilrqfrr3cewhggGtj9DUD9SEwZdxrKx5vTGbDZmQ81xAqNfW08pJPog336wOL0r/6WxG+8oRB/FsB4oDUN6VYAAAAASUVORK5CYII=" alt="配布ページへのQRコード" width="120" height="120">
+        <figcaption>スマホで読む</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+</div>
+
+<div class="wrap"><footer>Flix GE Studio ／ Flix game engine ・ マス目から、動く作品へ。</footer></div>
+
+<script>
+(function(){
+var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+var KINDS={
+  '.':{name:'空',   color:null,      label:''},
+  'G':{name:'地面', color:'#5E9E6E', label:'地'},
+  'W':{name:'壁',   color:'#B08050', label:'壁'},
+  'M':{name:'水',   color:'#5B8FC7', label:'水'},
+  'X':{name:'とげ', color:'#DC402F', label:'棘'},
+  'F':{name:'ゴール', color:'#B79CD9', label:'旗'},
+  'S':{name:'始点', color:'#F5C851', label:'始'}
+};
+
+function sheetSVG(rows,cs){
+  var cols=rows[0].length, R=rows.length, w=cols*cs, h=R*cs, s='';
+  s+='<rect x="5" y="7" width="'+w+'" height="'+h+'" fill="#DDD6C4"/>';
+  s+='<rect width="'+w+'" height="'+h+'" fill="#F3EEE1" stroke="#17233A" stroke-width="1.6"/>';
+  for(var r=0;r<R;r++)for(var c=0;c<cols;c++){
+    var k=KINDS[rows[r][c]]; if(!k||!k.color)continue;
+    var x=c*cs,y=r*cs;
+    s+='<rect x="'+x+'" y="'+y+'" width="'+cs+'" height="'+cs+'" fill="'+k.color+'" fill-opacity=".8"/>';
+    s+='<text x="'+(x+cs/2)+'" y="'+(y+cs/2+cs*0.16)+'" text-anchor="middle" font-family="Zen Kaku Gothic New,sans-serif" font-size="'+(cs*.42).toFixed(1)+'" fill="#17233A">'+k.label+'</text>';
+  }
+  s+='<g stroke="#8FA3AF" stroke-width=".8" opacity=".9">';
+  for(var i=1;i<cols;i++) s+='<path d="M'+(i*cs)+' 0V'+h+'"/>';
+  for(var j=1;j<R;j++) s+='<path d="M0 '+(j*cs)+'H'+w+'"/>';
+  s+='</g>';
+  return s;
+}
+
+function chara(x,y,scale,flap){
+  return '<g transform="translate('+x.toFixed(1)+','+y.toFixed(1)+') scale('+scale.toFixed(2)+')">'
+    +'<ellipse rx="11" ry="10" fill="#F5C851"/>'
+    +'<ellipse cx="-2" cy="2" rx="7" ry="'+(flap||4).toFixed(1)+'" fill="#0E1726" opacity=".24"/>'
+    +'<circle cx="4" cy="-3" r="3" fill="#fff"/><circle cx="4.9" cy="-3" r="1.5" fill="#17233A"/>'
+    +'<path d="M10 0L18 2 10 4Z" fill="#E8873A"/></g>';
+}
+
+function gameSVG(rows,cs,t,size){
+  var cols=rows[0].length, R=rows.length, w=cols*cs, h=R*cs, s='';
+  s+='<rect width="'+w+'" height="'+h+'" fill="#0E1726"/>';
+  for(var i=0;i<20;i++){
+    var sx=(i*137)%w, sy=(i*89)%(h*0.55);
+    s+='<circle cx="'+sx+'" cy="'+sy+'" r="'+(i%3?0.9:1.4)+'" fill="#3E5478"/>';
+  }
+  var sr=1,sc=1;
+  for(var r=0;r<R;r++)for(var c=0;c<cols;c++){
+    var ch=rows[r][c], x=c*cs, y=r*cs;
+    if(ch==='S'){ sr=r; sc=c;
+      s+='<path d="M'+(x+cs*.22)+' '+(y+cs)+'V'+(y+cs*.12)+'l'+(cs*.46)+' '+(cs*.17)+'l-'+(cs*.46)+' '+(cs*.17)+'" fill="#F5C851" stroke="#F5C851" stroke-width="1.4" opacity=".85"/>';
+    }
+    else if(ch==='F'){
+      var fw=Math.sin(t*3+r)*1.5;
+      s+='<rect x="'+(x+cs*.2)+'" y="'+(y+cs*.05)+'" width="2.5" height="'+(cs*.9)+'" fill="#D6D2E6"/>';
+      s+='<path d="M'+(x+cs*.28)+' '+(y+cs*.08)+' q'+(cs*.22)+' '+(4+fw)+' '+(cs*.5)+' 0 V'+(y+cs*.42)+' q-'+(cs*.28)+' '+(4+fw)+' -'+(cs*.5)+' 0Z" fill="#B79CD9"/>';
+    }
+    else if(ch==='G'){
+      s+='<rect x="'+x+'" y="'+y+'" width="'+cs+'" height="'+cs+'" fill="#2E7D5B"/>';
+      s+='<rect x="'+x+'" y="'+y+'" width="'+cs+'" height="'+(cs*.18)+'" fill="#54A57E"/>';
+    } else if(ch==='W'){
+      s+='<rect x="'+x+'" y="'+y+'" width="'+cs+'" height="'+cs+'" fill="#7A5533"/>';
+      s+='<g stroke="#9A6E45" stroke-width="1"><path d="M'+x+' '+(y+cs/2)+'H'+(x+cs)+'M'+(x+cs/2)+' '+y+'V'+(y+cs/2)+'M'+(x+cs/4)+' '+(y+cs/2)+'V'+(y+cs)+'"/></g>';
+    } else if(ch==='M'){
+      var wob=Math.sin(t*2+c)*1.5;
+      s+='<rect x="'+x+'" y="'+(y+4)+'" width="'+cs+'" height="'+(cs-4)+'" fill="#2F5F94"/>';
+      s+='<path d="M'+x+' '+(y+6+wob)+' q'+(cs/4)+' -3.5 '+(cs/2)+' 0 q'+(cs/4)+' 3.5 '+(cs/2)+' 0 V'+(y+cs)+'H'+x+'Z" fill="#5B8FC7" opacity=".85"/>';
+    } else if(ch==='X'){
+      s+='<path d="M'+x+' '+(y+cs)+'L'+(x+cs/4)+' '+(y+cs*.22)+'L'+(x+cs/2)+' '+(y+cs)+'L'+(x+cs*.75)+' '+(y+cs*.22)+'L'+(x+cs)+' '+(y+cs)+'Z" fill="#C7CFD8"/>';
+      s+='<rect x="'+x+'" y="'+(y+cs-4)+'" width="'+cs+'" height="4" fill="#8A94A3"/>';
+    }
+  }
+  var bob=reduce?0:Math.sin(t*2.4)*cs*0.32;
+  var walk=reduce?0:Math.sin(t*1.1)*cs*0.6;
+  s+=chara(sc*cs+cs/2+walk, sr*cs+cs/2+bob, size*(cs/30), reduce?4:(3+Math.abs(Math.sin(t*7))*4));
+  return s;
+}
+
+/* --- 上部の図（8×6） --- */
+var FLOW=["........",".S......","....WW..",".......F","GGGXGMMG","GGGGGGGG"];
+document.getElementById('flowSheet').innerHTML = sheetSVG(FLOW,26);
+document.getElementById('flowGame').innerHTML  = gameSVG(FLOW,26,1.2,1);
+
+/* --- 触れるデモ（12×7） --- */
+var COLS=12, ROWS=7, CS=30;
+var seed=["............",".S..........","......WW....","...........F","GGG.GGXGMMGG","GGGGGGGGGGGG","GGGGGGGGGGGG"];
+var grid=seed.map(function(r){return r.split('')});
+var brush='G';
+
+var pal=document.getElementById('pal');
+['G','W','M','X','F','S','.'].forEach(function(k){
+  var b=document.createElement('button');
+  b.setAttribute('aria-pressed', String(k===brush));
+  b.dataset.k=k;
+  var sw = KINDS[k].color ? '<i style="background:'+KINDS[k].color+'"></i>'
+                          : '<i style="background:repeating-linear-gradient(45deg,#fff 0 4px,#DDD 4px 8px)"></i>';
+  b.innerHTML = sw + (k==='.'?'けす':KINDS[k].name);
+  pal.appendChild(b);
+});
+pal.addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  brush=b.dataset.k;
+  [].forEach.call(pal.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', String(x===b));});
+});
+
+var sheet=document.getElementById('sheetGrid');
+var play=document.getElementById('playScreen');
+var size=1, spd=1, tt=0;
+
+function rowsOf(){ return grid.map(function(r){return r.join('')}); }
+function drawSheet(){ sheet.innerHTML = sheetSVG(rowsOf(), CS); }
+function drawPlay(){ play.innerHTML = gameSVG(rowsOf(), CS, tt, size); }
+
+function paintAt(evt){
+  var b=sheet.getBoundingClientRect();
+  var c=Math.floor((evt.clientX-b.left)/b.width*COLS);
+  var r=Math.floor((evt.clientY-b.top)/b.height*ROWS);
+  if(c<0||r<0||c>=COLS||r>=ROWS) return;
+  if(grid[r][c]===brush) return;
+  if(brush==='S'){ for(var i=0;i<ROWS;i++)for(var j=0;j<COLS;j++) if(grid[i][j]==='S') grid[i][j]='.'; }
+  grid[r][c]=brush;
+  drawSheet();
+  if(reduce) drawPlay();
+}
+var down=false;
+sheet.addEventListener('pointerdown',function(e){down=true;try{sheet.setPointerCapture(e.pointerId)}catch(x){}paintAt(e);e.preventDefault();});
+sheet.addEventListener('pointermove',function(e){if(down)paintAt(e);});
+window.addEventListener('pointerup',function(){down=false;});
+
+document.getElementById('s-size').addEventListener('input',function(){
+  size=parseFloat(this.value);
+  document.getElementById('v-size').textContent=size.toFixed(1)+' ばい';
+  if(reduce) drawPlay();
+});
+document.getElementById('s-spd').addEventListener('input',function(){
+  spd=parseFloat(this.value);
+  document.getElementById('v-spd').textContent = spd<.7?'のんびり':(spd>1.4?'せっかち':'ふつう');
+});
+var toast=document.getElementById('toast');
+document.getElementById('save').addEventListener('click',function(){
+  toast.classList.add('on'); clearTimeout(toast._t);
+  toast._t=setTimeout(function(){toast.classList.remove('on');},2200);
+});
+
+drawSheet(); drawPlay();
+if(!reduce){
+  var last=performance.now();
+  requestAnimationFrame(function loop(now){
+    var dt=Math.min((now-last)/1000,.05); last=now; tt+=dt*spd;
+    drawPlay();
+    requestAnimationFrame(loop);
+  });
+}
+})();
+</script>
+</body>
+</html>
