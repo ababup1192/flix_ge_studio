@@ -255,6 +255,10 @@ stage-engine:
 	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/after-flix-work.py \
 	   $(ENGINE)/.claude/hooks/after-flix-touch.py $(ENGINE)/.claude/hooks/session-diet.py \
 	   $(ENGINE_STAGE)/.claude/hooks/
+	# ゲームの Makefile が include する共通部。漏れると include ごと落ち、make は
+	# 「そんなファイルは無い」としか言わない — 産まれたゲームは run も status も打てない。
+	mkdir -p $(ENGINE_STAGE)/mk
+	cp $(ENGINE)/mk/*.mk $(ENGINE_STAGE)/mk/
 	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
 	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
 	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml
