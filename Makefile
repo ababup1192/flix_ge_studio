@@ -236,6 +236,11 @@ stage-engine:
 	# 絵の値段の判定 (reference-check.sh と status.py が $(ENGINE)/bin/ から呼ぶ)。
 	# 呼ぶ側はどちらも「無ければ飛ばす」で fail-open するので、落とすと判定が黙って消える。
 	cp $(ENGINE)/bin/check-render-budget.py $(ENGINE_STAGE)/bin/
+	# 3 面図から歩きを彫り出す道具。carve-sprite スキルは全ゲームへ配られ、その手順が
+	# $(ENGINE)/bin/carve/carve.py を直に叩く。スキルだけ届いて道具が届かないと、
+	# 実行して初めて「ファイルが無い」で気づく。
+	mkdir -p $(ENGINE_STAGE)/bin/carve
+	cp $(ENGINE)/bin/carve/*.py $(ENGINE_STAGE)/bin/carve/
 	cp $(ENGINE)/bin/precommit.py $(ENGINE)/bin/sync-agents.py $(ENGINE_STAGE)/bin/
 	mkdir -p $(ENGINE_STAGE)/bin/githooks
 	cp $(ENGINE)/bin/githooks/pre-commit $(ENGINE_STAGE)/bin/githooks/
