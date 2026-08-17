@@ -138,7 +138,114 @@ suite =
                             |> Query.fromHtml
                             |> Query.findAll [ Selector.class "px-guessed" ]
                             |> Query.count (Expect.equal 0)
+        , describe "絵の見出し(group)"
+            [ test "同じ頭を持つ絵が 2 枚以上あれば、その頭が見出しになる" <|
+                \_ ->
+                    groupsFrom """{ "legend": { "a": "#000" }, "sprites": {
+                        "tile_grass_a": { "frames": { "i": ["a"] } },
+                        "tile_grass_b": { "frames": { "i": ["a"] } },
+                        "house_wall":   { "frames": { "i": ["a"] } },
+                        "house_roof":   { "frames": { "i": ["a"] } } } }"""
+                        |> Expect.equal [ ( "tile", 2 ), ( "house", 2 ) ]
+            , test "束ねる相手が居ない絵は見出しを持たない(「その他」を作らない)" <|
+                \_ ->
+                    groupsFrom """{ "legend": { "a": "#000" }, "sprites": {
+                        "hero":     { "frames": { "i": ["a"] } },
+                        "villager": { "frames": { "i": ["a"] } },
+                        "herb":     { "frames": { "i": ["a"] } } } }"""
+                        |> Expect.equal [ ( "", 3 ) ]
+            , test "JSON に書いた group が名前より勝つ" <|
+                \_ ->
+                    groupsFrom """{ "legend": { "a": "#000" }, "sprites": {
+                        "tile_grass_a": { "group": "地面", "frames": { "i": ["a"] } },
+                        "tile_grass_b": { "group": "地面", "frames": { "i": ["a"] } } } }"""
+                        |> Expect.equal [ ( "地面", 2 ) ]
+            , test "頭を共有しない絵と共有する絵が混ざっても取り違えない" <|
+                \_ ->
+                    groupsFrom """{ "legend": { "a": "#000" }, "sprites": {
+                        "tile_grass_a": { "frames": { "i": ["a"] } },
+                        "lamp":         { "frames": { "i": ["a"] } },
+                        "tile_grass_b": { "frames": { "i": ["a"] } },
+                        "fence":        { "frames": { "i": ["a"] } } } }"""
+                        |> Expect.equal [ ( "tile", 2 ), ( "", 2 ) ]
+            ]
+        , describe "形の道具(直線・矩形・楕円)"
+            [ test "直線 — 斜め 45 度は 1 セルずつ階段になる" <|
+                \_ ->
+                    PixelEditor.lineCells ( 0, 0 ) ( 3, 3 )
+                        |> Expect.equal [ ( 0, 0 ), ( 1, 1 ), ( 2, 2 ), ( 3, 3 ) ]
+            , test "直線 — 押した所と離した所が同じなら 1 セル" <|
+                \_ ->
+                    PixelEditor.lineCells ( 2, 5 ) ( 2, 5 )
+                        |> Expect.equal [ ( 2, 5 ) ]
+            , test "直線 — 引く向きが逆でも同じセルを通る" <|
+                \_ ->
+                    PixelEditor.lineCells ( 5, 1 ) ( 0, 3 )
+                        |> List.sort
+                        |> Expect.equal (PixelEditor.lineCells ( 0, 3 ) ( 5, 1 ) |> List.sort)
+            , test "矩形 — 枠だけで中は空く(4×3 なら 10 セル)" <|
+                \_ ->
+                    PixelEditor.rectCells ( 0, 0 ) ( 3, 2 )
+                        |> List.length
+                        |> Expect.equal 10
+            , test "矩形 — 4 隅が入る" <|
+                \_ ->
+                    PixelEditor.rectCells ( 1, 1 ) ( 4, 3 )
+                        |> Set.fromList
+                        |> (\cells ->
+                                [ ( 1, 1 ), ( 4, 1 ), ( 1, 3 ), ( 4, 3 ) ]
+                                    |> List.all (\c -> Set.member c cells)
+                                    |> Expect.equal True
+                           )
+            , test "矩形 — 中心は塗らない" <|
+                \_ ->
+                    PixelEditor.rectCells ( 0, 0 ) ( 4, 4 )
+                        |> List.member ( 2, 2 )
+                        |> Expect.equal False
+            , test "楕円 — 上下左右の 4 点が入る" <|
+                \_ ->
+                    PixelEditor.ellipseCells ( 0, 0 ) ( 6, 4 )
+                        |> Set.fromList
+                        |> (\cells ->
+                                [ ( 0, 2 ), ( 6, 2 ), ( 3, 0 ), ( 3, 4 ) ]
+                                    |> List.all (\c -> Set.member c cells)
+                                    |> Expect.equal True
+                           )
+            , test "楕円 — 中心は塗らない(枠線だけ)" <|
+                \_ ->
+                    PixelEditor.ellipseCells ( 0, 0 ) ( 8, 8 )
+                        |> List.member ( 4, 4 )
+                        |> Expect.equal False
+            , test "楕円 — 潰れて幅か高さが無いときは直線に倒す" <|
+                \_ ->
+                    PixelEditor.ellipseCells ( 1, 2 ) ( 5, 2 )
+                        |> Expect.equal (PixelEditor.lineCells ( 1, 2 ) ( 5, 2 ))
+            , test "まとめ塗り — 指定したセルだけが変わる" <|
+                \_ ->
+                    PixelEditor.paintCells 'x' [ ( 0, 0 ), ( 2, 1 ) ] [ "...", "...", "..." ]
+                        |> Expect.equal [ "x..", "..x", "..." ]
+            , test "まとめ塗り — 絵の外のセルは黙って捨てる" <|
+                \_ ->
+                    PixelEditor.paintCells 'x' [ ( 9, 0 ), ( 0, 9 ), ( -1, 0 ) ] [ "..", ".." ]
+                        |> Expect.equal [ "..", ".." ]
+            , test "まとめ塗り — 触らない行は同じ値のまま" <|
+                \_ ->
+                    PixelEditor.paintCells 'x' [ ( 0, 1 ) ] [ "ab", "cd", "ef" ]
+                        |> Expect.equal [ "ab", "xd", "ef" ]
+            ]
         ]
+
+
+{-| 見出しごとの絵の枚数。並びは *.sprite.json に出てくる順。 -}
+groupsFrom : String -> List ( String, Int )
+groupsFrom text =
+    text
+        |> D.decodeString D.value
+        |> Result.withDefault E.null
+        |> PixelEditor.fromDoc
+        |> Maybe.map
+            (PixelEditor.groupsOf >> List.map (\( name, sprites ) -> ( name, List.length sprites )))
+        |> Maybe.withDefault []
 
 
 {-| 解決表が何も無い状態(応答が届く前)。 -}

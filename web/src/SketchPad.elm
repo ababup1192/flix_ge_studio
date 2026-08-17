@@ -56,7 +56,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import Json.Encode as E
-import PixelEditor exposing (floodAt, paintAt)
+import PixelEditor exposing (ellipseCells, floodAt, lineCells, paintAt, rectCells)
 import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
@@ -1759,122 +1759,6 @@ shapeCells tool start current =
 
         Eraser ->
             lineCells start current
-
-
-{-| 2 点を結ぶ直線のセル。長い方の軸の歩数で線形補間する。 -}
-lineCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
-lineCells ( x0, y0 ) ( x1, y1 ) =
-    let
-        steps =
-            max (abs (x1 - x0)) (abs (y1 - y0))
-    in
-    if steps == 0 then
-        [ ( x0, y0 ) ]
-
-    else
-        List.range 0 steps
-            |> List.map
-                (\i ->
-                    let
-                        t =
-                            toFloat i / toFloat steps
-                    in
-                    ( round (toFloat x0 + toFloat (x1 - x0) * t)
-                    , round (toFloat y0 + toFloat (y1 - y0) * t)
-                    )
-                )
-
-
-{-| 2 点を対角とする四角の枠線のセル。中は塗らない —
-塗り潰しはバケツで一撫でできるので、塗り潰し用の道具を別に増やさない。
--}
-rectCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
-rectCells ( x0, y0 ) ( x1, y1 ) =
-    let
-        left =
-            min x0 x1
-
-        right =
-            max x0 x1
-
-        top =
-            min y0 y1
-
-        bottom =
-            max y0 y1
-    in
-    Set.toList
-        (Set.fromList
-            ((List.range left right |> List.concatMap (\x -> [ ( x, top ), ( x, bottom ) ]))
-                ++ (List.range top bottom |> List.concatMap (\y -> [ ( left, y ), ( right, y ) ]))
-            )
-        )
-
-
-{-| 外接矩形に内接する枠線の楕円のセル。列走査と行走査の両方を重ねるのは、
-片方だけだと細長い楕円で急な曲がりの所に穴が開くため(Set で重複は消える)。
--}
-ellipseCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
-ellipseCells ( x0, y0 ) ( x1, y1 ) =
-    let
-        left =
-            min x0 x1
-
-        right =
-            max x0 x1
-
-        top =
-            min y0 y1
-
-        bottom =
-            max y0 y1
-
-        cx =
-            toFloat (left + right) / 2
-
-        cy =
-            toFloat (top + bottom) / 2
-
-        rx =
-            toFloat (right - left) / 2
-
-        ry =
-            toFloat (bottom - top) / 2
-    in
-    if rx == 0 || ry == 0 then
-        lineCells ( x0, y0 ) ( x1, y1 )
-
-    else
-        let
-            byColumn =
-                List.range left right
-                    |> List.concatMap
-                        (\x ->
-                            let
-                                t =
-                                    (toFloat x - cx) / rx
-
-                                dy =
-                                    ry * sqrt (max 0 (1 - t * t))
-                            in
-                            [ ( x, round (cy - dy) ), ( x, round (cy + dy) ) ]
-                        )
-
-            byRow =
-                List.range top bottom
-                    |> List.concatMap
-                        (\y ->
-                            let
-                                t =
-                                    (toFloat y - cy) / ry
-
-                                dx =
-                                    rx * sqrt (max 0 (1 - t * t))
-                            in
-                            [ ( round (cx - dx), y ), ( round (cx + dx), y ) ]
-                        )
-        in
-        Set.toList (Set.fromList (byColumn ++ byRow))
 
 
 {-| ラベルを選んだら消しゴムからはペンに戻す(選んだ色で塗れない、を防ぐ)。 -}

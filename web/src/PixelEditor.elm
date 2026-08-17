@@ -5,14 +5,20 @@ module PixelEditor exposing
     , Model
     , Msg(..)
     , Out(..)
+    , ellipseCells
     , floodAt
     , fromDoc
     , goldenHue
+    , groupsOf
     , init
     , isPlaying
+    , lineCells
     , paintAt
+    , paintCells
+    , rectCells
     , palette
     , pickAt
+    , playIntervalMs
     , release
     , strokeActive
     , transparentChar
@@ -41,7 +47,7 @@ legend の値は意味色キー(テーマが解く名前)のことがあり、�
 -}
 
 import Dict exposing (Dict)
-import Html exposing (Html, button, div, span, text)
+import Html exposing (Html, button, div, option, select, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import Html.Lazy as HL
@@ -65,15 +71,74 @@ type alias Sprite =
     { name : String
 
     -- 種別(*.sprite.json の sprites[].group)。19 体を 1 列に並べると探せないので、
-    -- 束ねて見出しを付ける。宣言が無ければ「その他」へ。
+    -- 束ねて見出しを付ける。宣言が無ければ名前から導く。空 = 見出しを付けない
     , group : String
     , frames : List ( String, List String )
+
+    -- 動き。どのコマをどの順で回すか。frames には順番も時間も無いので、
+    -- ここが無ければ再生できる物が何も無い
+    , clips : List ( String, Clip )
     }
 
 
-defaultGroup : String
-defaultGroup =
-    "その他"
+type alias Clip =
+    { frames : List String
+    , fps : Int
+    , loop : String
+    }
+
+
+{-| group の宣言が無い絵の見出しを、名前から導く。`_` までの頭を見て、
+同じ頭を持つ絵が 2 枚以上あればそれを見出しにする(`tile_grass_a` →
+`tile`)。相手が居なければ空 = 見出しを付けない。
+
+「その他」のような固定の見出しは付けない — 中身を何も言っていないうえ、
+全部がそこへ落ちると見出しの意味が消える(タイル集では 41 枚全部が入った)。
+-}
+withDerivedGroups : List Sprite -> List Sprite
+withDerivedGroups sprites =
+    let
+        counts =
+            sprites
+                |> List.foldl
+                    (\sprite acc ->
+                        if String.isEmpty sprite.group then
+                            Dict.update (namePrefix sprite.name)
+                                (\n -> Just (1 + Maybe.withDefault 0 n))
+                                acc
+
+                        else
+                            acc
+                    )
+                    Dict.empty
+    in
+    sprites
+        |> List.map
+            (\sprite ->
+                if String.isEmpty sprite.group then
+                    let
+                        prefix =
+                            namePrefix sprite.name
+                    in
+                    if Maybe.withDefault 0 (Dict.get prefix counts) >= 2 then
+                        { sprite | group = prefix }
+
+                    else
+                        sprite
+
+                else
+                    sprite
+            )
+
+
+namePrefix : String -> String
+namePrefix name =
+    case String.split "_" name of
+        head :: _ :: _ ->
+            head
+
+        _ ->
+            name
 
 
 {-| 編集 1 件 = 1 フレームの rows 丸ごと。 -}
@@ -94,7 +159,7 @@ fromDoc value =
         ( Ok legend, Ok raw ) ->
             let
                 sprites =
-                    List.filterMap cleanSprite raw
+                    List.filterMap cleanSprite raw |> withDerivedGroups
             in
             if List.isEmpty sprites then
                 Nothing
@@ -146,10 +211,29 @@ cleanSprite ( name, value ) =
                             { name = name
                             , group =
                                 D.decodeValue (D.field "group" D.string) value
-                                    |> Result.withDefault defaultGroup
+                                    |> Result.withDefault ""
                             , frames = frames
+                            , clips = clipsOf value
                             }
                 )
+
+
+{-| clips: { "walk_down": { frames: [...], fps: 6, loop: "pingpong" } }。
+コマを 1 枚も挙げていない動きは捨てる(再生しても何も起きないため)。
+-}
+clipsOf : D.Value -> List ( String, Clip )
+clipsOf value =
+    D.decodeValue (D.field "clips" (D.keyValuePairs clipDecoder)) value
+        |> Result.withDefault []
+        |> List.filter (\( name, clip ) -> not (String.startsWith "//" name) && not (List.isEmpty clip.frames))
+
+
+clipDecoder : D.Decoder Clip
+clipDecoder =
+    D.map3 Clip
+        (D.field "frames" (D.list D.string))
+        (D.oneOf [ D.field "fps" D.int, D.succeed 8 ])
+        (D.oneOf [ D.field "loop" D.string, D.succeed "forward" ])
 
 
 cleanFrame : ( String, D.Value ) -> Maybe ( String, List String )
@@ -193,6 +277,18 @@ type Tool
     | Eraser
     | Bucket
     | Dropper
+    | Line
+    | Rect
+    | Ellipse
+
+
+{-| 形の道具の一筆。押した所を覚えておいて、動かす間は毎回 before から
+引き直す(前のプレビューの上に重ねると、引き直しの跡が残る)。
+-}
+type alias Shape =
+    { tool : Tool
+    , start : ( Int, Int )
+    }
 
 
 type alias Snapshot =
@@ -213,18 +309,26 @@ type alias Model =
     , spriteKey : Maybe String
     , frameKey : Maybe String
     , cellPx : Int
+
+    -- ピンチの溜め込み。1 回のピンチで何十回もイベントが来るので、
+    -- しきい値を超えた時だけ 1 段動かす(段ごとに動かすと一気に端まで飛ぶ)
+    , zoomAccum : Float
     , hover : Maybe ( Int, Int )
 
-    -- 一筆の途中(Just = 描いている)。before は戻す用の一筆前
-    , stroke : Maybe { ch : Char, before : List String }
+    -- 一筆の途中(Just = 描いている)。before は戻す用の一筆前。
+    -- shape が立っていれば、動かす間は形のプレビューを before から引き直す
+    , stroke : Maybe { ch : Char, before : List String, shape : Maybe Shape }
 
     -- 表示が文書に勝つ作業コピー(一筆の途中と、確定後のエコー待ちの間)
     , working : Maybe Edit
     , undo : List Snapshot
     , redo : List Snapshot
 
-    -- フレーム送りで動きを見せている最中か。編集を始めたら止める
+    -- コマ送りで動きを見せている最中か。編集を始めたら止める
     , playing : Bool
+
+    -- 見ている動き(clips の名前)。Nothing はその絵の先頭の動き
+    , clipKey : Maybe String
     }
 
 
@@ -235,12 +339,14 @@ init =
     , spriteKey = Nothing
     , frameKey = Nothing
     , cellPx = 24
+    , zoomAccum = 0
     , hover = Nothing
     , stroke = Nothing
     , working = Nothing
     , undo = []
     , redo = []
     , playing = False
+    , clipKey = Nothing
     }
 
 
@@ -264,35 +370,98 @@ isPlaying model =
     model.playing
 
 
-{-| いまの絵の次のフレーム。最後まで来たら先頭へ戻る。 -}
-nextFrameKey : Doc -> Model -> Maybe String
-nextFrameKey doc model =
+{-| コマ送りの間隔。速さは Doc の動きが持つ — ここで勝手に決めると、
+Studio の見え方とゲームの動きが食い違う。
+-}
+playIntervalMs : Doc -> Model -> Float
+playIntervalMs doc model =
+    1000 / toFloat (max 1 (selectedClip doc model |> Maybe.map (Tuple.second >> .fps) |> Maybe.withDefault 8))
+
+
+{-| 繰り返さない動きの最後のコマに居るか(そこで再生を止める)。 -}
+isLastOfOnce : Doc -> Model -> Bool
+isLastOfOnce doc model =
+    (selectedClip doc model |> Maybe.map (Tuple.second >> .loop) |> Maybe.withDefault "forward")
+        == "once"
+        && frameIndexOf doc model + 1 >= frameCountOf doc model
+
+
+{-| いま見ている動き。選んでいなければその絵の先頭の動き。 -}
+selectedClip : Doc -> Model -> Maybe ( String, Clip )
+selectedClip doc model =
     case selectedSprite doc model of
         Nothing ->
-            model.frameKey
+            Nothing
 
         Just sprite ->
-            let
-                names =
-                    List.map Tuple.first sprite.frames
-
-                current =
-                    model.frameKey |> Maybe.withDefault (List.head names |> Maybe.withDefault "")
-
-                after =
-                    names
-                        |> List.drop 1
-                        |> List.map2 (\a b -> ( a, b )) names
-                        |> List.filter (\( a, _ ) -> a == current)
-                        |> List.head
-                        |> Maybe.map Tuple.second
-            in
-            case after of
-                Just next ->
-                    Just next
+            case model.clipKey |> Maybe.andThen (\key -> sprite.clips |> List.filter (\( n, _ ) -> n == key) |> List.head) of
+                Just found ->
+                    Just found
 
                 Nothing ->
-                    List.head names
+                    List.head sprite.clips
+
+
+{-| 動きが並べるコマ。動きが無い絵では、その絵の全コマを並べる
+(選んで描くためには要る。ただし「順に回す」意味は無いので再生はさせない)。
+-}
+clipFrameNames : Doc -> Model -> List String
+clipFrameNames doc model =
+    case selectedClip doc model of
+        Just ( _, clip ) ->
+            clip.frames
+
+        Nothing ->
+            selectedSprite doc model
+                |> Maybe.map (.frames >> List.map Tuple.first)
+                |> Maybe.withDefault []
+
+
+{-| いま見ている動きの中でコマを dir だけ送った先。端は動きの回し方に従う。 -}
+stepFrameKey : Int -> Doc -> Model -> Maybe String
+stepFrameKey dir doc model =
+    let
+        names =
+            clipFrameNames doc model
+
+        count =
+            List.length names
+
+        loop =
+            selectedClip doc model |> Maybe.map (Tuple.second >> .loop) |> Maybe.withDefault "forward"
+
+        next =
+            frameIndexOf doc model + dir
+    in
+    if count == 0 then
+        model.frameKey
+
+    else if loop == "once" && (next < 0 || next >= count) then
+        model.frameKey
+
+    else
+        names |> List.drop (modBy count next) |> List.head
+
+
+frameCountOf : Doc -> Model -> Int
+frameCountOf doc model =
+    clipFrameNames doc model |> List.length
+
+
+{-| いま見ているコマが動きの中で何番目か。見つからなければ先頭とみなす。 -}
+frameIndexOf : Doc -> Model -> Int
+frameIndexOf doc model =
+    case model.frameKey of
+        Just current ->
+            clipFrameNames doc model
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( _, name ) -> name == current)
+                |> List.head
+                |> Maybe.map Tuple.first
+                |> Maybe.withDefault 0
+
+        Nothing ->
+            0
 
 
 
@@ -307,7 +476,10 @@ type Msg
     | FrameChosen String
     | PlayToggled
     | PlayTicked
+    | ClipChosen String
+    | FrameStepped Int
     | ZoomStepped Int
+    | ZoomPinched Float
     | CellPressed Int Int Int
     | CellEntered Int Int
     | GridLeft
@@ -359,14 +531,65 @@ update doc msg model =
             ( { model | playing = not model.playing }, Silent )
 
         PlayTicked ->
-            -- 次のフレームへ。最後まで来たら先頭へ戻る(輪にして動きとして見せる)
-            ( { model | frameKey = nextFrameKey doc model, working = Nothing }, Silent )
+            if isLastOfOnce doc model then
+                -- 繰り返さない設定では最後のコマで止める(見た形のまま残す)
+                ( { model | playing = False }, Silent )
+
+            else
+                ( { model | frameKey = stepFrameKey 1 doc model, working = Nothing }, Silent )
+
+        ClipChosen name ->
+            -- 動きを変えたら、その動きの先頭のコマから見せる
+            ( { model
+                | clipKey = Just name
+                , frameKey = selectedSprite doc model
+                    |> Maybe.andThen (\sp -> sp.clips |> List.filter (\( n, _ ) -> n == name) |> List.head)
+                    |> Maybe.andThen (Tuple.second >> .frames >> List.head)
+                , working = Nothing
+              }
+            , Silent
+            )
+
+        FrameStepped dir ->
+            -- 手で送る間は自動送りを止める(勝手に進むと狙ったコマで止まれない)
+            ( { model | frameKey = stepFrameKey dir doc model, working = Nothing, playing = False }, Silent )
 
         FrameChosen name ->
             ( { model | frameKey = Just name, working = Nothing, stroke = Nothing }, Silent )
 
         ZoomStepped dir ->
-            ( { model | cellPx = zoomStep dir model.cellPx }, Silent )
+            ( { model | cellPx = zoomStep dir model.cellPx, zoomAccum = 0 }, Silent )
+
+        ZoomPinched deltaY ->
+            let
+                accum =
+                    -- 向きが変わったら溜めを捨てる。残しておくと、指を戻した時に
+                    -- 打ち消し合って動かない間が生まれる
+                    if deltaY * model.zoomAccum < 0 then
+                        deltaY
+
+                    else
+                        model.zoomAccum + deltaY
+            in
+            if abs accum < pinchStepThreshold then
+                ( { model | zoomAccum = accum }, Silent )
+
+            else
+                -- 指を広げる(deltaY が負)= 拡大
+                ( { model
+                    | cellPx =
+                        zoomStep
+                            (if accum < 0 then
+                                1
+
+                             else
+                                -1
+                            )
+                            model.cellPx
+                    , zoomAccum = 0
+                  }
+                , Silent
+                )
 
         CellEntered x y ->
             let
@@ -375,7 +598,23 @@ update doc msg model =
             in
             case ( m1.stroke, m1.working ) of
                 ( Just stroke, Just w ) ->
-                    ( { m1 | working = Just { w | rows = paintAt stroke.ch ( x, y ) w.rows } }, Silent )
+                    case stroke.shape of
+                        Nothing ->
+                            ( { m1 | working = Just { w | rows = paintAt stroke.ch ( x, y ) w.rows } }, Silent )
+
+                        Just shape ->
+                            ( { m1
+                                | working =
+                                    Just
+                                        { w
+                                            | rows =
+                                                paintCells stroke.ch
+                                                    (shapeCells shape.tool shape.start ( x, y ))
+                                                    stroke.before
+                                        }
+                              }
+                            , Silent
+                            )
 
                 _ ->
                     ( m1, Silent )
@@ -429,6 +668,15 @@ press doc cell buttonId model =
                     Eraser ->
                         ( startStroke (transparentChar doc) cell grid model, Silent )
 
+                    Line ->
+                        ( startShape Line (paintChar doc model) cell grid model, Silent )
+
+                    Rect ->
+                        ( startShape Rect (paintChar doc model) cell grid model, Silent )
+
+                    Ellipse ->
+                        ( startShape Ellipse (paintChar doc model) cell grid model, Silent )
+
                     Bucket ->
                         commitRows grid (floodAt (paintChar doc model) cell grid.rows) model
 
@@ -449,7 +697,15 @@ press doc cell buttonId model =
 startStroke : Char -> ( Int, Int ) -> Edit -> Model -> Model
 startStroke ch cell grid model =
     { model
-        | stroke = Just { ch = ch, before = grid.rows }
+        | stroke = Just { ch = ch, before = grid.rows, shape = Nothing }
+        , working = Just { grid | rows = paintAt ch cell grid.rows }
+    }
+
+
+startShape : Tool -> Char -> ( Int, Int ) -> Edit -> Model -> Model
+startShape tool ch cell grid model =
+    { model
+        | stroke = Just { ch = ch, before = grid.rows, shape = Just { tool = tool, start = cell } }
         , working = Just { grid | rows = paintAt ch cell grid.rows }
     }
 
@@ -525,6 +781,192 @@ paintAt ch ( x, y ) rows =
                 row
         )
         rows
+
+
+{-| 一覧のセルをまとめて ch へ。行ごとに 1 回だけ書き換える —
+paintAt を 1 セルずつ畳むと、セルの数 × 行の数だけ行を触ることになる。
+
+触らなかった行はそのまま返す。格子の lazy が行の同一性で当たり外れを
+決めるので、中身が同じでも作り直すと全升の組み直しになる。
+-}
+paintCells : Char -> List ( Int, Int ) -> List String -> List String
+paintCells ch cells rows =
+    let
+        xsByRow =
+            cells
+                |> List.foldl
+                    (\( x, y ) acc -> Dict.update y (\xs -> Just (x :: Maybe.withDefault [] xs)) acc)
+                    Dict.empty
+    in
+    rows
+        |> List.indexedMap
+            (\y row ->
+                case Dict.get y xsByRow of
+                    Nothing ->
+                        row
+
+                    Just xs ->
+                        let
+                            marks =
+                                Set.fromList xs
+                        in
+                        row
+                            |> String.toList
+                            |> List.indexedMap
+                                (\x c ->
+                                    if Set.member x marks then
+                                        ch
+
+                                    else
+                                        c
+                                )
+                            |> String.fromList
+            )
+
+
+{-| 形の道具が塗るセルの一覧。ワイルドカードを使わず全部並べるのは、
+Tool を増やしたときコンパイラに漏れを教えてもらうため。形の道具以外は
+shape が立たないのでここへは来ないが、来ても直線で害がない。
+-}
+shapeCells : Tool -> ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+shapeCells tool start current =
+    case tool of
+        Line ->
+            lineCells start current
+
+        Rect ->
+            rectCells start current
+
+        Ellipse ->
+            ellipseCells start current
+
+        Pen ->
+            lineCells start current
+
+        Bucket ->
+            lineCells start current
+
+        Eraser ->
+            lineCells start current
+
+        Dropper ->
+            lineCells start current
+
+
+{-| 2 点を結ぶ直線のセル。長い方の軸の歩数で、2 点の間をなめらかにつなぐ。 -}
+lineCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+lineCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        steps =
+            max (abs (x1 - x0)) (abs (y1 - y0))
+    in
+    if steps == 0 then
+        [ ( x0, y0 ) ]
+
+    else
+        List.range 0 steps
+            |> List.map
+                (\i ->
+                    let
+                        t =
+                            toFloat i / toFloat steps
+                    in
+                    ( round (toFloat x0 + toFloat (x1 - x0) * t)
+                    , round (toFloat y0 + toFloat (y1 - y0) * t)
+                    )
+                )
+
+
+{-| 2 点を対角とする四角の枠線のセル。中は塗らない —
+塗り潰しはバケツで一撫でできるので、塗り潰し用の道具を別に増やさない。
+-}
+rectCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+rectCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        left =
+            min x0 x1
+
+        right =
+            max x0 x1
+
+        top =
+            min y0 y1
+
+        bottom =
+            max y0 y1
+    in
+    Set.toList
+        (Set.fromList
+            ((List.range left right |> List.concatMap (\x -> [ ( x, top ), ( x, bottom ) ]))
+                ++ (List.range top bottom |> List.concatMap (\y -> [ ( left, y ), ( right, y ) ]))
+            )
+        )
+
+
+{-| 外接矩形に内接する枠線の楕円のセル。列走査と行走査の両方を重ねるのは、
+片方だけだと細長い楕円で急な曲がりの所に穴が開くため(Set で重複は消える)。
+-}
+ellipseCells : ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+ellipseCells ( x0, y0 ) ( x1, y1 ) =
+    let
+        left =
+            min x0 x1
+
+        right =
+            max x0 x1
+
+        top =
+            min y0 y1
+
+        bottom =
+            max y0 y1
+
+        cx =
+            toFloat (left + right) / 2
+
+        cy =
+            toFloat (top + bottom) / 2
+
+        rx =
+            toFloat (right - left) / 2
+
+        ry =
+            toFloat (bottom - top) / 2
+    in
+    if rx == 0 || ry == 0 then
+        lineCells ( x0, y0 ) ( x1, y1 )
+
+    else
+        let
+            byColumn =
+                List.range left right
+                    |> List.concatMap
+                        (\x ->
+                            let
+                                t =
+                                    (toFloat x - cx) / rx
+
+                                dy =
+                                    ry * sqrt (max 0 (1 - t * t))
+                            in
+                            [ ( x, round (cy - dy) ), ( x, round (cy + dy) ) ]
+                        )
+
+            byRow =
+                List.range top bottom
+                    |> List.concatMap
+                        (\y ->
+                            let
+                                t =
+                                    (toFloat y - cy) / ry
+
+                                dx =
+                                    rx * sqrt (max 0 (1 - t * t))
+                            in
+                            [ ( round (cx - dx), y ), ( round (cx + dx), y ) ]
+                        )
+        in
+        Set.toList (Set.fromList (byColumn ++ byRow))
 
 
 {-| バケツ: (x, y) と同じ文字の連結領域(上下左右)だけを ch へ。 -}
@@ -815,7 +1257,16 @@ or first second =
 
 zoomLevels : List Int
 zoomLevels =
-    [ 16, 20, 24, 28, 34 ]
+    [ 8, 12, 16, 20, 24, 32, 44, 64 ]
+
+
+{-| ピンチをこれだけ溜めたら 1 段動かす。トラックパッドのピンチは 1 回の
+delta が数しか無いので、大きく取ると指を動かしても反応しない。マウスの
+ホイールは 1 目盛りで 100 前後来るので、こちらは 1 目盛り 1 段になる。
+-}
+pinchStepThreshold : Float
+pinchStepThreshold =
+    8
 
 
 zoomStep : Int -> Int -> Int
@@ -849,6 +1300,7 @@ view colors doc model =
 
             Just grid ->
                 [ viewTools model
+                , viewSprites doc grid
                 , viewCenter colors doc model grid
                 , viewPalette colors doc model
                 ]
@@ -862,6 +1314,10 @@ viewTools model =
         , toolButton model Eraser "消しゴム(E)" iconEraser
         , toolButton model Bucket "バケツ(B)" iconBucket
         , toolButton model Dropper "スポイト(I)" iconDropper
+        , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
+        , toolButton model Line "直線(L) — 押した所から離した所まで" iconLine
+        , toolButton model Rect "矩形(R) — 2 点を対角とする四角の枠" iconRect
+        , toolButton model Ellipse "楕円(O) — 2 点を対角とするだ円の枠" iconEllipse
         , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
         , historyButton "戻す(⌘Z / Ctrl+Z)" UndoPressed (List.isEmpty model.undo) iconUndo
         , historyButton "やり直す(⇧⌘Z / Ctrl+Y)" RedoPressed (List.isEmpty model.redo) iconRedo
@@ -903,8 +1359,7 @@ viewCenter colors doc model grid =
             List.length grid.rows
     in
     div [ HA.class "px-center flex min-w-0 flex-1 flex-col" ]
-        [ viewChips doc model grid
-        , div
+        [ div
             [ HA.class "px-stage flex min-h-0 flex-1 cursor-crosshair overflow-auto p-4 select-none"
 
             -- ショートカットはグリッドが焦点の時だけ(入力欄の ⌘Z を横取りしない)
@@ -913,46 +1368,192 @@ viewCenter colors doc model grid =
             , HE.custom "contextmenu"
                 (D.succeed { message = Swallowed, stopPropagation = True, preventDefault = True })
             , HE.onMouseLeave GridLeft
+            , HE.custom "wheel" wheelDecoder
             ]
-            [ div [ HA.class "m-auto" ] [ viewGrid colors doc model grid ] ]
+            [ div
+                [ HA.class "relative m-auto"
+
+                -- 倍率はここ 1 つ。HA.style はカスタムプロパティを扱えないので属性で渡す
+                , HA.attribute "style" ("--px-cell:" ++ String.fromInt model.cellPx ++ "px")
+                ]
+                [ viewGrid colors doc grid
+                , viewCursor model.cellPx model.hover
+                ]
+            ]
+        , viewFrames doc model grid
         , viewStatus model cols rowCount
         ]
 
 
-{-| 絵の名前チップ列(+フレームが複数ある絵はフレームのチップ列)。 -}
-viewChips : Doc -> Model -> Edit -> Html Msg
-viewChips doc model grid =
+{-| 絵の一覧。縦に積んで縦スクロールする — 横へ折り返して並べると、絵が
+41 枚あるタイル集で 10 行に膨らみ、格子が画面の外へ出る。ドット絵ツールが
+素材の一覧を脇の縦列に置いているのと同じ形。
+
+**コマ(フレーム)とは別の場所に置く。** 同じ形のチップを 2 段並べると、
+「別の絵に切り替える」と「同じ絵の別のコマを見る」が同じ操作に見える。
+-}
+viewSprites : Doc -> Edit -> Html Msg
+viewSprites doc grid =
+    div [ HA.class "px-sprites flex w-40 shrink-0 flex-col overflow-y-auto border-r border-edge bg-panel py-1" ]
+        (groupsOf doc |> List.concatMap (spriteGroup grid))
+
+
+spriteGroup : Edit -> ( String, List Sprite ) -> List (Html Msg)
+spriteGroup grid ( name, sprites ) =
+    (if String.isEmpty name then
+        -- 束ねる相手が居ない絵。見出しを作らない — 中身を言い当てていない
+        -- 見出し(「その他」)を出すと、名前を読む手がかりが 1 つ減る
+        []
+
+     else
+        [ div
+            [ HA.class "sticky top-0 z-10 bg-panel px-2 pt-1.5 pb-0.5 text-[10px] tracking-wide text-ink-faint" ]
+            [ text name ]
+        ]
+    )
+        ++ List.map (spriteRow grid) sprites
+
+
+spriteRow : Edit -> Sprite -> Html Msg
+spriteRow grid sprite =
+    button
+        [ HA.classList
+            [ ( "px-sprite w-full shrink-0 cursor-pointer truncate px-2 py-1 text-left font-mono text-[11px]", True )
+            , ( "bg-accent text-white", sprite.name == grid.sprite )
+            , ( "text-ink-soft hover:bg-well", sprite.name /= grid.sprite )
+            ]
+        , HA.title sprite.name
+        , HE.onClick (SpriteChosen sprite.name)
+        ]
+        [ text sprite.name ]
+
+
+{-| コマ(フレーム)の帯。格子の真下に置く — 同じ絵の中の話なので、
+絵を選ぶ列(脇の縦列)とは離す。1 コマしか無い絵では帯を出さない。
+-}
+viewFrames : Doc -> Model -> Edit -> Html Msg
+viewFrames doc model grid =
     let
-        spriteChip sprite =
-            chip (sprite.name == grid.sprite) (SpriteChosen sprite.name) sprite.name
-
-        frameChips =
-            selectedSprite doc model
-                |> Maybe.map .frames
-                |> Maybe.withDefault []
-
-        groupRow ( name, sprites ) =
-            div [ HA.class "flex items-start gap-2" ]
-                [ span [ HA.class "mt-1 w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text name ]
-                , div [ HA.class "flex flex-wrap items-center gap-1" ] (List.map spriteChip sprites)
-                ]
+        frames =
+            clipFrameNames doc model
     in
-    div [ HA.class "px-chips shrink-0 border-b border-edge bg-panel px-3 py-1.5" ]
-        (div [ HA.class "flex flex-col gap-1" ] (groupsOf doc |> List.map groupRow)
-            :: (if List.length frameChips > 1 then
-                    [ div [ HA.class "mt-1 flex flex-wrap items-center gap-1" ]
-                        (span [ HA.class "w-14 shrink-0 text-right text-[10px] text-ink-faint" ] [ text "フレーム" ]
-                            :: (frameChips
-                                    |> List.map (\( name, _ ) -> chip (name == grid.frame) (FrameChosen name) name)
-                               )
-                            ++ [ viewPlayButton model ]
-                        )
-                    ]
+    if List.length frames <= 1 && List.isEmpty (selectedSprite doc model |> Maybe.map .clips |> Maybe.withDefault []) then
+        text ""
 
-                else
-                    []
-               )
-        )
+    else
+        -- 操作とコマを別の段に置く。同じ行に並べると、コマの多い絵で操作が
+        -- 押し出されるうえ、「押す物」と「選ぶ物」が 1 列に混ざって読めない
+        div [ HA.class "px-frames shrink-0 border-t border-edge bg-panel" ]
+            [ div [ HA.class "flex h-9 items-center gap-2 px-2" ] [ viewTransport doc model ]
+            , div [ HA.class "flex h-9 items-center gap-1 overflow-x-auto border-t border-edge/50 px-2" ]
+                (span [ HA.class "shrink-0 pr-1 text-[10px] text-ink-faint" ] [ text "コマ" ]
+                    :: (frames |> List.indexedMap (\i name -> frameTab (name == grid.frame) i name))
+                )
+            ]
+
+
+{-| コマ送りの操作と、いま見ている動きの選択。左端に固定して、いつでも同じ場所にある。
+
+動きが 1 つも書かれていない絵では再生を伏せる — frames は「名前の付いた姿勢の束」で
+順番も時間も持たないので、並び順に回しても意味のある動きにならない
+(向き違いの立ち絵が順番に出るだけになる)。
+-}
+viewTransport : Doc -> Model -> Html Msg
+viewTransport doc model =
+    case selectedClip doc model of
+        Nothing ->
+            div [ HA.class "flex shrink-0 items-center gap-2 text-[10px] text-ink-faint" ]
+                [ text "この絵には動き(clips)がありません。コマを選んで描けます" ]
+
+        Just ( clipName, clip ) ->
+            viewTransportOf doc model clipName clip
+
+
+viewTransportOf : Doc -> Model -> String -> Clip -> Html Msg
+viewTransportOf doc model clipName clip =
+    div [ HA.class "flex shrink-0 items-center gap-1" ]
+        [ viewClipPicker (selectedSprite doc model |> Maybe.map .clips |> Maybe.withDefault []) clipName
+        , transportButton "前のコマ" False (FrameStepped -1) iconStepBack
+        , transportButton
+            (if model.playing then
+                "止める"
+
+             else
+                "動かす"
+            )
+            model.playing
+            PlayToggled
+            (if model.playing then
+                iconPause
+
+             else
+                iconPlay
+            )
+        , transportButton "次のコマ" False (FrameStepped 1) iconStepForward
+
+        -- 速さと回し方は Doc の値。ここで変えられるようにすると、Studio の
+        -- 見え方とゲームの動きが黙って食い違う
+        , span [ HA.class "shrink-0 pl-1 font-mono text-[10px] text-ink-faint" ]
+            [ text (String.fromInt clip.fps ++ " fps・" ++ loopLabel clip.loop) ]
+        ]
+
+
+loopLabel : String -> String
+loopLabel loop =
+    case loop of
+        "pingpong" ->
+            "往復"
+
+        "once" ->
+            "1 回"
+
+        _ ->
+            "繰り返し"
+
+
+{-| いま見ている絵が持つ動きだけを並べる。文書の全部の動きを並べると、
+選んでも今の絵に無い名前なので何も起きず、表示だけ元へ戻る。
+-}
+viewClipPicker : List ( String, Clip ) -> String -> Html Msg
+viewClipPicker clips current =
+    select
+        [ HA.class "h-6 shrink-0 cursor-pointer rounded border border-edge bg-well px-1 font-mono text-[11px] text-ink-soft"
+        , HA.title "どの動きを確かめるか"
+        , HA.value current
+        , HE.onInput ClipChosen
+        ]
+        (clips |> List.map (\( name, _ ) -> option [ HA.value name, HA.selected (name == current) ] [ text name ]))
+
+
+transportButton : String -> Bool -> Msg -> Html Msg -> Html Msg
+transportButton label active msg body =
+    button
+        [ HA.classList
+            [ ( "flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded border", True )
+            , ( "border-accent bg-accent/15 text-accent", active )
+            , ( "border-edge text-ink-soft hover:border-ink-faint", not active )
+            ]
+        , HA.title label
+        , HA.attribute "aria-label" label
+        , HE.onClick msg
+        ]
+        [ body ]
+
+
+frameTab : Bool -> Int -> String -> Html Msg
+frameTab selected index name =
+    button
+        [ HA.classList
+            [ ( "px-frame flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border px-2 text-[11px]", True )
+            , ( "border-accent bg-accent/15 text-accent", selected )
+            , ( "border-edge text-ink-soft hover:border-ink-faint", not selected )
+            ]
+        , HA.title name
+        , HE.onClick (FrameChosen name)
+        ]
+        [ span [ HA.class "font-mono text-[10px] opacity-60" ] [ text (String.fromInt (index + 1)) ]
+        , span [ HA.class "font-mono" ] [ text name ]
+        ]
 
 
 {-| 種別 → その中のスプライト。並びは *.sprite.json に書いた順(発明しない)。 -}
@@ -979,55 +1580,50 @@ groupsOf doc =
         |> List.reverse
 
 
-{-| フレーム送りの入/切。動きは 1 フレームずつ眺めても分からないので、並べて見るのではなく
-実際に回して確かめられるようにする。編集を始めたら自動で止まる。
+{-| カーソルの居るセルを囲む枠。格子の上に 1 枚だけ重ねる。
+
+CSS の :hover では出さない — ブラウザは DOM が入れ替わっても、マウスが動くまで
+:hover を付け替えない。undo のように指を止めたまま升の中身が入れ替わると、
+もう指の下に無い升に枠が残る(複数同時に残ることもある)。
+
+hover が Nothing の時も器は出して display で消す — 子の数が変われば格子の
+ノードまで差分の対象になるので、数は 2 に固定しておく。
 -}
-viewPlayButton : Model -> Html Msg
-viewPlayButton model =
-    button
-        [ HA.classList
-            [ ( "chip btn rounded-full", True )
-            , ( "border-transparent bg-accent text-white hover:bg-accent", model.playing )
-            ]
-        , HA.title "フレーム送りで動きを確かめる"
-        , HE.onClick PlayToggled
-        ]
-        [ text
-            (if model.playing then
-                "⏸ 止める"
+viewCursor : Int -> Maybe ( Int, Int ) -> Html Msg
+viewCursor cellPx hover =
+    case hover of
+        Nothing ->
+            div [ HA.class "px-cursor hidden" ] []
 
-             else
-                "▶ 動かす"
-            )
-        ]
+        Just ( x, y ) ->
+            div
+                [ HA.class "px-cursor"
 
-
-chip : Bool -> Msg -> String -> Html Msg
-chip selected msg label =
-    button
-        [ HA.classList
-            [ ( "chip btn rounded-full font-mono", True )
-            , ( "border-transparent bg-accent text-white hover:bg-accent", selected )
-            ]
-        , HE.onClick msg
-        ]
-        [ text label ]
+                -- +1 は格子の枠線の分
+                , HA.style "left" (String.fromInt (x * cellPx + 1) ++ "px")
+                , HA.style "top" (String.fromInt (y * cellPx + 1) ++ "px")
+                , HA.style "width" (String.fromInt cellPx ++ "px")
+                , HA.style "height" (String.fromInt cellPx ++ "px")
+                ]
+                []
 
 
-{-| 格子は「色 × 大きさ × rows」だけで決まる。lazy に包んで、それ以外の動き
-(hover の座標表示・道具の切り替え)では作り直さない — 32×24 の絵で 768 升あり、
+{-| 格子は「色 × rows」だけで決まる。lazy に包んで、それ以外の動き
+(hover の座標表示・道具の切り替え・ズーム)では作り直さない — 32×24 の絵で 768 升あり、
 カーソルがセルを跨ぐたびに全升を組み直すと、一筆が目に見えて遅れる。
 
 lazy の比較は参照なので、色の辞書はここでなく中で作る(毎回作ると必ず外れる)。
 rows は文書か working からそのまま来るので、塗った時だけ参照が変わる。
+倍率は引数に取らない — CSS の --px-cell で親から降ってくるので、ズームでは
+升を 1 つも作り直さずに済む。
 -}
-viewGrid : Colors -> Doc -> Model -> Edit -> Html Msg
-viewGrid colors doc model grid =
-    HL.lazy4 viewGridBody colors doc model.cellPx grid.rows
+viewGrid : Colors -> Doc -> Edit -> Html Msg
+viewGrid colors doc grid =
+    HL.lazy3 viewGridBody colors doc grid.rows
 
 
-viewGridBody : Colors -> Doc -> Int -> List String -> Html Msg
-viewGridBody colors doc cellPx rows =
+viewGridBody : Colors -> Doc -> List String -> Html Msg
+viewGridBody colors doc rows =
     let
         cellCss =
             palette colors doc
@@ -1035,21 +1631,19 @@ viewGridBody colors doc cellPx rows =
                 |> Dict.fromList
     in
     div [ HA.class "px-grid border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]" ]
-        (rows |> List.indexedMap (viewGridRow cellCss cellPx))
+        (rows |> List.indexedMap (viewGridRow cellCss))
 
 
-viewGridRow : Dict Char String -> Int -> Int -> String -> Html Msg
-viewGridRow colors cellPx y row =
+viewGridRow : Dict Char String -> Int -> String -> Html Msg
+viewGridRow colors y row =
     div [ HA.class "flex" ]
-        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors cellPx x y ch))
+        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors x y ch))
 
 
-viewCell : Dict Char String -> Int -> Int -> Int -> Char -> Html Msg
-viewCell colors cellPx x y ch =
+viewCell : Dict Char String -> Int -> Int -> Char -> Html Msg
+viewCell colors x y ch =
     div
         ([ HA.class "px-cell shrink-0"
-         , HA.style "width" (String.fromInt cellPx ++ "px")
-         , HA.style "height" (String.fromInt cellPx ++ "px")
          , HE.custom "mousedown"
             (D.field "button" D.int
                 |> D.map (\b -> { message = CellPressed x y b, stopPropagation = True, preventDefault = False })
@@ -1073,20 +1667,20 @@ viewStatus model cols rowCount =
     div [ HA.class "px-status flex h-8 shrink-0 items-center gap-2 border-t border-edge bg-panel px-3 text-[11px] text-ink-soft" ]
         [ button
             [ HA.class "btn btn-mini"
-            , HA.title "ズーム −"
+            , HA.title "縮小(ピンチイン・⌘ホイールでも)"
             , HA.disabled (model.cellPx <= smallestZoom)
             , HE.onClick (ZoomStepped -1)
             ]
-            [ text "−" ]
+            [ iconZoomOut ]
         , span [ HA.class "w-10 text-center font-mono" ]
             [ text (String.fromInt (model.cellPx * 100 // 16) ++ "%") ]
         , button
             [ HA.class "btn btn-mini"
-            , HA.title "ズーム +"
+            , HA.title "拡大(ピンチアウト・⌘ホイールでも)"
             , HA.disabled (model.cellPx >= largestZoom)
             , HE.onClick (ZoomStepped 1)
             ]
-            [ text "+" ]
+            [ iconZoomIn ]
         , span [ HA.class "ml-2 font-mono text-ink-faint" ]
             [ text (String.fromInt cols ++ "×" ++ String.fromInt rowCount) ]
         , span [ HA.class "spacer flex-1" ] []
@@ -1110,7 +1704,7 @@ smallestZoom =
 
 largestZoom : Int
 largestZoom =
-    List.head (List.reverse zoomLevels) |> Maybe.withDefault 34
+    List.head (List.reverse zoomLevels) |> Maybe.withDefault 64
 
 
 viewPalette : Colors -> Doc -> Model -> Html Msg
@@ -1237,6 +1831,25 @@ keyDecoder =
             )
 
 
+{-| トラックパッドのピンチと ⌘/Ctrl + ホイールでズーム。ブラウザ自身の拡大を
+止めるので preventDefault が要る(そのため onWheel でなく custom)。
+
+素のホイールは decoder を fail させて素通しにする — 掴んでしまうと絵が
+画面より大きい時に上下へスクロールできなくなる。
+-}
+wheelDecoder : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+wheelDecoder =
+    D.map2 Tuple.pair (D.field "ctrlKey" D.bool) (D.field "deltaY" D.float)
+        |> D.andThen
+            (\( ctrl, deltaY ) ->
+                if ctrl then
+                    D.succeed { message = ZoomPinched deltaY, stopPropagation = True, preventDefault = True }
+
+                else
+                    D.fail "素のホイールはスクロールへ渡す"
+            )
+
+
 shortcutMsg : { key : String, meta : Bool, ctrl : Bool, shift : Bool } -> Maybe Msg
 shortcutMsg k =
     case ( String.toLower k.key, k.meta || k.ctrl, k.shift ) of
@@ -1261,6 +1874,15 @@ shortcutMsg k =
         ( "i", False, _ ) ->
             Just (ToolChosen Dropper)
 
+        ( "l", False, _ ) ->
+            Just (ToolChosen Line)
+
+        ( "r", False, _ ) ->
+            Just (ToolChosen Rect)
+
+        ( "o", False, _ ) ->
+            Just (ToolChosen Ellipse)
+
         _ ->
             Nothing
 
@@ -1270,11 +1892,16 @@ shortcutMsg k =
 
 
 icon : List (Svg.Svg Msg) -> Html Msg
-icon paths =
+icon =
+    iconSized 20
+
+
+iconSized : Int -> List (Svg.Svg Msg) -> Html Msg
+iconSized px paths =
     Svg.svg
         [ SA.viewBox "0 0 24 24"
-        , SA.width "20"
-        , SA.height "20"
+        , SA.width (String.fromInt px)
+        , SA.height (String.fromInt px)
         , SA.fill "none"
         , SA.stroke "currentColor"
         , SA.strokeWidth "1.6"
@@ -1282,6 +1909,78 @@ icon paths =
         , SA.strokeLinejoin "round"
         ]
         paths
+
+
+{-| コマ送りの操作。塗り(fill)で描く — 線画だと 14px では潰れて読めない。 -}
+iconPlay : Html Msg
+iconPlay =
+    iconSized 14 [ Svg.path [ SA.d "M7 4 L20 12 L7 20 Z", SA.fill "currentColor", SA.stroke "none" ] [] ]
+
+
+iconPause : Html Msg
+iconPause =
+    iconSized 14
+        [ Svg.rect [ SA.x "6", SA.y "4", SA.width "4", SA.height "16", SA.fill "currentColor", SA.stroke "none" ] []
+        , Svg.rect [ SA.x "14", SA.y "4", SA.width "4", SA.height "16", SA.fill "currentColor", SA.stroke "none" ] []
+        ]
+
+
+iconStepBack : Html Msg
+iconStepBack =
+    iconSized 14
+        [ Svg.path [ SA.d "M18 5 L8 12 L18 19 Z", SA.fill "currentColor", SA.stroke "none" ] []
+        , Svg.rect [ SA.x "4", SA.y "5", SA.width "3", SA.height "14", SA.fill "currentColor", SA.stroke "none" ] []
+        ]
+
+
+iconStepForward : Html Msg
+iconStepForward =
+    iconSized 14
+        [ Svg.path [ SA.d "M6 5 L16 12 L6 19 Z", SA.fill "currentColor", SA.stroke "none" ] []
+        , Svg.rect [ SA.x "17", SA.y "5", SA.width "3", SA.height "14", SA.fill "currentColor", SA.stroke "none" ] []
+        ]
+
+
+iconLoop : Html Msg
+iconLoop =
+    iconSized 14
+        [ Svg.path [ SA.d "M4 9h13a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H4" ] []
+        , Svg.path [ SA.d "m7 6-3 3 3 3" ] []
+        ]
+
+
+iconLine : Html Msg
+iconLine =
+    icon [ Svg.path [ SA.d "M4 20 L20 4" ] [] ]
+
+
+iconRect : Html Msg
+iconRect =
+    icon [ Svg.rect [ SA.x "4", SA.y "6", SA.width "16", SA.height "12", SA.rx "1" ] [] ]
+
+
+iconEllipse : Html Msg
+iconEllipse =
+    icon [ Svg.ellipse [ SA.cx "12", SA.cy "12", SA.rx "8.5", SA.ry "6" ] [] ]
+
+
+{-| 虫眼鏡。ステータス帯は高さ 8(32px)なので、道具の 20px より小さく描く。 -}
+iconZoomIn : Html Msg
+iconZoomIn =
+    iconSized 15
+        [ Svg.circle [ SA.cx "10.5", SA.cy "10.5", SA.r "7.5" ] []
+        , Svg.path [ SA.d "M16 16l5.5 5.5" ] []
+        , Svg.path [ SA.d "M10.5 7v7M7 10.5h7" ] []
+        ]
+
+
+iconZoomOut : Html Msg
+iconZoomOut =
+    iconSized 15
+        [ Svg.circle [ SA.cx "10.5", SA.cy "10.5", SA.r "7.5" ] []
+        , Svg.path [ SA.d "M16 16l5.5 5.5" ] []
+        , Svg.path [ SA.d "M7 10.5h7" ] []
+        ]
 
 
 iconPen : Html Msg

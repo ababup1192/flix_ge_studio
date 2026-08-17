@@ -43,7 +43,7 @@ module MapEditor exposing
     導く仮色('.' だけは無彩色寄りの暗色)。
 
 選択中のレイヤーだけが編集対象で、パレットもそのレイヤーの中身だけを見せる。
-非選択レイヤーはキャンバスで淡く、👁 を消すと描かない。👁 と選択は
+非選択レイヤーはキャンバスで淡く、目を閉じると描かない。目と選択は
 セッション内だけの状態(Doc には保存しない)。
 
 文書の元データはここに置かない — 描画は毎回親から渡される Doc から導き、
@@ -57,7 +57,7 @@ import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
-import PixelEditor exposing (floodAt, goldenHue, paintAt, pickAt)
+import PixelEditor exposing (ellipseCells, floodAt, goldenHue, lineCells, paintAt, paintCells, pickAt, rectCells)
 import Summary
 import Svg
 import Svg.Attributes as SA
@@ -410,6 +410,18 @@ type Tool
     | Eraser
     | Bucket
     | Dropper
+    | Line
+    | Rect
+    | Ellipse
+
+
+{-| 形の道具の一筆。押した所を覚えておいて、動かす間は毎回 before から
+引き直す(前のプレビューの上に重ねると、引き直しの跡が残る)。
+-}
+type alias Shape =
+    { tool : Tool
+    , start : ( Int, Int )
+    }
 
 
 {-| 編集対象のレイヤー。配置(手前)か地形か。表示と編集対象の切り替えだけで、
@@ -458,7 +470,7 @@ type alias Model =
     -- いま編集中のレイヤー(パレットの中身・淡さ・バケツの可否を決める)
     , layer : Layer
 
-    -- キャンバスに描くか(👁)。セッション内だけ・Doc には保存しない
+    -- キャンバスに描くか(レイヤーの目)。セッション内だけ・Doc には保存しない
     , shown : { terrain : Bool, place : Bool }
 
     -- 各レイヤーが覚えているチップ。Nothing は「まだ選んでいない」=
@@ -473,10 +485,14 @@ type alias Model =
     -- 「セルを見ない行」の一覧を開いているグループ(パレットのチップ 1 つぶん)
     , expanded : Maybe String
     , cellPx : Int
+
+    -- ピンチの溜め込み。1 回のピンチで何十回もイベントが来るので、
+    -- しきい値を超えた時だけ 1 段動かす(段ごとに動かすと一気に端まで飛ぶ)
+    , zoomAccum : Float
     , hover : Maybe ( Int, Int )
 
     -- 一筆の途中(Just = 塗っている)。before は戻す用の一筆前
-    , stroke : Maybe { ch : Char, before : List String }
+    , stroke : Maybe { ch : Char, before : List String, shape : Maybe Shape }
 
     -- 表示が文書に勝つ rows の作業コピー(一筆の途中と、確定後のエコー待ちの間)
     , working : Maybe (List String)
@@ -496,6 +512,7 @@ init =
     , picked = Nothing
     , expanded = Nothing
     , cellPx = baseCellPx
+    , zoomAccum = 0
     , hover = Nothing
     , stroke = Nothing
     , working = Nothing
@@ -531,6 +548,7 @@ type Msg
     | TerrainChosen Char
     | PlaceChosen String
     | ZoomStepped Int
+    | ZoomPinched Float
     | CellPressed Int Int Int
     | CellEntered Int Int
     | GridLeft
@@ -667,7 +685,38 @@ update doc msg model =
                     ( model, Noticed "この行は消せません(動かすだけにしてあります)" )
 
         ZoomStepped dir ->
-            ( { model | cellPx = zoomStep dir model.cellPx }, Silent )
+            ( { model | cellPx = zoomStep dir model.cellPx, zoomAccum = 0 }, Silent )
+
+        ZoomPinched deltaY ->
+            let
+                accum =
+                    -- 向きが変わったら溜めを捨てる。残しておくと、指を戻した時に
+                    -- 打ち消し合って動かない間が生まれる
+                    if deltaY * model.zoomAccum < 0 then
+                        deltaY
+
+                    else
+                        model.zoomAccum + deltaY
+            in
+            if abs accum < pinchStepThreshold then
+                ( { model | zoomAccum = accum }, Silent )
+
+            else
+                -- 指を広げる(deltaY が負)= 拡大
+                ( { model
+                    | cellPx =
+                        zoomStep
+                            (if accum < 0 then
+                                1
+
+                             else
+                                -1
+                            )
+                            model.cellPx
+                    , zoomAccum = 0
+                  }
+                , Silent
+                )
 
         CellEntered x y ->
             let
@@ -676,7 +725,21 @@ update doc msg model =
             in
             case ( m1.stroke, m1.working ) of
                 ( Just stroke, Just rows ) ->
-                    ( { m1 | working = Just (paintAt stroke.ch ( x, y ) rows) }, Silent )
+                    case stroke.shape of
+                        Nothing ->
+                            ( { m1 | working = Just (paintAt stroke.ch ( x, y ) rows) }, Silent )
+
+                        Just shape ->
+                            ( { m1
+                                | working =
+                                    Just
+                                        (paintCells stroke.ch
+                                            (shapeCells shape.tool shape.start ( x, y ))
+                                            stroke.before
+                                        )
+                              }
+                            , Silent
+                            )
 
                 _ ->
                     ( m1, Silent )
@@ -742,6 +805,15 @@ press doc cell buttonId model =
 
                     Place key ->
                         placePress doc key cell model
+
+            Line ->
+                shapePress Line doc cell model
+
+            Rect ->
+                shapePress Rect doc cell model
+
+            Ellipse ->
+                shapePress Ellipse doc cell model
 
             Bucket ->
                 case activeBrush doc model of
@@ -917,9 +989,63 @@ startStroke ch cell doc model =
             shownRows doc model
     in
     { model
-        | stroke = Just { ch = ch, before = rows }
+        | stroke = Just { ch = ch, before = rows, shape = Nothing }
         , working = Just (paintAt ch cell rows)
     }
+
+
+{-| 形の道具の押し始め。地形レイヤーだけ — 配置(手前)は 1 マス 1 個の印なので、
+枠をまとめて置く意味がない。
+-}
+shapePress : Tool -> Doc -> ( Int, Int ) -> Model -> ( Model, Out )
+shapePress tool doc cell model =
+    case activeBrush doc model of
+        Terrain ch ->
+            ( startShape tool ch cell doc model, Silent )
+
+        Place _ ->
+            ( model, Noticed "形の道具は地形レイヤーだけで使えます" )
+
+
+startShape : Tool -> Char -> ( Int, Int ) -> Doc -> Model -> Model
+startShape tool ch cell doc model =
+    let
+        rows =
+            shownRows doc model
+    in
+    { model
+        | stroke = Just { ch = ch, before = rows, shape = Just { tool = tool, start = cell } }
+        , working = Just (paintAt ch cell rows)
+    }
+
+
+{-| 形の道具が塗るセルの一覧。形の計算はドット絵エディタと同じ物を借りる —
+同じ形が 2 つの字で書かれている状態を作らない。道具の振り分けだけ手元に置く
+(Tool の型がエディタごとに別なので、ここまで共通にはしない)。
+-}
+shapeCells : Tool -> ( Int, Int ) -> ( Int, Int ) -> List ( Int, Int )
+shapeCells tool start current =
+    case tool of
+        Rect ->
+            rectCells start current
+
+        Ellipse ->
+            ellipseCells start current
+
+        Line ->
+            lineCells start current
+
+        Pen ->
+            lineCells start current
+
+        Bucket ->
+            lineCells start current
+
+        Eraser ->
+            lineCells start current
+
+        Dropper ->
+            lineCells start current
 
 
 endStroke : Model -> ( Model, Out )
@@ -1208,7 +1334,7 @@ firstTerrain doc =
         |> Maybe.withDefault (Terrain defaultChar)
 
 
-{-| 👁 の反転。レイヤー 1 枚ぶん。
+{-| レイヤーの目の反転。1 枚ぶん。
 -}
 toggleShown : Layer -> { terrain : Bool, place : Bool } -> { terrain : Bool, place : Bool }
 toggleShown layer shown =
@@ -1220,7 +1346,7 @@ toggleShown layer shown =
             { shown | place = not shown.place }
 
 
-{-| レイヤーの淡さ。0 = 隠す(👁 オフ)、1 = 選択中、0.45 = 非選択(淡く)。
+{-| レイヤーの淡さ。0 = 隠す(目を閉じた)、1 = 選択中、0.45 = 非選択(淡く)。
 -}
 layerAlpha : Layer -> Model -> Float
 layerAlpha layer model =
@@ -1499,6 +1625,15 @@ toolName tool =
         Dropper ->
             "スポイト"
 
+        Line ->
+            "直線"
+
+        Rect ->
+            "矩形"
+
+        Ellipse ->
+            "楕円"
+
 
 {-| えらび中のチップ名(地形は Doc の name、配置は JSON キー)。
 -}
@@ -1523,6 +1658,10 @@ viewTools doc model =
         , toolButton model Eraser False "消しゴム(E)" iconEraser
         , toolButton model Bucket (model.layer == PlaceLayer) "バケツ(B)" iconBucket
         , toolButton model Dropper False "スポイト(I)" iconDropper
+        , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
+        , toolButton model Line (model.layer == PlaceLayer) "直線(L) — 押した所から離した所まで" iconLine
+        , toolButton model Rect (model.layer == PlaceLayer) "矩形(R) — 2 点を対角とする四角の枠" iconRect
+        , toolButton model Ellipse (model.layer == PlaceLayer) "楕円(O) — 2 点を対角とするだ円の枠" iconEllipse
         , div [ HA.class "my-1 h-px w-8 shrink-0 bg-edge" ] []
         , historyButton "戻す(⌘Z / Ctrl+Z)" UndoPressed (List.isEmpty model.undo) iconUndo
         , historyButton "やり直す(⇧⌘Z / Ctrl+Y)" RedoPressed (List.isEmpty model.redo) iconRedo
@@ -1571,8 +1710,14 @@ viewCenter doc model =
             , HE.custom "keydown" keyDecoder
             , HE.custom "contextmenu"
                 (D.succeed { message = Swallowed, stopPropagation = True, preventDefault = True })
+            , HE.custom "wheel" wheelDecoder
             ]
-            [ div [ HA.class "m-auto" ]
+            [ div
+                [ HA.class "m-auto"
+
+                -- 倍率はここ 1 つ。HA.style はカスタムプロパティを扱えないので属性で渡す
+                , HA.attribute "style" ("--map-cell:" ++ String.fromInt model.cellPx ++ "px")
+                ]
                 [ div [ HA.class "flex items-start" ]
                     [ viewGridWithMarks doc model rows
                     , viewColButtons rows
@@ -1585,7 +1730,7 @@ viewCenter doc model =
 
 
 {-| グリッド+配置の印。地形の色と配置の印はそれぞれのレイヤーの淡さで描く
-(👁 オフのレイヤーは描かない)。クリックを受けるセルは常に敷いておく —
+(目を閉じたレイヤーは描かない)。クリックを受けるセルは常に敷いておく —
 淡くしたり隠したりしても、別レイヤーを触るための当たり判定は残す。
 -}
 viewGridWithMarks : Doc -> Model -> List String -> Html Msg
@@ -1619,23 +1764,21 @@ viewGridWithMarks doc model rows =
         [ HA.class "map-grid relative border border-edge shadow-[0_2px_10px_rgb(0_0_0/0.4)]"
         , HE.onMouseLeave GridLeft
         ]
-        ((rows |> List.indexedMap (viewGridRow colors terrainA model.cellPx))
+        ((rows |> List.indexedMap (viewGridRow colors terrainA))
             ++ marks
         )
 
 
-viewGridRow : Dict.Dict Char String -> Float -> Int -> Int -> String -> Html Msg
-viewGridRow colors terrainA cellPx y row =
+viewGridRow : Dict.Dict Char String -> Float -> Int -> String -> Html Msg
+viewGridRow colors terrainA y row =
     div [ HA.class "flex" ]
-        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors terrainA cellPx x y ch))
+        (row |> String.toList |> List.indexedMap (\x ch -> viewCell colors terrainA x y ch))
 
 
-viewCell : Dict.Dict Char String -> Float -> Int -> Int -> Int -> Char -> Html Msg
-viewCell colors terrainA cellPx x y ch =
+viewCell : Dict.Dict Char String -> Float -> Int -> Int -> Char -> Html Msg
+viewCell colors terrainA x y ch =
     div
         ([ HA.class "map-cell shrink-0"
-         , HA.style "width" (String.fromInt cellPx ++ "px")
-         , HA.style "height" (String.fromInt cellPx ++ "px")
          , HE.custom "mousedown"
             (D.field "button" D.int
                 |> D.map (\b -> { message = CellPressed x y b, stopPropagation = True, preventDefault = False })
@@ -1742,20 +1885,20 @@ viewStatus model rows =
     div [ HA.class "map-status flex h-8 shrink-0 items-center gap-2 border-t border-edge bg-panel px-3 text-[11px] text-ink-soft" ]
         [ button
             [ HA.class "btn btn-mini"
-            , HA.title "ズーム −"
+            , HA.title "縮小(ピンチイン・⌘ホイールでも)"
             , HA.disabled (Just model.cellPx == List.head zoomLevels)
             , HE.onClick (ZoomStepped -1)
             ]
-            [ text "−" ]
+            [ iconZoomOut ]
         , span [ HA.class "w-10 text-center font-mono" ]
             [ text (String.fromInt (model.cellPx * 100 // baseCellPx) ++ "%") ]
         , button
             [ HA.class "btn btn-mini"
-            , HA.title "ズーム +"
+            , HA.title "拡大(ピンチアウト・⌘ホイールでも)"
             , HA.disabled (Just model.cellPx == List.head (List.reverse zoomLevels))
             , HE.onClick (ZoomStepped 1)
             ]
-            [ text "+" ]
+            [ iconZoomIn ]
         , span [ HA.class "ml-2 font-mono text-ink-faint" ]
             [ text (String.fromInt (maxWidth rows) ++ "×" ++ String.fromInt (List.length rows)) ]
         , span [ HA.class "spacer flex-1" ] []
@@ -1809,7 +1952,7 @@ paneTitle label =
     div [ HA.class "px-3 pt-2 pb-1.5 text-[11px] tracking-wider text-ink-faint" ] [ text label ]
 
 
-{-| レイヤー 1 行。👁 表示切替と選択。選択中は行をハイライト。
+{-| レイヤー 1 行。目(見せる/隠す)と選択。選択中は行をハイライト。
 -}
 viewLayerRow : Model -> Layer -> Html Msg
 viewLayerRow model layer =
@@ -1843,7 +1986,12 @@ viewLayerRow model layer =
             , HE.custom "click"
                 (D.succeed { message = LayerToggled layer, stopPropagation = True, preventDefault = False })
             ]
-            [ text "👁" ]
+            [ if shown then
+                iconEye
+
+              else
+                iconEyeOff
+            ]
         , span
             [ HA.classList
                 [ ( "flex-1", True )
@@ -2074,6 +2222,15 @@ shortcutMsg k =
         ( "p", False, _ ) ->
             Just (ToolChosen Pen)
 
+        ( "l", False, _ ) ->
+            Just (ToolChosen Line)
+
+        ( "r", False, _ ) ->
+            Just (ToolChosen Rect)
+
+        ( "o", False, _ ) ->
+            Just (ToolChosen Ellipse)
+
         ( "e", False, _ ) ->
             Just (ToolChosen Eraser)
 
@@ -2091,12 +2248,45 @@ shortcutMsg k =
 -- アイコン(SVG 線画・20px — ピクセルエディタと同じ形)
 
 
+{-| ピンチをこれだけ溜めたら 1 段動かす。トラックパッドのピンチは 1 回の
+delta が数しか無いので、大きく取ると指を動かしても反応しない。マウスの
+ホイールは 1 目盛りで 100 前後来るので、こちらは 1 目盛り 1 段になる。
+-}
+pinchStepThreshold : Float
+pinchStepThreshold =
+    8
+
+
+{-| トラックパッドのピンチと ⌘/Ctrl + ホイールでズーム。ブラウザ自身の拡大を
+止めるので preventDefault が要る(そのため onWheel でなく custom)。
+
+素のホイールは decoder を fail させて素通しにする — 掴んでしまうと地図が
+画面より大きい時にスクロールできなくなる。
+-}
+wheelDecoder : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+wheelDecoder =
+    D.map2 Tuple.pair (D.field "ctrlKey" D.bool) (D.field "deltaY" D.float)
+        |> D.andThen
+            (\( ctrl, deltaY ) ->
+                if ctrl then
+                    D.succeed { message = ZoomPinched deltaY, stopPropagation = True, preventDefault = True }
+
+                else
+                    D.fail "素のホイールはスクロールへ渡す"
+            )
+
+
 icon : List (Svg.Svg Msg) -> Html Msg
-icon paths =
+icon =
+    iconSized 20
+
+
+iconSized : Int -> List (Svg.Svg Msg) -> Html Msg
+iconSized px paths =
     Svg.svg
         [ SA.viewBox "0 0 24 24"
-        , SA.width "20"
-        , SA.height "20"
+        , SA.width (String.fromInt px)
+        , SA.height (String.fromInt px)
         , SA.fill "none"
         , SA.stroke "currentColor"
         , SA.strokeWidth "1.6"
@@ -2104,6 +2294,58 @@ icon paths =
         , SA.strokeLinejoin "round"
         ]
         paths
+
+
+{-| 虫眼鏡。ステータス帯は高さ 8(32px)なので、道具の 20px より小さく描く。 -}
+iconLine : Html Msg
+iconLine =
+    icon [ Svg.path [ SA.d "M4 20 L20 4" ] [] ]
+
+
+iconRect : Html Msg
+iconRect =
+    icon [ Svg.rect [ SA.x "4", SA.y "6", SA.width "16", SA.height "12", SA.rx "1" ] [] ]
+
+
+iconEllipse : Html Msg
+iconEllipse =
+    icon [ Svg.ellipse [ SA.cx "12", SA.cy "12", SA.rx "8.5", SA.ry "6" ] [] ]
+
+
+iconZoomIn : Html Msg
+iconZoomIn =
+    iconSized 15
+        [ Svg.circle [ SA.cx "10.5", SA.cy "10.5", SA.r "7.5" ] []
+        , Svg.path [ SA.d "M16 16l5.5 5.5" ] []
+        , Svg.path [ SA.d "M10.5 7v7M7 10.5h7" ] []
+        ]
+
+
+iconZoomOut : Html Msg
+iconZoomOut =
+    iconSized 15
+        [ Svg.circle [ SA.cx "10.5", SA.cy "10.5", SA.r "7.5" ] []
+        , Svg.path [ SA.d "M16 16l5.5 5.5" ] []
+        , Svg.path [ SA.d "M7 10.5h7" ] []
+        ]
+
+
+{-| レイヤーを見せる/隠す。開いた目と、斜線で閉じた目。 -}
+iconEye : Html Msg
+iconEye =
+    iconSized 15
+        [ Svg.path [ SA.d "M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ] []
+        , Svg.circle [ SA.cx "12", SA.cy "12", SA.r "2.6" ] []
+        ]
+
+
+iconEyeOff : Html Msg
+iconEyeOff =
+    iconSized 15
+        [ Svg.path [ SA.d "M4 8.5C2.8 9.9 2 12 2 12s3.6 6.5 10 6.5c1.6 0 3-.3 4.2-.8" ] []
+        , Svg.path [ SA.d "M9.6 6.2C10.4 6.1 11.2 6 12 6c6.4 0 10 6 10 6s-1 1.9-3 3.6" ] []
+        , Svg.path [ SA.d "m3 3 18 18" ] []
+        ]
 
 
 iconPen : Html Msg

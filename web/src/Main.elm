@@ -14490,7 +14490,12 @@ subscriptions model =
 
         -- ドット絵のフレーム送り。動かしている間だけ時計を回す
         , if PixelEditor.isPlaying model.pixel then
-            Time.every 140 (\_ -> PixelMsg PixelEditor.PlayTicked)
+            Time.every
+                (model.spriteDoc
+                    |> Maybe.map (\doc -> PixelEditor.playIntervalMs doc model.pixel)
+                    |> Maybe.withDefault 125
+                )
+                (\_ -> PixelMsg PixelEditor.PlayTicked)
 
           else
             Sub.none
