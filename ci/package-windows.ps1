@@ -52,11 +52,31 @@ Copy-Item "$EngineRepo/bin/checkd" "$engineStage/bin/"
 Copy-Item "$EngineRepo/bin/explain-error" "$engineStage/bin/"
 Copy-Item "$EngineRepo/bin/precommit.py" "$engineStage/bin/"
 Copy-Item "$EngineRepo/bin/sync-agents.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/gen-api-digest.py" "$engineStage/bin/"
+Copy-Item "$EngineRepo/bin/check-render-budget.py" "$engineStage/bin/"
 New-Item -ItemType Directory -Force -Path "$engineStage/bin/githooks" | Out-Null
 Copy-Item "$EngineRepo/bin/githooks/pre-commit" "$engineStage/bin/githooks/"
+# 3 面図から歩きを彫り出す道具。carve-sprite スキルは全ゲームへ配られ、その手順が
+# $(ENGINE)/bin/carve/carve.py を直に叩く。スキルだけ届いて道具が届かないと、
+# 実行して初めて「ファイルが無い」で気づく。
+New-Item -ItemType Directory -Force -Path "$engineStage/bin/carve" | Out-Null
+Copy-Item "$EngineRepo/bin/carve/*.py" "$engineStage/bin/carve/"
 New-Item -ItemType Directory -Force -Path "$engineStage/.claude/hooks" | Out-Null
 Copy-Item "$EngineRepo/.claude/hooks/after-flix-edit.py" "$engineStage/.claude/hooks/"
+Copy-Item "$EngineRepo/.claude/hooks/after-flix-work.py" "$engineStage/.claude/hooks/"
+Copy-Item "$EngineRepo/.claude/hooks/after-flix-touch.py" "$engineStage/.claude/hooks/"
 Copy-Item "$EngineRepo/.claude/hooks/session-diet.py" "$engineStage/.claude/hooks/"
+# ゲームの make api / status / スキルの参照先 (docs)。
+New-Item -ItemType Directory -Force -Path "$engineStage/docs/api-digest" | Out-Null
+foreach ($d in @("api-digest.md", "module-index.md", "engine-module-index.md",
+                 "doc-conventions.md", "glossary.md", "shader-doc.md", "checkd.md")) {
+    Copy-Item "$EngineRepo/docs/$d" "$engineStage/docs/"
+}
+Copy-Item "$EngineRepo/docs/api-digest/*.md" "$engineStage/docs/api-digest/"
+# ゲームの Makefile が include する共通部。漏れると include ごと落ち、make は
+# 「そんなファイルは無い」としか言わない — 産まれたゲームは run も status も打てない。
+New-Item -ItemType Directory -Force -Path "$engineStage/mk" | Out-Null
+Copy-Item "$EngineRepo/mk/*.mk" "$engineStage/mk/"
 # 版刻印の出どころ (VERSION :=)。無くても engine_full/flix.toml に倒れるが、正を入れておく
 Copy-Item "$EngineRepo/Makefile" "$engineStage/Makefile"
 Copy-Item "$EngineRepo/flix.toml" "$engineStage/flix.toml"
@@ -72,9 +92,29 @@ Copy-Item -Recurse "$EngineRepo/templates" "$engineStage/templates"
 New-Item -ItemType Directory -Force -Path "$engineStage/lib" | Out-Null
 Copy-Item -Recurse "$root/server/lib/cache" "$engineStage/lib/cache"
 Copy-Item -Recurse "$root/server/lib/external" "$engineStage/lib/external"
-# テンプレ内のビルド成果物 (lib) は同梱しない — new-game が engine_full を種付けする。
-Get-ChildItem -Path "$engineStage/templates" -Directory -Recurse -Filter "lib" |
-    ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+# テンプレの生成物は同梱しない。lib は new-game が engine_full から置き直す。
+# build はコンパイル成果物で、放っておくとテンプレ 1 本で GB 級に育ち zip がその分ふくらむ。
+# .devbox は nix store を指す symlink で、そのマシンにしか無い先を指す。
+foreach ($name in @("lib", "build", ".devbox")) {
+    Get-ChildItem -Path "$engineStage/templates" -Directory -Recurse -Filter $name |
+        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+}
+
+# 同梱の必須一覧 (engine の BUNDLE_REQUIRED) と照合。mac の stage-engine と同じ物差しを
+# 当てる — 片方の cp リストだけ痩せると、産まれたゲームが走らないまま zip が出来てしまう。
+# --windows は bash 前提の物 (bin/flix・reference-*.sh) だけ免除する。
+# WhyNot: python が無いときに飛ばしてはいけない。この関所は「欠けたまま zip が出来る」のを
+# 止めるためだけに在るので、判定できないなら止まる方が正しい。Windows の名前は python
+# のことが多いが、どちらに転んでもいいよう両方を見る。
+Step "同梱物を照合 (check-refs)"
+$py = $null
+foreach ($name in @("python3", "python")) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd) { $py = $cmd.Source; break }
+}
+if (-not $py) { throw "python が見つかりません (同梱物の照合ができない)" }
+& $py "$EngineRepo/bin/check-refs.py" --bundle $engineStage --windows
+if ($LASTEXITCODE -ne 0) { throw "同梱物が足りません (check-refs)" }
 
 # ── 3. cargo build ───────────────────────────────────────
 Step "cargo build --release"

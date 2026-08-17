@@ -65,6 +65,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # 同梱物の照合 (check-refs.py) に要る。runner の既定に頼ると、python3 という名前が
+      # 在るかどうかがイメージの版で変わる
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Fetch flix.jar
         run: curl -fL -o flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
       - name: Build server fatjar

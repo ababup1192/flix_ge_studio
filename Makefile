@@ -181,6 +181,10 @@ app: jar web jre
 	@echo "==> [app] アドホック再署名 + 検証"
 	codesign --force --deep -s - "$(APP_BUNDLE)"
 	codesign --verify --deep --strict "$(APP_BUNDLE)"
+	# ステージだけでなく .app の中身も照合する。stage-engine の関所と Tauri のリソース
+	# 収集の間には変換が挟まっており (symlink は落とされる)、通した物がそのまま
+	# 入っている保証が無い。配る前の最後の 1 回。
+	python3 $(ENGINE)/bin/check-refs.py --bundle "$(APP_BUNDLE)/Contents/Resources/engine"
 	@echo "==> [app] 完了。生成 .app: $(APP_BUNDLE)"
 
 # --- stage-engine: .app に入れる engine 一式を揃える ---
