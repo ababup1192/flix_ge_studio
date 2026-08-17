@@ -1,5 +1,13 @@
 # NOTES
 
+## 次やること（2026-08-17・engine 0.28.0 追随。未コミット）
+
+1. **人の目で確かめる**（`/Applications` へ swap-jar / swap-engine 済み。Studio を
+   Cmd+Q → 開き直し）。新規ゲーム作成で 0.28.0 の fpkg が種から解けるかを見る
+2. **コミット**（`server/flix.toml` の 0.27.0→0.28.0 と、`server/lib/github/.../0.28.0/`
+   の追加・`0.27.0/` の削除。この環境は git commit が拒否されるので人の手が要る）
+3. engine リポ側は変更なし（`make sync-engine-full` の生成物だけ。0.28.0 は公開済み）
+
 ## 次やること（2026-08-16・ギャラリー画面。未コミット）
 
 1. **人の目で確かめる**（`/Applications` へ swap-jar / swap-web / swap-engine 済み。
