@@ -317,7 +317,7 @@ suite =
         , test "dirty のままプレビューからのジャンプ: ゲートが出て、破棄を選ぶと開く" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/enemies.json"
+                    |> ProgramTest.clickButton "enemies.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/enemies.json" enemiesText)
                     |> respondOk 5 "getFile" (fileBody "assets/enemies.schema.json" enemiesSchemaText)
@@ -351,7 +351,7 @@ suite =
         , test "宣言ファイルを開くとスキーマ確定で横断辞書(他の宣言ファイル)を取りに行く" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/enemies.json"
+                    |> ProgramTest.clickButton "enemies.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/enemies.json" enemiesText)
                     |> respondOk 5 "getFile" (fileBody "assets/enemies.schema.json" enemiesSchemaText)
@@ -365,7 +365,7 @@ suite =
         , test "横断辞書が届くと武器ドロップダウンに claw / cannon が並び、実在参照は問題にならない" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/enemies.json"
+                    |> ProgramTest.clickButton "enemies.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/enemies.json" enemiesText)
                     |> respondOk 5 "getFile" (fileBody "assets/enemies.schema.json" enemiesSchemaText)

@@ -572,6 +572,18 @@ mod Editor {
         }
 
 
+    /// Doc 直下の "title"(人が読む短い表示名)。無ければ None —
+    /// 目次はファイル名へ倒す。中身は読むが、一覧は元から schema の有無を見るのに
+    /// 1 ファイル 1 回読んでいるので、増えるのは同じ桁の読み込み 1 回。
+    def docTitle(dir: String, path: String): Option[String] \ IO =
+        FileIndex.readInside(dir, path)
+            |> Result.toOption
+            |> Option.flatMap(DocJson.parse)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.flatMap(obj -> Map.get("title", obj))
+            |> Option.flatMap(JsonCodec.expectString)
+            |> Option.filter(t -> not String.isEmpty(String.trim(t)))
+
     def resourceJson(dir: String, allJsonPaths: List[String], decl: ResourceDecl.Decl): Json \ IO =
         let files = ResourceDecl.matchFiles(decl#pattern, allJsonPaths) |> List.map(path -> {
             let schemaPath = match decl#schemaPath {
@@ -579,9 +591,13 @@ mod Editor {
                 case None    => ResourceDecl.siblingSchemaPath(path)
             };
             let base = Map#{"path" => JString(path)};
+            let withTitle = match docTitle(dir, path) {
+                case Some(t) => Map.insert("title", JString(t), base)
+                case None    => base
+            };
             JObject(if (Result.isOk(FileIndex.readInside(dir, schemaPath)))
-                        Map.insert("schema", JString(schemaPath), base)
-                    else base)
+                        Map.insert("schema", JString(schemaPath), withTitle)
+                    else withTitle)
         });
         // 焼き・実機の宣言は素通し(画面は有無だけを見る。手の中身は server が読む)
         let withBake = List.foldLeft(

@@ -10729,6 +10729,40 @@ baseName path =
     String.split "/" path |> List.reverse |> List.head |> Maybe.withDefault path
 
 
+{-| 目次に出す名前。Doc 直下の "title" があればそれ、無ければファイル名。
+ただしファイル名が他と被るならフルパス(どちらの紙か分からなくなるため)。
+
+ファイル数が増えると `assets/town_ground.sprite.json` のような機械の名前では
+中身を思い出せない。title は人が読む言葉で書く。
+-}
+displayName : Model -> String -> String
+displayName model path =
+    case titleOf model path of
+        Just title ->
+            title
+
+        Nothing ->
+            let
+                name =
+                    baseName path
+            in
+            if List.length (List.filter (\p -> baseName p == name) (declaredPaths model.groups)) > 1 then
+                path
+
+            else
+                name
+
+
+titleOf : Model -> String -> Maybe String
+titleOf model path =
+    model.groups
+        |> List.concatMap .files
+        |> List.filter (\f -> f.path == path)
+        |> List.head
+        |> Maybe.andThen .title
+
+
+
 {-| フォーム/エディタの下の境界の 1 行。開いたファイルが
 アセット(role:material の宣言)なら「アセットを切り替える」への行き来リンク、
 宣言された調整値(tuning)なら「値を変えるだけで完結」の一言(リンクなし)。
@@ -10983,7 +11017,7 @@ viewFileRow model path =
                     , onFileRowKeys path
                     ]
                     [ fileIcon
-                    , span [ HA.class "min-w-0 flex-1 truncate" ] [ text path ]
+                    , span [ HA.class "min-w-0 flex-1 truncate" ] [ text (displayName model path) ]
                     ]
         , if isActive then
             -- ダークテーマで暗く沈む素の絵文字でなく、緑系バッジで「表示中」と一目に

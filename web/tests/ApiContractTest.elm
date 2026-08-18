@@ -237,7 +237,7 @@ suite =
                                     , pattern = "assets/level.json"
                                     , title = Just "レベル"
                                     , plugin = Just "shooterLevel"
-                                    , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json" } ]
+                                    , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json", title = Nothing } ]
                                     }
                                 )
                             )
@@ -254,7 +254,7 @@ suite =
                                   , pattern = "assets/*.hitbox.json"
                                   , title = Nothing
                                   , plugin = Nothing
-                                  , files = [ { path = "assets/player.hitbox.json", schema = Nothing } ]
+                                  , files = [ { path = "assets/player.hitbox.json", schema = Nothing, title = Nothing } ]
                                   }
                                 ]
                             )

@@ -244,7 +244,7 @@ type alias ResourceGroup =
 いないので、開く側は隣接規約(*.schema.json)を自分で試す。
 -}
 type alias ResourceFile =
-    { path : String, schema : Maybe String }
+    { path : String, schema : Maybe String, title : Maybe String }
 
 
 {-| ダッシュボード宣言 1 件。plugin と uses は素通し文字列のままで、
@@ -307,9 +307,10 @@ resourceGroupDecoder =
 
 resourceFileDecoder : D.Decoder ResourceFile
 resourceFileDecoder =
-    D.map2 ResourceFile
+    D.map3 ResourceFile
         (D.field "path" D.string)
         (opt "schema" D.string)
+        (opt "title" D.string)
 
 
 {-| ui はメタ情報付き {path, ...} の列、hitbox/palette は素の文字列の列。

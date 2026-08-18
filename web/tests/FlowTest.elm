@@ -675,7 +675,7 @@ warnedResourcesBody =
 openedLevel : App
 openedLevel =
     booted
-        |> ProgramTest.clickButton "assets/level.json"
+        |> ProgramTest.clickButton "level.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/level.json" levelText)
         |> ensureKinds [ "previewItems" ]
@@ -716,7 +716,7 @@ dirtyHitbox =
 openedRawJson : App
 openedRawJson =
     bootedWith spritesResourcesBody
-        |> ProgramTest.clickButton "assets/sprites.json"
+        |> ProgramTest.clickButton "sprites.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/sprites.json" spritesText)
         |> respondOk 5 "getFile" (fileBody "assets/sprites.schema.json" spritesSchemaText)
@@ -901,7 +901,7 @@ secondCutsText =
 openedCuts : App
 openedCuts =
     bootedWith cutsResourcesBody
-        |> ProgramTest.clickButton "assets/prologue.scene.json"
+        |> ProgramTest.clickButton "prologue.scene.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
         |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -944,7 +944,7 @@ roomsText =
 openedTilePick : App
 openedTilePick =
     bootedWith tilePickResourcesBody
-        |> ProgramTest.clickButton "assets/prologue.scene.json"
+        |> ProgramTest.clickButton "prologue.scene.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" tilePickText)
         |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" tilePickSchemaText)
@@ -1158,7 +1158,7 @@ musicText =
 openedMusic : App
 openedMusic =
     bootedWith musicResourcesBody
-        |> ProgramTest.clickButton "assets/kaidan.music.json"
+        |> ProgramTest.clickButton "kaidan.music.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/kaidan.music.json" musicText)
         |> respondOk 5 "getFile" (fileBody "assets/music.schema.json" musicSchemaText)
@@ -1211,7 +1211,7 @@ mapSchemaText =
 openedMap : App
 openedMap =
     bootedWith mapResourcesBody
-        |> ProgramTest.clickButton "assets/room.map.json"
+        |> ProgramTest.clickButton "room.map.json"
         |> ensureKinds [ "getFile", "getFile" ]
         |> respondOk 4 "getFile" (fileBody "assets/room.map.json" mapText)
         |> respondOk 5 "getFile" (fileBody "assets/map.schema.json" mapSchemaText)
@@ -1674,7 +1674,7 @@ suite =
         , test "調整の境界: アセット(material)には②への行き来リンク、tuning には完結の一言だけ" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ProgramTest.clickButton "level.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/level.json" levelText)
                     -- 宣言はあるがアセットスロットではない = tuning。リンクは出さない
@@ -1765,7 +1765,7 @@ suite =
         , test "level.json を開くと本文とスキーマの getFile が飛び、本文が届くと previewItems が飛ぶ" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ProgramTest.clickButton "level.json"
                     |> ProgramTest.ensureOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
                         (Expect.equal
@@ -1934,7 +1934,7 @@ suite =
         , test "dirty のままファイル切替: 確認ダイアログが出て、破棄を選ぶと切替が進む" <|
             \() ->
                 dirtyHitbox
-                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ProgramTest.clickButton "level.json"
                     -- 答えるまで getFile は飛ばない
                     |> ensureKinds []
                     |> ProgramTest.ensureViewHas [ text discardDialogText ]
@@ -1943,7 +1943,7 @@ suite =
         , test "dirty のままファイル切替: やめるを選ぶと留まり編集も残る" <|
             \() ->
                 dirtyHitbox
-                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ProgramTest.clickButton "level.json"
                     |> ProgramTest.clickButton "やめる"
                     |> ProgramTest.ensureViewHasNot [ text discardDialogText ]
                     |> ProgramTest.ensureViewHas [ text "未保存" ]
@@ -2149,7 +2149,7 @@ suite =
                 -- b の焼きの控えが a の控えを上書きし、b は disabled のまま a が
                 -- 押せてしまっていた。ファイルごとの Dict なら両方とも disabled のまま
                 bootedWith twoCutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
@@ -2167,7 +2167,7 @@ suite =
                     |> respondOk 9 "bakeWake" wakeOkBody
                     |> respondOk 10 "bakeCutscene" bakeOkBody
                     -- b(second)へ切り替えて描き出す
-                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> ProgramTest.clickButton "second.scene.json"
                     |> respondOk 11 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 12 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 13 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
@@ -2180,7 +2180,7 @@ suite =
                     |> ProgramTest.ensureView
                         (Query.find [ class "bake-run" ] >> Query.has [ Test.Html.Selector.disabled True ])
                     -- a へ戻る
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> respondOk 18 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 19 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 20 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
@@ -2196,7 +2196,7 @@ suite =
                 -- (mediaExists の X-Mtime)と changes の mtime 一覧だけでディスクの事実から
                 -- 「前回の描き出しから何も変わっていない」を言い直せることを見る
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2211,7 +2211,7 @@ suite =
         , test "描き出す: 復元した GIF より新しい JSON がある changes が来れば、押せるようになる" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2235,7 +2235,7 @@ suite =
                 -- 主眼は id 10(bakeCutscene)を最後まで寝かせて、ファイルを行き来しても
                 -- 生きたまま戻って来られることだけ
                 bootedWith twoCutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
@@ -2245,7 +2245,7 @@ suite =
                     |> clickOn "bake-run"
                     |> respondOk 9 "bakeWake" wakeOkBody
                     -- 別ファイルへ切り替える(焼き応答はまだ届いていない)
-                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> ProgramTest.clickButton "second.scene.json"
                     |> respondOk 11 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 12 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     -- 別ファイルを見ている間は「別のスクリプトを描き出しています」のラベルで、描き出すボタンは押せない
@@ -2256,7 +2256,7 @@ suite =
                     |> respondOk 14 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 15 "mediaExists" (E.object [ ( "exists", E.bool False ) ])
                     -- 元のファイルへ戻る(まだ焼き応答は届いていない)
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> respondOk 16 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 17 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 18 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
@@ -2274,14 +2274,14 @@ suite =
                 -- 切り替える → 起こし完了(BakeAfterWake)で焼かれるのは model.current
                 -- (切り替え先)ではなく、押した時に model に控えた path であるべき
                 bootedWith twoCutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 4(本文)・5(スキーマ)
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     -- 描き出しサーバを起こし始める(id 9。id 6〜8 は横断辞書・前回焼き探しの分)
                     |> clickOn "bake-run"
                     -- 起こしの応答(id 9)がまだ届かないうちに、別ファイルへ切り替える
-                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> ProgramTest.clickButton "second.scene.json"
                     -- id 10(本文)・11(スキーマ)。本文の応答で model.current が切り替わる
                     |> respondOk 10 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 11 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2304,7 +2304,7 @@ suite =
         , test "開く: スキーマが本文より先に届いても止まらない(逆順)" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     -- スキーマ(id 5)を先に、本文(id 4)を後に
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2314,11 +2314,11 @@ suite =
             \() ->
                 bootedWith twoCutsResourcesBody
                     -- 3 回続けて開き直す(どの応答もまだ受け取っていない)
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 4(本文A-1回目)・5(スキーマA-1回目)
-                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> ProgramTest.clickButton "second.scene.json"
                     -- id 6(本文B)・7(スキーマB)
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 8(本文A-2回目)・9(スキーマA-2回目) ← これだけが「今」の要求
                     |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
                     |> respondOk 9 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2330,7 +2330,7 @@ suite =
         , test "開く: 焼き応答が本文・スキーマ応答の間に割り込んでも止まらない" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     -- スキーマ応答がまだ届く前に、無関係な焼き応答(飛んでいる要求など無い)が割り込む
@@ -2340,9 +2340,9 @@ suite =
         , test "開く: 追い越された古いスキーマ要求の失敗 envelope が今のスキーマの後に届いても壊さない" <|
             \() ->
                 bootedWith twoCutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 4(本文A-1回目)・5(スキーマA-1回目、後で失敗させる)
-                    |> ProgramTest.clickButton "assets/second.scene.json"
+                    |> ProgramTest.clickButton "second.scene.json"
                     -- id 6(本文B)・7(スキーマB) ← 今はこちらが「今」
                     |> respondOk 6 "getFile" (fileBody "assets/second.scene.json" secondCutsText)
                     |> respondOk 7 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2352,11 +2352,11 @@ suite =
         , test "開く: 同じファイルを連打しても、一番新しい要求の応答だけで止まらない" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 4(本文-1回目)・5(スキーマ-1回目)
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 6(本文-2回目)・7(スキーマ-2回目) ← これが「今」
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     -- id 8(本文-3回目)・9(スキーマ-3回目) ← 本当の「今」
                     -- 一番古い要求の応答が一番最後に届く極端な並び
                     |> respondOk 9 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2397,7 +2397,7 @@ suite =
         , test "oneOf の表: 鍵ごとの列見出しではなく #/カット/内容 の 3 列で出る" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" oneOfDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" oneOfSchemaText)
@@ -2412,7 +2412,7 @@ suite =
         , test "oneOf の表: カット列に鍵の名前、内容列に値の要約(座標・添え鍵の札)が出る" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" oneOfDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" oneOfSchemaText)
@@ -2424,7 +2424,7 @@ suite =
         , test "前回の描き出し: 開いた拍に産物があれば出し、「前回の描き出し」の札を添える" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2434,7 +2434,7 @@ suite =
         , test "前回の描き出し: 復元直後は無かったシークバーが、フレーム数を数え直すと出る" <|
             \() ->
                 bootedWith cutsResourcesBody
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/prologue.scene.json" cutsText)
                     |> respondOk 5 "getFile" (fileBody "assets/scene.schema.json" cutsSchemaText)
@@ -2460,7 +2460,7 @@ suite =
                     |> respondOk 8 "bakeCutscene" bakeOkBody
                     |> ProgramTest.ensureViewHas [ class "bake-gif" ]
                     -- 同じ一覧のもう 1 本を開く(この見本は 1 本なので開き直しで見る)
-                    |> ProgramTest.clickButton "assets/prologue.scene.json"
+                    |> ProgramTest.clickButton "prologue.scene.json"
                     |> ProgramTest.expectViewHasNot [ class "bake-gif" ]
         , test "起こし待ち: 届かない間は焼きへ進まず、2 秒おきに訊き直す(撃つのは 1 回目だけ)" <|
             \() ->
@@ -2663,7 +2663,7 @@ suite =
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "q" ] D.string))
                         (Expect.equal [ ( "search", "turret" ) ])
                     |> respondOk 8 "search" searchBody
-                    |> ProgramTest.expectViewHas [ text "1 件", text "assets/level.json" ]
+                    |> ProgramTest.expectViewHas [ text "1 件", text "level.json" ]
         , test "横断検索: ファイル名の一致が先頭に出て、件数はファイル / 中身で分かれる" <|
             \() ->
                 openedLevel
@@ -3039,7 +3039,7 @@ suite =
         , test "古い応答(id 不一致)は無視され、正しい id の応答だけが反映される" <|
             \() ->
                 booted
-                    |> ProgramTest.clickButton "assets/level.json"
+                    |> ProgramTest.clickButton "level.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 99 "getFile" (fileBody "assets/level.json" "STALE")
                     -- 古い応答では開いた扱いにならない(プレースホルダのまま)
@@ -3049,7 +3049,7 @@ suite =
         , test "kind=ui: 本文が届くと doc 入りの previewUi(エンジン焼き)が飛ぶ" <|
             \() ->
                 bootedWith uiResourcesBody
-                    |> ProgramTest.clickButton "assets/menu.ui.json"
+                    |> ProgramTest.clickButton "menu.ui.json"
                     -- schema 未宣言のファイルはスキーマを取りに行かない(404 を作らない)
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/menu.ui.json" "{ }")
@@ -3059,7 +3059,7 @@ suite =
         , test "kind=ui: エンジン焼きが右ペインに出て、専用エディタ flix_ge_editor の案内も出る" <|
             \() ->
                 bootedWith uiResourcesBody
-                    |> ProgramTest.clickButton "assets/menu.ui.json"
+                    |> ProgramTest.clickButton "menu.ui.json"
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/menu.ui.json" "{ }")
                     |> ensureKinds [ "previewUi" ]
@@ -3069,7 +3069,7 @@ suite =
         , test "dungeon 系 kind(schema 未宣言): スキーマもプレビューも取りに行かず、走るゲーム案内とテキスト編集が出る" <|
             \() ->
                 bootedWith dungeonResourcesBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     -- 隣接の b1.dungeon.schema.json を推測して 404 を作らない
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" "{ }")
@@ -3081,7 +3081,7 @@ suite =
         , test "kind 共有スキーマ: 宣言の schema パスを取りに行く(隣接 b1.dungeon.schema.json は推測しない)" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ProgramTest.expectOutgoingPortValues "apiRequest"
                         (D.map2 Tuple.pair (D.field "kind" D.string) (D.at [ "payload", "path" ] D.string))
                         (Expect.equal
@@ -3092,7 +3092,7 @@ suite =
         , test "kind map のスキーマ: catalog として表(エントリ名)が出る" <|
             \() ->
                 bootedWith spritesResourcesBody
-                    |> ProgramTest.clickButton "assets/sprites.json"
+                    |> ProgramTest.clickButton "sprites.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/sprites.json" spritesText)
                     |> respondOk 5 "getFile" (fileBody "assets/sprites.schema.json" spritesSchemaText)
@@ -3101,7 +3101,7 @@ suite =
         , test "type json(自由形): 生 JSON は 1 行 input でなく複数行の textarea で編集できる" <|
             \() ->
                 bootedWith spritesResourcesBody
-                    |> ProgramTest.clickButton "assets/sprites.json"
+                    |> ProgramTest.clickButton "sprites.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/sprites.json" spritesText)
                     |> respondOk 5 "getFile" (fileBody "assets/sprites.schema.json" spritesSchemaText)
@@ -3115,7 +3115,7 @@ suite =
         , test "未対応 kind だけのスキーマ: フォームに出さず、件数の 1 行+テキスト編集(分割)になる" <|
             \() ->
                 bootedWith spritesResourcesBody
-                    |> ProgramTest.clickButton "assets/sprites.json"
+                    |> ProgramTest.clickButton "sprites.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/sprites.json" "{ }")
                     |> respondOk 5 "getFile" (fileBody "assets/sprites.schema.json" unsupportedSchemaText)
@@ -3142,7 +3142,7 @@ suite =
         , test "type grid: 編集の blur で改行区切りが行の列(List String)として書き戻る" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" gridDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" gridSchemaText)
@@ -3160,7 +3160,7 @@ suite =
         , test "kind value: タブに出て、編集の Enter で文書直下のキーへ書き戻る" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" lightDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" lightSchemaText)
@@ -3214,18 +3214,18 @@ suite =
                     |> ensureKinds [ "files", "resources" ]
                     |> respondOk 4 "files" filesBody
                     |> respondOk 5 "resources" resourcesBodyWithLevel2
-                    |> ProgramTest.expectViewHas [ text "assets/level2.json" ]
+                    |> ProgramTest.expectViewHas [ text "level2.json" ]
         , test "一覧の見張り: 開いていないファイルの削除で一覧から消える" <|
             \() ->
                 booted
                     -- assets/level.json を開かないまま、一覧だけ見ている
-                    |> ProgramTest.ensureViewHas [ text "assets/level.json" ]
+                    |> ProgramTest.ensureViewHas [ text "level.json" ]
                     -- changes の応答から assets/level.json が消える(ディスクから削除された)
                     |> respondOk 0 "changes" (changesBodyMany [ ( "hitbox.json", 1 ) ])
                     |> ensureKinds [ "files", "resources" ]
                     |> respondOk 4 "files" filesBody
                     |> respondOk 5 "resources" (E.object [ ( "resources", E.list identity [] ) ])
-                    |> ProgramTest.expectViewHasNot [ text "assets/level.json" ]
+                    |> ProgramTest.expectViewHasNot [ text "level.json" ]
         , test "一覧の見張り: 開いているファイルが消え、下書きが無ければ編集を閉じて知らせる" <|
             \() ->
                 openedLevel
@@ -3234,7 +3234,7 @@ suite =
         , test "セクションタブ: 一覧を持つ種類は label があれば表示名・無ければキー名で出る" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" lightDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" lightSchemaText)
@@ -3243,7 +3243,7 @@ suite =
         , test "group: 同じ group の単一値は 1 枚のタブに束ねる(値ごとにタブを割らない)" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" groupedDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" groupedSchemaText)
@@ -3310,7 +3310,7 @@ suite =
                     |> respondOk 4
                         "activeDocs"
                         (fileBody "debug/active-docs.json" """{"active": {"dungeon": "assets/b1.dungeon.json"}}""")
-                    |> ProgramTest.ensureViewHas [ text "assets/b1.dungeon.json" ]
+                    |> ProgramTest.ensureViewHas [ text "b1.dungeon.json" ]
                     |> ProgramTest.expectViewHas [ text "🎮 表示中" ]
         , test "active-docs: ゲームが止まるとバッジは消え、また起動すれば戻る" <|
             \() ->
@@ -3334,7 +3334,7 @@ suite =
             \() ->
                 bootedWith dungeonResourcesBody
                     |> respondOk 0 "gameStatus" (E.object [ ( "running", E.bool True ) ])
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" "{ }")
                     |> ProgramTest.update Main.ActivePollTick
@@ -3359,7 +3359,7 @@ suite =
         , test "enabledWhen: 条件を満たさないフィールドはフォームに出ず、shape 切替で現れる" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" charactersDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" charactersSchemaText)
@@ -3376,7 +3376,7 @@ suite =
         , test "enabledWhen in: 配列のどれにも一致しない shape ではフォームに出ない" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" """{"player": {"shape": "box"}}""")
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" charactersSchemaText)
@@ -3385,7 +3385,7 @@ suite =
         , test "ドロップダウン enum: select の change で applyDocEdit が飛ぶ(色と同じライブ保存経路)" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" charactersDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" dropdownShapeSchemaText)
@@ -3398,7 +3398,7 @@ suite =
         , test "ドロップダウン enum(ライブ ON): change → applyDocEdit 応答 → 自動保存(putFile)まで届く" <|
             \() ->
                 bootedWith dungeonDeclaredSchemaBody
-                    |> ProgramTest.clickButton "assets/b1.dungeon.json"
+                    |> ProgramTest.clickButton "b1.dungeon.json"
                     |> ensureKinds [ "getFile", "getFile" ]
                     |> respondOk 4 "getFile" (fileBody "assets/b1.dungeon.json" charactersDocText)
                     |> respondOk 5 "getFile" (fileBody "assets/dungeon.schema.json" dropdownShapeSchemaText)

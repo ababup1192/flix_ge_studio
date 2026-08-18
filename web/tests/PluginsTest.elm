@@ -22,7 +22,7 @@ levelGroup =
     , pattern = "assets/*.level.json"
     , title = Just "レベル"
     , plugin = Just "shooterLevel"
-    , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json" } ]
+    , files = [ { path = "assets/level.json", schema = Just "assets/level.schema.json", title = Nothing } ]
     }
 
 
@@ -36,7 +36,7 @@ plainGroup =
     , pattern = "assets/*.misc.json"
     , title = Nothing
     , plugin = Nothing
-    , files = [ { path = "assets/player.hitbox.json", schema = Nothing } ]
+    , files = [ { path = "assets/player.hitbox.json", schema = Nothing, title = Nothing } ]
     }
 
 
@@ -50,7 +50,7 @@ futureGroup =
     , pattern = "assets/*.board.json"
     , title = Nothing
     , plugin = Just "puzzleBoard"
-    , files = [ { path = "assets/board.json", schema = Nothing } ]
+    , files = [ { path = "assets/board.json", schema = Nothing, title = Nothing } ]
     }
 
 
