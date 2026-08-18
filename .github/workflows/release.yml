@@ -65,11 +65,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # 同梱物の照合 (check-refs.py) に要る。runner の既定に頼ると、python3 という名前が
-      # 在るかどうかがイメージの版で変わる
-      - uses: actions/setup-python@v5
+      # 検査・要約の道具 (bin/fge) の中身。engine の bin/fge-go.exe は git に入らない
+      # (OS ごとに別物のバイナリ) ので、checkout した engine で 1 つ焼く。同梱物の照合と、
+      # 産まれたゲームへ入れる分がこれ。
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version-file: engine_repo/go/go.mod
+      - name: Build fge-go (windows/amd64)
+        working-directory: engine_repo/go
+        run: go build -o ../bin/fge-go.exe .
       - name: Fetch flix.jar
         run: curl -fL -o flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
       - name: Build server fatjar
@@ -125,8 +129,17 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: tauri-cli@2
+      # 検査・要約の道具 (bin/fge) の中身。engine の bin/fge-go は git に入らない
+      # (OS ごとに別物のバイナリ) ので、checkout した engine で 1 つ焼く。make test の
+      # parity 検査と stage-engine の照合、.app に入れる分がこれ。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine_repo/go/go.mod
+      - name: Build fge-go (darwin)
+        working-directory: engine_repo/go
+        run: go build -o ../bin/fge-go .
       # ビルド前の関所: server のテストと、AGENTS 配布の二重実装 (engine の
-      # bin/sync-agents.py と server の --sync-agents) の一致検査。ここで止めれば
+      # bin/fge sync-agents と server の --sync-agents) の一致検査。ここで止めれば
       # 壊れた配布を .app に焼き込まない。engine は checkout 済みの engine_repo を使う。
       - name: make test (flix test + check-agents-parity)
         env:

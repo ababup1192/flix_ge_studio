@@ -41,80 +41,23 @@ Copy-Item -Recurse "$root/web/dist" "$resources/dist"
 Copy-Item -Recurse $jreDir "$resources/jre"
 
 $engineStage = "$resources/engine"
-New-Item -ItemType Directory -Force -Path "$engineStage/bin" | Out-Null
-Copy-Item $FlixJar "$engineStage/bin/flix.jar"
-# 生まれたゲームへ配る道具一式 (agents-pack/manifest.json の copy が指す物。
-# 欠けると server の配布が黙って飛ばし、生まれたゲームに関所やフックが付かない)
-Copy-Item "$EngineRepo/bin/lint-*.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/img-digest.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/status.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/checkd" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/explain-error" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/precommit.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/sync-agents.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/gen-api-digest.py" "$engineStage/bin/"
-Copy-Item "$EngineRepo/bin/check-render-budget.py" "$engineStage/bin/"
-New-Item -ItemType Directory -Force -Path "$engineStage/bin/githooks" | Out-Null
-Copy-Item "$EngineRepo/bin/githooks/pre-commit" "$engineStage/bin/githooks/"
-# 3 面図から歩きを彫り出す道具。carve-sprite スキルは全ゲームへ配られ、その手順が
-# $(ENGINE)/bin/carve/carve.py を直に叩く。スキルだけ届いて道具が届かないと、
-# 実行して初めて「ファイルが無い」で気づく。
-New-Item -ItemType Directory -Force -Path "$engineStage/bin/carve" | Out-Null
-Copy-Item "$EngineRepo/bin/carve/*.py" "$engineStage/bin/carve/"
-New-Item -ItemType Directory -Force -Path "$engineStage/.claude/hooks" | Out-Null
-Copy-Item "$EngineRepo/.claude/hooks/after-flix-edit.py" "$engineStage/.claude/hooks/"
-Copy-Item "$EngineRepo/.claude/hooks/after-flix-work.py" "$engineStage/.claude/hooks/"
-Copy-Item "$EngineRepo/.claude/hooks/after-flix-touch.py" "$engineStage/.claude/hooks/"
-Copy-Item "$EngineRepo/.claude/hooks/session-diet.py" "$engineStage/.claude/hooks/"
-# ゲームの make api / status / スキルの参照先 (docs)。
-New-Item -ItemType Directory -Force -Path "$engineStage/docs/api-digest" | Out-Null
-foreach ($d in @("api-digest.md", "module-index.md", "engine-module-index.md",
-                 "doc-conventions.md", "glossary.md", "shader-doc.md", "checkd.md")) {
-    Copy-Item "$EngineRepo/docs/$d" "$engineStage/docs/"
-}
-Copy-Item "$EngineRepo/docs/api-digest/*.md" "$engineStage/docs/api-digest/"
-# ゲームの Makefile が include する共通部。漏れると include ごと落ち、make は
-# 「そんなファイルは無い」としか言わない — 産まれたゲームは run も status も打てない。
-New-Item -ItemType Directory -Force -Path "$engineStage/mk" | Out-Null
-Copy-Item "$EngineRepo/mk/*.mk" "$engineStage/mk/"
-# 版刻印の出どころ (VERSION :=)。無くても engine_full/flix.toml に倒れるが、正を入れておく
-Copy-Item "$EngineRepo/Makefile" "$engineStage/Makefile"
-Copy-Item "$EngineRepo/flix.toml" "$engineStage/flix.toml"
-New-Item -ItemType Directory -Force -Path "$engineStage/engine_full/artifact" | Out-Null
-Copy-Item "$EngineRepo/engine_full/flix.toml" "$engineStage/engine_full/flix.toml"
-Copy-Item "$EngineRepo/engine_full/artifact/engine_full.fpkg" "$engineStage/engine_full/artifact/engine_full.fpkg"
-Copy-Item -Recurse "$EngineRepo/agents-pack" "$engineStage/agents-pack"
-Copy-Item -Recurse "$EngineRepo/templates" "$engineStage/templates"
-# lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す。
-# 出どころに $EngineRepo/lib を使わないのは、engine リポの lib/ が生成物で空だから。
-# これが無いと、生まれたゲームの初回ビルドが Maven へ取りに行き、回線が細い所や
-# 会社の proxy の内側では黙って何分も止まる (見張り番の打ち切りに当たる)。
-New-Item -ItemType Directory -Force -Path "$engineStage/lib" | Out-Null
-Copy-Item -Recurse "$root/server/lib/cache" "$engineStage/lib/cache"
-Copy-Item -Recurse "$root/server/lib/external" "$engineStage/lib/external"
-# テンプレの生成物は同梱しない。lib は new-game が engine_full から置き直す。
-# build はコンパイル成果物で、放っておくとテンプレ 1 本で GB 級に育ち zip がその分ふくらむ。
-# .devbox は nix store を指す symlink で、そのマシンにしか無い先を指す。
-foreach ($name in @("lib", "build", ".devbox")) {
-    Get-ChildItem -Path "$engineStage/templates" -Directory -Recurse -Filter $name |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
-}
-
-# 同梱の必須一覧 (engine の BUNDLE_REQUIRED) と照合。mac の stage-engine と同じ物差しを
-# 当てる — 片方の cp リストだけ痩せると、産まれたゲームが走らないまま zip が出来てしまう。
-# --windows は bash 前提の物 (bin/flix・reference-*.sh) だけ免除する。
-# WhyNot: python が無いときに飛ばしてはいけない。この関所は「欠けたまま zip が出来る」のを
-# 止めるためだけに在るので、判定できないなら止まる方が正しい。Windows の名前は python
-# のことが多いが、どちらに転んでもいいよう両方を見る。
-Step "同梱物を照合 (check-refs)"
-$py = $null
-foreach ($name in @("python3", "python")) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    if ($cmd) { $py = $cmd.Source; break }
-}
-if (-not $py) { throw "python が見つかりません (同梱物の照合ができない)" }
-& $py "$EngineRepo/bin/check-refs.py" --bundle $engineStage --windows
-if ($LASTEXITCODE -ne 0) { throw "同梱物が足りません (check-refs)" }
+# engine 一式の組み立て。運ぶ物の一覧は engine の bin/lint-rules/stage-engine.json が
+# source of truth で、組み立ても最後の照合 (check-refs --bundle) も engine の bin/fge stage-engine が
+# 持つ。ここが渡すのは engine の外から来る元だけ:
+#   --flix-jar   … Flix コンパイラ本体
+#   --maven-seed … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す。
+#                  出どころに $EngineRepo/lib を使わないのは、engine リポの lib/ が
+#                  生成物で空だから。これが無いと、生まれたゲームの初回ビルドが Maven へ
+#                  取りに行き、回線が細い所や会社の proxy の内側では黙って何分も止まる。
+# --windows は bash 前提の物 (bin/flix・reference-*.sh) を外し、代わりに bin/fge-go.exe を
+# 入れる。呼ぶのは engine の bin/fge.cmd (中身は engine 自身の bin/fge-go.exe)。
+# WhyNot: ここに Copy-Item を並べないのは、mac の stage-engine と 2 つの一覧を抱える
+# ことになり、片方だけ痩せても誰も気づかないため (bin/lint-rules の入れ忘れで、
+# 生まれたゲームの検査が全部止まった実例がある)。
+Step "engine 一式をステージ (fge stage-engine)"
+& "$EngineRepo/bin/fge.cmd" stage-engine --out "$engineStage" --windows `
+    --flix-jar "$FlixJar" --maven-seed "$root/server/lib"
+if ($LASTEXITCODE -ne 0) { throw "engine のステージに失敗しました (stage-engine)" }
 
 # ── 3. cargo build ───────────────────────────────────────
 Step "cargo build --release"

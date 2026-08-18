@@ -84,7 +84,7 @@ mod NewGame {
             |> List.head
 
     /// engine の Makefile 本文から VERSION := の値を取り出す。無ければ None。
-    /// 規則は engine の bin/status.py (read_engine_version) と同じ —
+    /// 規則は engine の bin/fge status (ReadEngineVersion) と同じ —
     /// 行頭の VERSION、空白を挟んで :=、次の 1 語 (空白の手前まで)。
     pub def versionFromMakefile(text: String): Option[String] =
         String.lines(text)
@@ -102,7 +102,7 @@ mod NewGame {
 
     /// SKILL.md の frontmatter から description: の中身を取り出す。
     /// description: で始まる最初の行の残りを trim し、先頭・末尾の " を 1 個ずつ外す。
-    /// 無ければ "" (engine の bin/sync-agents.py の skill_description と同じ規則)。
+    /// 無ければ "" (engine の bin/fge sync-agents の skillDescription と同じ規則)。
     pub def skillDescriptionOf(text: String): String =
         String.lines(text)
             |> List.filterMap(line ->
@@ -114,7 +114,7 @@ mod NewGame {
             |> Option.getWithDefault("")
 
     /// description から「いつ使うか」の 1 文だけを取り出す
-    /// (engine の bin/sync-agents.py の trigger_sentence と同じ規則)。
+    /// (engine の bin/fge sync-agents の triggerSentence と同じ規則)。
     ///
     /// description は「何をする物か」の能書き + 「〜ときに使う」の引き金 + 補足、の 3 部構成が多い。
     /// AGENTS.md の一覧に要るのは引き金だけで、能書きは SKILL.md を開けば読める。
@@ -145,12 +145,12 @@ mod NewGame {
                 :: ""
                 :: List.map(entry -> "- `.claude/skills/${fst(entry)}/SKILL.md` — ${snd(entry)}", skills))
 
-    /// 末尾の改行をぜんぶ落とす (engine 側 Python の rstrip("\n") と同じ)。
+    /// 末尾の改行をぜんぶ落とす (engine 側の bin/fge sync-agents と同じ)。
     def dropTrailingNewlines(text: String): String =
         if (String.endsWith(suffix = "\n", text)) dropTrailingNewlines(String.dropRight(1, text))
         else text
 
-    /// AGENTS.md の本文を組み立てる。engine の bin/sync-agents.py とバイト一致させる:
+    /// AGENTS.md の本文を組み立てる。engine の bin/fge sync-agents とバイト一致させる:
     /// 刻印行 → 空行 → 共通部 → 空行 → スキル一覧の節 → (あれば 空行 + ゲーム固有部)。
     /// 終端は改行 1 個。
     pub def agentsText(engineVersion: String, core: String, skills: List[(String, String)], localPart: Option[String]): String =
@@ -353,14 +353,31 @@ mod NewGame {
     /// AGENTS の配布一式。失敗してもゲーム自体は使えるので、1 行残して続行する。
     def syncAgents(state: Runner.State, request: Request): Unit \ IO =
         try {
-            distribute(request#engine, request#gameDir, message -> Runner.logLine(state, message))
+            distribute(request#engine, request#gameDir, message -> Runner.logLine(state, message));
+            copyFgeGo(state, request#engine, request#gameDir)
         } catch {
             case _: Exception =>
                 Runner.logLine(state, "[new-game] AGENTS の配布に失敗しました (ゲーム自体は使えます)")
         }
 
+    /// 検査の中身 bin/fge-go を 1 つ写す。呼び口の bin/fge (sh) と bin/fge.cmd は manifest が
+    /// 配るが、中身は OS/CPU ごとに別物なので、どこでも同じ物を配る manifest には載らない。
+    /// 同梱 engine には走らせている OS に合う 1 つだけが入っている (engine の fge stage-engine)。
+    /// WhyNot: distribute の中でやらないのは、あれが engine の bin/fge sync-agents と
+    /// 結果一致していることを check-agents-parity が見ているため (あちらは配らない)。
+    /// 無いと bin/fge が exit 127 を返すだけなので、見つからなければ 1 行残して続ける。
+    def copyFgeGo(state: Runner.State, engine: String, gameDir: String): Unit \ IO =
+        let names = "fge-go" :: "fge-go.exe" :: Nil;
+        let found = names |> List.filter(name -> new JFile("${engine}/bin/${name}").isFile());
+        match found {
+            case Nil =>
+                Runner.logLine(state, "[new-game] engine に bin/fge-go がありません — このゲームでは bin/fge が使えません")
+            case _ =>
+                found |> List.forEach(name -> copyEntry("${engine}/bin/${name}", "${gameDir}/bin/${name}"))
+        }
+
     /// CLI 入口 (--sync-agents <engine> <game>)。HTTP を立てずに配布だけして終わる。
-    /// Makefile の check-agents-parity が engine の bin/sync-agents.py との一致検査に使う。
+    /// Makefile の check-agents-parity が engine の bin/fge sync-agents との一致検査に使う。
     /// 失敗は 1 行 + 非 0 終了 — 黙って 0 で帰ると、呼び手のシェルが壊れた配布を
     /// 「成功」と誤読する (server 内の配布と違い、ここにはログのコンテナが無い)。
     pub def distributeCli(engine: String, gameDir: String): Unit \ IO =
@@ -378,7 +395,7 @@ mod NewGame {
             }
         }
 
-    /// AGENTS の配布本体 (engine の bin/sync-agents.py と同じ結果になる形):
+    /// AGENTS の配布本体 (engine の bin/fge sync-agents と同じ結果になる形):
     /// AGENTS.md + CLAUDE.md の生成と、agents-pack/manifest.json の
     /// copy / copyIfAbsent / copyDirs の実行。manifest が無い・読めない古い同梱 engine では
     /// 旧来のハードコード一覧へ倒す (fail-open — 悪化はさせない)。
@@ -430,7 +447,7 @@ mod NewGame {
 
     /// manifest の配布計画を実行する。順序は engine 側と同じ copyDirs → copy → copyIfAbsent。
     def runPlan(engine: String, gameDir: String, entries: ManifestPlan): Unit \ IO =
-        List.forEach(entry -> copyDirEntry("${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyDirsList);
+        List.forEach(entry -> mirrorDirEntry(gameDir, "${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyDirsList);
         List.forEach(entry -> copyEntry("${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyList);
         List.forEach(entry -> {
             let dst = "${gameDir}/${snd(entry)}";
@@ -447,15 +464,62 @@ mod NewGame {
             copyFile(src, dst)
         }
 
-    /// フォルダを再帰で重ね書きする (消し込みはしない)。src が無ければ黙って飛ばす。
-    def copyDirEntry(src: String, dst: String): Unit \ IO =
+    /// copyDirs の 1 件をミラーにする (engine の bin/fge sync-agents と同じ動き):
+    /// 配り元に無い物を配り先から消してから、再帰で重ね書きする。engine が丸ごと持つ
+    /// フォルダなので消してよい — 消した skill が配った先に残り続けると、エージェントが
+    /// 古い足場を読む。src が無ければ黙って飛ばす。
+    def mirrorDirEntry(gameDir: String, src: String, dst: String): Unit \ IO =
         if (not new JFile(src).isDirectory()) ()
-        else copyTree(skipTopLevel = Set#{}, src, dst)
+        else {
+            discard new JFile(dst).mkdirs();
+            if (canPrune(gameDir, src, dst)) pruneDir(src, dst) else ();
+            copyTree(skipTopLevel = Set#{}, src, dst)
+        }
+
+    /// 消し込んでよいか。配り元が空 / 無いときに消しへ行くと、engine 側の取り違え 1 つで
+    /// ゲームのフォルダを空にできてしまうので、そのときは何もしない。配り先がゲームの
+    /// フォルダの中に無いとき (manifest の dst が絶対パス等)・symlink のときも触らない。
+    def canPrune(gameDir: String, src: String, dst: String): Bool \ IO =
+        let entries = new JFile(src).listFiles();
+        if (Object.isNull(entries) or Array.length(entries) == 0) false
+        else if (isSymlink(dst)) false
+        else if (not new JFile(dst).isDirectory()) false
+        else String.startsWith(prefix = "${gameDir}/", dst)
+
+    /// 配り元に無い物を配り先から消す。symlink は辿らずに 1 つの物として見る
+    /// (辿ると配り先の外の木を消しに行く)。
+    def pruneDir(src: String, dst: String): Unit \ IO =
+        let entries = new JFile(dst).listFiles();
+        if (Object.isNull(entries)) ()
+        else Array.toList(entries) |> List.forEach(entry -> {
+            let source = new JFile("${src}/${entry.getName()}");
+            if (isSymlink(entry.getPath())) {
+                if (source.exists()) () else { discard entry.delete() }
+            } else if (entry.isDirectory()) {
+                if (source.isDirectory()) pruneDir(source.getPath(), entry.getPath())
+                else deleteTree(entry)
+            } else {
+                if (source.isFile()) () else { discard entry.delete() }
+            }
+        })
+
+    /// フォルダを中身ごと消す。symlink は辿らない。
+    def deleteTree(dir: JFile): Unit \ IO =
+        let entries = dir.listFiles();
+        if (Object.isNull(entries)) ()
+        else Array.toList(entries) |> List.forEach(entry ->
+            if (isSymlink(entry.getPath())) { discard entry.delete() }
+            else if (entry.isDirectory()) deleteTree(entry)
+            else { discard entry.delete() });
+        discard dir.delete()
+
+    def isSymlink(path: String): Bool \ IO =
+        Files.isSymbolicLink(new JFile(path).toPath())
 
     /// manifest を持たない古い同梱 engine への配布 (従来のハードコード一覧)。
     def distributeLegacy(engine: String, gameDir: String): Unit \ IO =
-        copyDirEntry("${engine}/agents-pack/skills", "${gameDir}/.claude/skills");
-        copyDirEntry("${engine}/agents-pack/rules", "${gameDir}/.claude/rules");
+        mirrorDirEntry(gameDir, "${engine}/agents-pack/skills", "${gameDir}/.claude/skills");
+        mirrorDirEntry(gameDir, "${engine}/agents-pack/rules", "${gameDir}/.claude/rules");
         discard new JFile("${gameDir}/bin").mkdirs();
         foreach (lint <- "lint-view.py" :: "lint-palette.py" :: "lint-sprite.py" :: "lint-anim.py" :: Nil)
             copyEntry("${engine}/bin/${lint}", "${gameDir}/bin/${lint}")

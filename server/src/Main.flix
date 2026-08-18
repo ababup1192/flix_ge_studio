@@ -4,7 +4,7 @@
 //   EDITOR_WEB  … ビルド済みエディタ画面のディレクトリ (省略時は隣の flix_ge_editor/dist。無ければ配信無効)
 //
 // 引数 --sync-agents <engine> <game> のときだけ HTTP を立てず AGENTS の配布だけして終わる
-// (engine の bin/sync-agents.py との一致検査 make check-agents-parity の入口)。
+// (engine の bin/fge sync-agents との一致検査 make check-agents-parity の入口)。
 
 def main(): Unit \ {IO, Sys.Env.Env} =
     match Sys.Env.getArgs() {

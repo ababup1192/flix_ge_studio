@@ -62,7 +62,9 @@ all: app
 # server/flix.toml の version と一緒に、取れた新しい fpkg も git に入れ直す。
 jar:
 	@echo "==> [jar] editor_server を fatjar にビルド"
-	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) build-fatjar
+	# WhyNot: 行頭に @ を付けて make に読み上げさせないのは、この行に
+	# GITHUB_TOKEN の中身が乗るため。読み上げると端末と CI のログに素で残る。
+	@cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) build-fatjar
 	@test -f $(JAR) && echo "==> [jar] OK: $(JAR)" || (echo "!! jar が出力されませんでした" && exit 1)
 
 # --- swap-jar: 動いている .app に server 変更を反映（server だけ変えたとき）---
@@ -184,20 +186,23 @@ app: jar web jre
 	# ステージだけでなく .app の中身も照合する。stage-engine の関所と Tauri のリソース
 	# 収集の間には変換が挟まっており (symlink は落とされる)、通した物がそのまま
 	# 入っている保証が無い。配る前の最後の 1 回。
-	python3 $(ENGINE)/bin/check-refs.py --bundle "$(APP_BUNDLE)/Contents/Resources/engine"
+	$(ENGINE)/bin/fge check-refs --bundle "$(APP_BUNDLE)/Contents/Resources/engine"
 	@echo "==> [app] 完了。生成 .app: $(APP_BUNDLE)"
 
 # --- stage-engine: .app に入れる engine 一式を揃える ---
 # ゲームの Makefile が $(ENGINE)/bin/flix を呼ぶ形はそのままに、その ENGINE の実体を
-# .app の中へ移す。ここに要るのは「走らせる手」だけ:
-#   bin/flix      … 同梱 JRE と隣の flix.jar だけを見るラッパ (app/engine/flix)
-#   bin/flix.jar  … Flix コンパイラ本体
-#   Makefile      … 新しいゲームを作る (new-game) のに使う
-#   flix.toml     … その new-game が engine の版を読むのに要る
-#   templates/    … その複製元。ジャンルカードのサムネ (reference/title.png) もここから読む
-#   engine_full/  … 生まれたゲームの lib/ に置かれる engine の fpkg と toml
-#   agents-pack/  … 生まれたゲームに配る AGENTS.md と skills の元
-#   lib/          … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す
+# .app の中へ移す。何を運ぶかの一覧は engine の bin/lint-rules/stage-engine.json が
+# source of truth で、組み立ても最後の照合も engine の bin/fge stage-engine が持つ。ここが渡すのは
+# 「engine の外から来る 3 つの元」だけ:
+#   --flix-jar     … Flix コンパイラ本体 (nix store から借りる)
+#   --flix-wrapper … 同梱 JRE と隣の flix.jar だけを見るラッパ (app/engine/flix)
+#   --maven-seed   … lwjgl (Maven) の取り寄せ済みの種。new-game がゲームの lib/ へ写す。
+#                    出どころに $(ENGINE)/lib を使わないのは、engine リポの lib/ が
+#                    生成物 (gitignore) で空のことがあるから。server 自身のビルドで
+#                    必ず落ちる同じ lwjgl を使い回す。
+# WhyNot: ここに cp を並べないのは、同じ一覧を mac・Windows (ci/package-windows.ps1)・
+# engine の bundle-zip で 3 つ抱えることになり、片方だけ痩せても誰も気づかないため
+# (bin/lint-rules の入れ忘れで、生まれたゲームの検査が全部止まった実例がある)。
 # .app に焼き固める engine_full.fpkg がソースより古くないか見る。
 # WhyNot: これは engine 側の生成物なので「在れば良い」で通してしまいがちだが、.app は
 # 配る物で、ここで固めた fpkg が新しいゲームの lib/ にそのまま座る。版名は bump で進む
@@ -227,74 +232,10 @@ stage-engine:
 	@test -n "$(FLIX_JAR)" -a -f "$(FLIX_JAR)" \
 	  || (echo "!! flix.jar が見つかりません (FLIX_JAR= で場所を指定してください)" && exit 1)
 	@$(MAKE) --no-print-directory check-engine-full
-	rm -rf $(ENGINE_STAGE)
-	mkdir -p $(ENGINE_STAGE)/bin $(ENGINE_STAGE)/engine_full/artifact
-	cp $(FLIX_JAR) $(ENGINE_STAGE)/bin/flix.jar
-	cp $(ROOT)/app/engine/flix $(ENGINE_STAGE)/bin/flix
-	chmod +x $(ENGINE_STAGE)/bin/flix
-	# 生まれたゲームへ配る道具 (new-game の sync-agents が bin/ と .claude/hooks/ から写す物。
-	# 一覧は engine の Makefile sync-agents の cp と対 — あちらだけ増えると同梱 new-game が転ぶ)
-	cp $(ENGINE)/bin/lint-*.py $(ENGINE)/bin/img-digest.py $(ENGINE)/bin/status.py $(ENGINE)/bin/checkd $(ENGINE_STAGE)/bin/
-	cp $(ENGINE)/bin/gen-api-digest.py $(ENGINE)/bin/reference-update.sh \
-	   $(ENGINE)/bin/reference-check.sh $(ENGINE)/bin/explain-error $(ENGINE_STAGE)/bin/
-	# 絵の値段の判定 (reference-check.sh と status.py が $(ENGINE)/bin/ から呼ぶ)。
-	# 呼ぶ側はどちらも「無ければ飛ばす」で fail-open するので、落とすと判定が黙って消える。
-	cp $(ENGINE)/bin/check-render-budget.py $(ENGINE_STAGE)/bin/
-	# 3 面図から歩きを彫り出す道具。carve-sprite スキルは全ゲームへ配られ、その手順が
-	# $(ENGINE)/bin/carve/carve.py を直に叩く。スキルだけ届いて道具が届かないと、
-	# 実行して初めて「ファイルが無い」で気づく。
-	mkdir -p $(ENGINE_STAGE)/bin/carve
-	cp $(ENGINE)/bin/carve/*.py $(ENGINE_STAGE)/bin/carve/
-	cp $(ENGINE)/bin/precommit.py $(ENGINE)/bin/sync-agents.py $(ENGINE_STAGE)/bin/
-	mkdir -p $(ENGINE_STAGE)/bin/githooks
-	cp $(ENGINE)/bin/githooks/pre-commit $(ENGINE_STAGE)/bin/githooks/
-	# ゲームの make api / status / スキルの参照先 (docs)。同梱漏れは末尾の check-refs が止める
-	mkdir -p $(ENGINE_STAGE)/docs/api-digest
-	cp $(ENGINE)/docs/api-digest.md $(ENGINE)/docs/module-index.md \
-	   $(ENGINE)/docs/engine-module-index.md $(ENGINE)/docs/doc-conventions.md \
-	   $(ENGINE)/docs/glossary.md $(ENGINE)/docs/shader-doc.md $(ENGINE)/docs/checkd.md \
-	   $(ENGINE_STAGE)/docs/
-	cp $(ENGINE)/docs/api-digest/*.md $(ENGINE_STAGE)/docs/api-digest/
-	mkdir -p $(ENGINE_STAGE)/.claude/hooks
-	cp $(ENGINE)/.claude/hooks/after-flix-edit.py $(ENGINE)/.claude/hooks/after-flix-work.py \
-	   $(ENGINE)/.claude/hooks/after-flix-touch.py $(ENGINE)/.claude/hooks/session-diet.py \
-	   $(ENGINE_STAGE)/.claude/hooks/
-	# ゲームの Makefile が include する共通部。漏れると include ごと落ち、make は
-	# 「そんなファイルは無い」としか言わない — 産まれたゲームは run も status も打てない。
-	mkdir -p $(ENGINE_STAGE)/mk
-	cp $(ENGINE)/mk/*.mk $(ENGINE_STAGE)/mk/
-	cp $(ENGINE)/Makefile $(ENGINE_STAGE)/Makefile
-	cp $(ENGINE)/flix.toml $(ENGINE_STAGE)/flix.toml
-	cp $(ENGINE)/engine_full/flix.toml $(ENGINE_STAGE)/engine_full/flix.toml
-	cp -R $(ENGINE)/agents-pack $(ENGINE_STAGE)/agents-pack
-	cp -R $(ENGINE)/templates $(ENGINE_STAGE)/templates
-	# テンプレが抱えている lib/ は複製時に new-game が捨てて engine_full から置き直すので
-	# 運ばない。中身が fpkg だけで対の toml が無く、Tauri のリソース収集が転ぶのもある。
-	# build/ も運ばない。コンパイル成果物なので複製先で作り直せるが、放っておくと
-	# テンプレ 1 本で GB 級になり .app がその分ふくらむ。
-	# .devbox/ も運ばない。中身が nix store を指す symlink で、そのマシンにしか無い先を
-	# 指す。運ぶと codesign --verify が "invalid destination for symbolic link" で転ぶ
-	# (Tauri のリソース収集は symlink を落とすので make app では出ず、swap-engine の
-	# cp -R だけで出る — 気づきにくい)。
-	find $(ENGINE_STAGE)/templates -type d \( -name lib -o -name build -o -name .devbox \) -exec rm -rf {} +
-	cp $(ENGINE)/engine_full/artifact/engine_full.fpkg $(ENGINE_STAGE)/engine_full/artifact/
-	# 種の出どころに $(ENGINE)/lib を使わないのは、engine リポの lib/ が生成物 (gitignore) で
-	# 空のことがあるから。server 自身のビルドで必ず落ちる同じ lwjgl を使い回す。
-	# これが無いと、生まれたゲームの初回ビルドが Maven へ取りに行き、回線が細い所や
-	# 会社の proxy の内側では黙って何分も止まる (見張り番の打ち切りに当たる)。
-	@if [ -d "$(ROOT)/server/lib/cache" -a -d "$(ROOT)/server/lib/external" ]; then \
-	  mkdir -p $(ENGINE_STAGE)/lib; \
-	  cp -R $(ROOT)/server/lib/cache $(ENGINE_STAGE)/lib/cache; \
-	  cp -R $(ROOT)/server/lib/external $(ENGINE_STAGE)/lib/external; \
-	  echo "==> [engine] Maven の種を同梱 ($$(du -sh $(ENGINE_STAGE)/lib | cut -f1))"; \
-	else \
-	  echo "!! [engine] server/lib が無いので Maven の種を同梱できません (make jar の後にどうぞ)"; \
-	fi
-	# nix store から写した flix.jar は読み取り専用で来る。後段の Tauri のリソース収集が
-	# Permission denied で死ぬので、書けるようにしてから渡す (jre と同じ手当て)。
-	chmod -R u+w $(ENGINE_STAGE)
-	# 同梱の必須一覧 (BUNDLE_REQUIRED) と照合。どちらかの cp リストが痩せたらここで止まる
-	python3 $(ENGINE)/bin/check-refs.py --bundle $(ENGINE_STAGE)
+	$(ENGINE)/bin/fge stage-engine --out "$(ENGINE_STAGE)" \
+	  --flix-jar "$(FLIX_JAR)" \
+	  --flix-wrapper "$(ROOT)/app/engine/flix" \
+	  --maven-seed "$(ROOT)/server/lib"
 	@echo "==> [engine] OK: $(ENGINE_STAGE) ($$(du -sh $(ENGINE_STAGE) | cut -f1))"
 
 # --- test: server のテスト + 配布の一致検査 ---
@@ -302,12 +243,13 @@ stage-engine:
 .PHONY: test
 test:
 	@echo "==> [test] server (flix test)"
-	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) test
+	# 読み上げない理由は jar と同じ (この行に GITHUB_TOKEN の中身が乗る)。
+	@cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" $(FLIX) test
 	$(MAKE) --no-print-directory check-agents-parity
 
 # --- check-agents-parity: AGENTS 配布の二重実装がずれていないかの機械検査 ---
 # 配布物一覧は engine の agents-pack/manifest.json に一本化してあるが、AGENTS.md の
-# 組み立てだけは engine (bin/sync-agents.py) と server (NewGame.flix) の二重実装が残る。
+# 組み立てだけは engine (bin/fge sync-agents) と server (NewGame.flix) の二重実装が残る。
 # 同じ engine から一時フォルダ A (make 版) / B (jar 版) へ配って diff -r で突き合わせる。
 # AGENTS.local.md の有/無の 2 ケース (ゲーム固有部のつなぎ方が本文の形を変えるため)。
 PARITY_JAVA := $(shell [ -x "$(JAVA_BIN)" ] && echo "$(JAVA_BIN)" || echo java)
@@ -322,7 +264,7 @@ check-agents-parity: jar
 	    printf '## この画面の画風\n\nparity 検査用のゲーム固有部。\n' > "$$a/AGENTS.local.md"; \
 	    cp "$$a/AGENTS.local.md" "$$b/AGENTS.local.md"; \
 	  fi; \
-	  python3 "$(ENGINE)/bin/sync-agents.py" --game "$$a" --version "$$ver" >/dev/null; \
+	  "$(ENGINE)/bin/fge" sync-agents --game "$$a" --version "$$ver" >/dev/null; \
 	  "$(PARITY_JAVA)" -jar "$(JAR)" --sync-agents "$(ENGINE)" "$$b" >/dev/null; \
 	  if diff -r "$$a" "$$b" >/dev/null 2>&1; then \
 	    echo "==> [parity] $$c: 一致"; \
@@ -339,7 +281,8 @@ check-agents-parity: jar
 PORT ?= 8787
 dev: web
 	@echo "==> [dev] editor_server を :$(PORT) で起動 (web=$(WEB_DIST))"
-	cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" \
+	# 読み上げない理由は jar と同じ (この行に GITHUB_TOKEN の中身が乗る)。
+	@cd server && GITHUB_TOKEN="$(GITHUB_TOKEN)" \
 	  EDITOR_PORT=$(PORT) EDITOR_WEB="$(WEB_DIST)" $(FLIX) run
 
 clean:

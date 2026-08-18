@@ -61,7 +61,7 @@ mod TestNewGame {
             (NewGame.versionFromToml("[package]\nname = \"x\"\nversion     = \"0.15.0\"\n"),
              NewGame.versionFromToml("[package]\nname = \"x\"\n")))
 
-    /// engine の Makefile から VERSION := を読む。規則は engine の bin/status.py と同じ:
+    /// engine の Makefile から VERSION := を読む。規則は engine の bin/fge status と同じ:
     /// 行頭 VERSION → 空白 → := → 次の 1 語。行頭に # や空白が挟まる行は読まない。
     @Test
     def testVersionFromMakefile(): Unit \ Assert =
@@ -83,7 +83,7 @@ mod TestNewGame {
              NewGame.skillDescriptionOf("---\nname: v\n---\n")))
 
     /// description から一覧に載せる 1 文を選ぶ。「〜使う」で終わる文があればそれ、
-    /// 無ければ先頭の 1 文（engine の bin/sync-agents.py の trigger_sentence と同じ規則）。
+    /// 無ければ先頭の 1 文（engine の bin/fge sync-agents の triggerSentence と同じ規則）。
     @Test
     def testTriggerSentence(): Unit \ Assert =
         Assert.assertEq(
@@ -102,7 +102,7 @@ mod TestNewGame {
 
     /// AGENTS.md の組み立て: 刻印 + 空行 + 共通部 + 空行 + スキル一覧の節、
     /// ゲーム固有部があれば空行で続く。終端は改行 1 個
-    /// (engine の bin/sync-agents.py の build_agents_md とバイト一致する形)。
+    /// (engine の bin/fge sync-agents の buildAgentsMD とバイト一致する形)。
     @Test
     def testAgentsText(): Unit \ Assert =
         Assert.assertEq(
