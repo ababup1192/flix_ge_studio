@@ -175,3 +175,17 @@ jobs:
             zip を展開して `Flix GE Studio.exe` を実行するだけ (インストール不要)。
             画面が出ないときは WebView2 ランタイムを導入 (同梱の README-windows.txt 参照)。
             ログ: `%LOCALAPPDATA%\FlixGEStudio\logs\`
+
+  # 紹介ページ (GitHub Pages) の「最新版 vX.Y.Z」を新しいリリースに合わせて出し直す。
+  # ダウンロードのリンク自体は releases/latest の固定 URL なので、ここが走らなくても
+  # 古い版へ落ちることはない (版の表示が 1 つ前のままになるだけ)。
+  # release イベントで pages.yml を直に起こせないのは、GITHUB_TOKEN が作った
+  # イベントは別のワークフローを起動しない決まりがあるため。呼び出しなら通る。
+  pages:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/pages.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

@@ -1,4 +1,6 @@
-# site/ を GitHub Pages へ出す。site/ を触った push だけで走る。
+# site/ を GitHub Pages へ出す。site/ を触った push と、リリース公開後 (release.yml が
+# この workflow を呼ぶ) に走る。ページの版表示 (<b id="ver">) はデプロイのたびに
+# 最新リリースのタグへ差し替えるので、版を上げても HTML を手で直さなくてよい。
 name: pages
 
 on:
@@ -8,6 +10,8 @@ on:
       - 'site/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
+  # release.yml がタグのリリースを出し終えた後に呼ぶ
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,6 +31,17 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # 最新リリースのタグを埋める。ダウンロードの導線自体は releases/latest という
+      # 固定 URL なので、ここが失敗しても「最新版」と出るだけでリンクは生きている。
+      - name: Stamp latest release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          echo "latest release: ${TAG:-(取れなかった。HTML の控えのまま出す)}"
+          [ -n "$TAG" ] || exit 0
+          TAG="$TAG" perl -pi -e 's{(<b id="ver">)[^<]*}{$1$ENV{TAG}}' site/index.html
+          grep -o '<b id="ver">[^<]*' site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

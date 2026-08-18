@@ -115,6 +115,10 @@ input[type=range]:focus-visible{outline:2px solid var(--ink);outline-offset:4px}
 @media(max-width:520px){.qrbox{flex-direction:column;align-items:center;text-align:center}}
 a.link{color:var(--red);text-decoration:none;border-bottom:1.5px solid var(--red);font-weight:500}
 a.link:hover{background:rgba(220,64,47,.1)}
+.dl{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 10px}
+a.dl-btn{font-family:"Zen Kaku Gothic New",sans-serif;font-weight:700;font-size:14px;letter-spacing:.06em;text-decoration:none;background:var(--ink);color:var(--sheet-2);border:1.5px solid var(--ink);padding:11px 18px}
+a.dl-btn:hover{background:var(--red);border-color:var(--red)}
+.dl-note{font-family:"Zen Kurenaido",sans-serif;font-size:13px;color:var(--ink-soft);margin:0 0 8px}
 footer{padding:34px 0 60px;font-size:13px;color:var(--ink-soft);font-family:"Zen Kurenaido",sans-serif}
 
 @media(max-width:860px){
@@ -319,9 +323,16 @@ footer{padding:34px 0 60px;font-size:13px;color:var(--ink-soft);font-family:"Zen
   <h2>Windows でも Mac でも。</h2>
   <div class="two">
     <div class="callout">
-      <h3>やること</h3>
-      <p>アプリを開く。マスを塗る。ことばで書く。決める。保存する。以上です。</p>
-      <p>Windows / macOS どちらでも動きます。</p>
+      <h3>ダウンロード</h3>
+      <!-- releases/latest は「いつでも最新のリリース」を指す固定 URL。版を上げても
+           ここは書き換えなくてよい。版の表示 (id="ver" の中身) だけ pages ワークフローが
+           デプロイのたびに最新のタグへ差し替える。ここに書いてある値はその控え。 -->
+      <div class="dl">
+        <a class="dl-btn" href="https://github.com/ababup1192/flix_ge_studio/releases/latest/download/FlixGEStudio-windows-x64.zip">Windows 版</a>
+        <a class="dl-btn" href="https://github.com/ababup1192/flix_ge_studio/releases/latest/download/FlixGEStudio-macos-arm64.zip">macOS 版 (Apple Silicon)</a>
+      </div>
+      <p class="dl-note">最新版 <b id="ver">v0.18.0</b>　<a class="link" href="https://github.com/ababup1192/flix_ge_studio/releases/latest">リリースページ</a></p>
+      <p>zip を展開して開く。マスを塗る。ことばで書く。決める。保存する。以上です。</p>
     </div>
     <div class="callout qrbox">
       <div>
@@ -330,8 +341,8 @@ footer{padding:34px 0 60px;font-size:13px;color:var(--ink-soft);font-family:"Zen
         <p><a class="link" href="https://github.com/ababup1192/flix_ge_studio">flix_ge_studio</a>　<a class="link" href="https://github.com/ababup1192/flix_game_engine">flix_game_engine</a></p>
       </div>
       <figure class="qr">
-        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwAQMAAAAEm3vRAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAABqUlEQVRYhe2YTa6DMAyEnVWOkZsSuCnHyIo8zzj8tOrbTyQs1Kb5WNTy2Bkwe+MNlcjd48j74peV3veKy2OXx/gKsGBhiYvYF8eeyZL7YWVrVhv28HMinPvmhZgP74kCSg1VmQUbNVQbJdUKWsK+tSaJHw18Xv/0txg+I3YPb+BmP0IQZ0ifjHpCSfr6EJMutuJDZ2ViMTFjaNauj6H4Me6RTLnynAD7oIeMABJ3vZmfkpLFntUR476VlUn63avJ44eGvA38lLWzMOqYq9qoIRQjcsN6AhxZhafxuWPjVnXMEemBQTk8JYR1n2PCeAsThiOqxK1x6Kpjjvsj5iZLcpyGWB6jDBun5AIfvLMx0AzqOAzZ6FgoaeXddxvo4rC8mO/D3NANb9djqiweTctByR5OPKXqBLjwcPXf+KSzGfJSx14GPibRx6ASS0zMvKvjx/9H37I8n0wVjwYeniD16x2HPkYOCzDtY8zN3G+/JoyRyTilrqfrr3cewhggGtj9DUD9SEwZdxrKx5vTGbDZmQ81xAqNfW08pJPog336wOL0r/6WxG+8oRB/FsB4oDUN6VYAAAAASUVORK5CYII=" alt="配布ページへのQRコード" width="120" height="120">
-        <figcaption>スマホで読む</figcaption>
+        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAN4AAADeAQAAAAB6HIMaAAABi0lEQVR42u1YQWoEMQwzzQPypPm6n7QPCLiW5EAv7aWU6rBhGLKTi1Yosuyo79eJ9+HvDl/Ra+H99Id+n1341JuP+GH9x2GjBUig3bV6R9jcmKIVvN6fi7PBL2e0QNgaSG3c0ULEuSoP9eCMFrqtFMMHN85Zt/KE5+vj6wlaEC0MQayOvXnqdmc/o4dNSbSATf0WfMINqgEnfKyrAzFbKiFlC4c8yxbkvabcvoKifagKOJiE4albemyqhDEq4C+YOpiKAm8WRduw8W6SPR1MUGlcecYlbB2MWREZLEexVPLy1S1wjicAJ7KNKbfCCVZLIUHh3NbBbgJPSUJQXW8ZiyySbdzSgGDjm8F2kU8pdrThmm/lsdMvyHJlaK6JEXVBLSTFgNJgm2putgn6bdUwbJtvwSRzV0y3jkhm3TssxQN1arprxn1ZTEUDq7617M5qVBGKm3KfJ+Tk8FmP7RyMxYs/9gzE5MDOk6XSoIajD+dOh725EuN0Oow31rOa2/CmOsrlmm/fI/e/OfwEeeWEBuX0o3cAAAAASUVORK5CYII=" alt="最新リリースのダウンロードページへのQRコード" width="120" height="120">
+        <figcaption>スマホで読む（最新版）</figcaption>
       </figure>
     </div>
   </div>
