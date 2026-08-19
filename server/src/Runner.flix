@@ -13,6 +13,7 @@ mod Runner {
     import java.util.concurrent.Executors
     import java.util.concurrent.Callable
     import java.lang.Exception
+    import java.lang.Throwable
     import java.util.ArrayList
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.util.concurrent.TimeUnit
@@ -181,7 +182,10 @@ mod Runner {
                 try {
                     work()
                 } catch {
-                    case e: Exception => {
+                    // WhyNot: Exception でなく Throwable で受ける — Flix の bug! は Error で
+                    // 飛ぶので、Exception だけだと走行権を握ったまま黙り込み、以後ずっと
+                    // 409 (走っている最中です) から戻れなくなる。
+                    case e: Throwable => {
                         appendLine(state, "[runner] ${e.toString()}");
                         finish(state, -1)
                     }

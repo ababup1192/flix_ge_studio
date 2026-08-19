@@ -25,6 +25,7 @@ import Draft
 import Edit exposing (Op(..), Seg(..), encodeSeg, pathKey)
 import EditHistory
 import Effect exposing (Effect)
+import EngineUpdate
 import EntryOps
 import EntryTable
 import GalleryView
@@ -514,6 +515,9 @@ type alias Model =
 
     -- いま使っている engine のバージョン。届くまでと、読めないサーバでは Nothing
     , engineVersion : Maybe String
+
+    -- engine の差し替えの帯(新しいバージョンの案内・押した後の進み具合)
+    , engineUpdate : EngineUpdate.State
     , reqCounter : Int
     , notice : Maybe String
 
@@ -938,6 +942,7 @@ init _ =
         , miniZoom = Nothing
         , serverBase = ""
         , engineVersion = Nothing
+        , engineUpdate = EngineUpdate.init
         , reqCounter = 0
         , notice = Nothing
         , noticeSeq = 0
@@ -1265,6 +1270,8 @@ type Msg
     | BackToEditingClicked
     | NewGameMsg NewGame.Msg
     | ProjectNewPollTick
+    | EngineUpdateClicked String
+    | EngineUpdatePollTick
       -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
     | ForeignPreviewFailed
 
@@ -1668,6 +1675,15 @@ update msg model =
         ProjectNewPollTick ->
             -- ひな形づくりを待つ間だけ購読が生きている(NewGame.isPolling が判定)
             ( model, requestInfo "projectNewLog" )
+
+        EngineUpdateClicked version ->
+            -- 押すのは人。二度押しは Working になった時点でボタンが消える
+            request "engineUpdateStart"
+                (E.object [ ( "version", E.string version ) ])
+                { model | engineUpdate = EngineUpdate.started model.engineUpdate }
+
+        EngineUpdatePollTick ->
+            ( model, requestInfo "engineUpdateLog" )
 
         ForeignPreviewFailed ->
             -- プレビュー未焼成(404)。文言に切り替えるだけ(致命ではない)
@@ -6062,6 +6078,52 @@ handleOkByKind env model =
                     D.decodeValue Api.engineVersionDecoder env.body
                         |> Result.withDefault Nothing
               }
+              -- 新しいバージョンが出ているかは、今のバージョンが分かってから
+              -- 1 回だけ見に行く(サーバが GitHub を叩くので繰り返さない)
+            , requestInfo "engineUpdateCheck"
+            )
+
+        "engineUpdateCheck" ->
+            case D.decodeValue EngineUpdate.checkDecoder env.body of
+                Ok check ->
+                    ( { model | engineUpdate = EngineUpdate.gotCheck check model.engineUpdate }, Effect.none )
+
+                Err _ ->
+                    ( { model | engineUpdate = EngineUpdate.unavailable model.engineUpdate }, Effect.none )
+
+        "engineUpdateStart" ->
+            -- 202(受理)。すぐ最初のログを取りに行く(以後は 1 秒のポーリング)
+            ( model, requestInfo "engineUpdateLog" )
+
+        "engineUpdateLog" ->
+            case D.decodeValue EngineUpdate.logDecoder env.body of
+                Ok log ->
+                    let
+                        ( engineUpdate, swapped ) =
+                            EngineUpdate.gotLog log model.engineUpdate
+
+                        m1 =
+                            { model | engineUpdate = engineUpdate }
+                    in
+                    if swapped then
+                        -- 切り替わったので今のバージョンを引き直す。
+                        -- WhyNot: 帯の版を信じて書き込まない — 指し先を進めるのは
+                        -- サーバの仕事で、進んだかどうかはサーバに聞くのが確か
+                        ( m1, requestInfo "engineVersionOnly" )
+
+                    else
+                        ( m1, Effect.none )
+
+                Err _ ->
+                    ( { model | engineUpdate = EngineUpdate.unavailable model.engineUpdate }, Effect.none )
+
+        "engineVersionOnly" ->
+            -- 差し替えの後の引き直し。帯を出し直さないために check は撃たない
+            ( { model
+                | engineVersion =
+                    D.decodeValue Api.engineVersionDecoder env.body
+                        |> Result.withDefault Nothing
+              }
             , Effect.none
             )
 
@@ -7673,6 +7735,16 @@ handleErrByKind env message model =
             -- ログ口が無い・落ちた。回し続けても仕方ないので止める(準備中に倒す)
             ( { model | newGame = NewGame.unavailable model.newGame }, Effect.none )
 
+        "engineUpdateCheck" ->
+            -- 見に行けない(古いサーバ・網の向こうの都合)。帯を出さないだけ
+            ( { model | engineUpdate = EngineUpdate.unavailable model.engineUpdate }, Effect.none )
+
+        "engineUpdateLog" ->
+            ( { model | engineUpdate = EngineUpdate.unavailable model.engineUpdate }, Effect.none )
+
+        "engineUpdateStart" ->
+            ( { model | engineUpdate = EngineUpdate.startFailed message model.engineUpdate }, Effect.none )
+
         "getFile" ->
             if Just env.id == model.schemaReq then
                 -- スキーマが無いのは普通のこと(生テキスト編集は常に生きている)
@@ -7831,6 +7903,9 @@ handleErrByKind env message model =
 
         "engineVersion" ->
             -- この口を持たないサーバ(404 等)。バージョンを出さないだけ(fail-open)
+            ( model, Effect.none )
+
+        "engineVersionOnly" ->
             ( model, Effect.none )
 
         "journeyState" ->
@@ -8269,6 +8344,7 @@ viewTopbarRow model extras =
          , viewPlayButton model
          , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
             [ viewEngineVersion model
+            , EngineUpdate.view { onUpdate = EngineUpdateClicked } model.engineUpdate
             , viewSearchButton
             , viewFailureBadge model
             , viewReferenceBadge model
@@ -14788,6 +14864,14 @@ subscriptions model =
         -- ゲーム起動と同じ拍)。止まったら購読ごと消える
         , if model.screen == Picker && NewGame.isPolling model.newGame then
             Time.every 2000 (\_ -> ProjectNewPollTick)
+
+          else
+            Sub.none
+
+        -- engine の差し替えを待つ間だけ進み具合を追う(1 秒間隔)。
+        -- 画面を問わないのは、差し替えの最中に画面を移っても止まらないため
+        , if EngineUpdate.isPolling model.engineUpdate then
+            Time.every 1000 (\_ -> EngineUpdatePollTick)
 
           else
             Sub.none

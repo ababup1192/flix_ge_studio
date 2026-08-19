@@ -47,7 +47,7 @@ mod TestEngineStore {
              EngineStore.isVersionName("a/b"),
              EngineStore.isVersionName("C:")))
 
-    /// 置き場の外へは出ないが、フォルダとして作れない・壊れる名前も落とす。
+    /// 数字で始まらない名前は落とす (空白入り・隠しフォルダ・長すぎる名前も)。
     @Test
     def testIsVersionNameRejectsUnusableNames(): Unit \ Assert =
         Assert.assertEq(

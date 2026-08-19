@@ -6,6 +6,7 @@ module ApiContractTest exposing (suite)
 
 import Api
 import Dict
+import EngineUpdate
 import Expect
 import GalleryView
 import Json.Decode as D
@@ -57,6 +58,37 @@ engineVersionFixture =
 engineVersionUnknownFixture : String
 engineVersionUnknownFixture =
     """{"ok": true, "dir": "/Users/abab/Desktop/flix_game_engine", "version": null, "bundled": null}"""
+
+
+engineUpdateAvailableFixture : String
+engineUpdateAvailableFixture =
+    """{"ok": true, "current": "0.31.0", "available": true, "version": "0.32.0", "updatable": true}"""
+
+
+engineUpdateNoneFixture : String
+engineUpdateNoneFixture =
+    """{"ok": true, "current": "0.32.0", "available": false, "version": null, "updatable": true}"""
+
+
+engineUpdateOldServerFixture : String
+engineUpdateOldServerFixture =
+    """{"ok": true, "current": "0.31.0", "available": true, "version": "0.32.0"}"""
+
+
+engineUpdateRunningFixture : String
+engineUpdateRunningFixture =
+    """{"running": true, "exitCode": null,
+        "lines": ["[update] engine 0.32.0 を迎えに行きます", "[fetch-engine] zip を照合しました"]}"""
+
+
+engineUpdateDoneFixture : String
+engineUpdateDoneFixture =
+    """{"running": false, "exitCode": 0, "lines": ["[update] engine 0.32.0 に切り替えました"]}"""
+
+
+engineUpdateFailedFixture : String
+engineUpdateFailedFixture =
+    """{"running": false, "exitCode": 1, "lines": ["!! 照合の相手が揃っていません"]}"""
 
 
 healthNoProjectFixture : String
@@ -208,6 +240,39 @@ suite =
                 \_ ->
                     D.decodeString Api.engineVersionDecoder engineVersionUnknownFixture
                         |> Expect.equal (Ok Nothing)
+            ]
+        , describe "/engine/update"
+            [ test "新しいバージョンが出ている応答から、帯に出す版と押せるかが読める" <|
+                \_ ->
+                    D.decodeString EngineUpdate.checkDecoder engineUpdateAvailableFixture
+                        |> Expect.equal (Ok { available = True, version = Just "0.32.0", updatable = True })
+            , test "最新のときは何も出さない" <|
+                \_ ->
+                    D.decodeString EngineUpdate.checkDecoder engineUpdateNoneFixture
+                        |> Expect.equal (Ok { available = False, version = Nothing, updatable = True })
+            , test "updatable を持たない古いサーバでは押せない扱いになる" <|
+                \_ ->
+                    D.decodeString EngineUpdate.checkDecoder engineUpdateOldServerFixture
+                        |> Result.map .updatable
+                        |> Expect.equal (Ok False)
+            , test "走っている間のログは進み具合の最後の行が帯に出る" <|
+                \_ ->
+                    D.decodeString EngineUpdate.logDecoder engineUpdateRunningFixture
+                        |> Result.map (\log -> EngineUpdate.gotLog log EngineUpdate.init)
+                        |> Result.map (\( state, swapped ) -> ( state.note, swapped ))
+                        |> Expect.equal (Ok ( "[fetch-engine] zip を照合しました", False ))
+            , test "終了コード 0 で切り替わりとなり、バージョンの引き直しを促す" <|
+                \_ ->
+                    D.decodeString EngineUpdate.logDecoder engineUpdateDoneFixture
+                        |> Result.map (\log -> EngineUpdate.gotLog log EngineUpdate.init)
+                        |> Result.map (\( state, swapped ) -> ( state.step, swapped ))
+                        |> Expect.equal (Ok ( EngineUpdate.Finished, True ))
+            , test "終了コードが 0 でなければ切り替わりにしない" <|
+                \_ ->
+                    D.decodeString EngineUpdate.logDecoder engineUpdateFailedFixture
+                        |> Result.map (\log -> EngineUpdate.gotLog log EngineUpdate.init)
+                        |> Result.map (\( state, swapped ) -> ( state.step, swapped ))
+                        |> Expect.equal (Ok ( EngineUpdate.Failed, False ))
             ]
         , describe "/projects"
             [ test "current 未選択(null)+ recent / found の {dir, title} 列が読める" <|

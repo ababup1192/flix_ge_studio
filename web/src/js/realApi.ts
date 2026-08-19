@@ -100,8 +100,19 @@ export function realApi(base: string): Api {
           // ブラウザでも .app でも同じ経路で {games:[{pid,cwd}]} が返る。
           return getJson(`${base}/running-games`);
         case "engineVersion":
+        case "engineVersionOnly":
           // いま使っている engine のバージョン。プロジェクト未選択でも返る。
+          // Only は差し替えの後の引き直し(帯を出し直さないための別名)。
           return getJson(`${base}/engine/version`);
+        case "engineUpdateCheck":
+          // 新しい engine が出ているか。サーバが GitHub を叩くので数秒かかる
+          return getJson(`${base}/engine/update/check`);
+        case "engineUpdateStart":
+          // 202 が契約。400 は {ok:false, error:日本語}、409(走っている最中)は
+          // 走行権の側が {error:{message}} を返すので、両方拾える方で投げる
+          return sendJsonReason("POST", `${base}/engine/update`, payload);
+        case "engineUpdateLog":
+          return getJson(`${base}/engine/update/log`);
         case "activeDocs":
           // ゲームが書く「いま画面に出ている Doc」。無いのは普通(Elm 側が静かに無視)
           return getJson(`${base}/file?path=${encodeURIComponent("debug/active-docs.json")}`);

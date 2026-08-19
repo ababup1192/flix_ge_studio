@@ -160,7 +160,7 @@ mod EngineStore {
     // WhyNot: 目当ての名前へ直に写さない — 途中で落ちると半端な中身が「揃っている」と
     // 見えてしまい、次の起動が写し直さないため。
     // WhyNot: 途中の名前を固定にしない — Studio が 2 つ同時に上がると、片方が写している
-    // 最中に他方がそこを消し、中身の混ざった木が「揃っている」として確定してしまう。
+    // 最中に他方がそこを消し、中身の混ざったフォルダが「揃っている」として確定してしまう。
     // WhyNot: 例外でなく Throwable で受ける — Flix の bug! は Error で飛ぶので、
     // Exception だけだと起動直後のサーバごと道連れになる。
     def copyEngine(home: String, source: String, dest: String, version: String): Unit \ IO =
@@ -196,21 +196,28 @@ mod EngineStore {
         let exists = current |> Option.exists(v -> hasEngine(versionDir(home, v)));
         let newer = current |> Option.exists(v -> isNewerVersion(v, version));
         if (shouldWriteCurrent({current = current, currentDirExists = exists, bundledIsNewer = newer}))
-            writeCurrent(home, version)
+            discard writeCurrent(home, version)
         else ()
 
-    /// 隣に書いてから改名で差し替える。書けなくても落とさない (次の起動で書き直せる)。
-    def writeCurrent(home: String, version: String): Unit \ IO =
+    /// 隣に書いてから改名で差し替え、読み返して確かめる。書けたら true。
+    // WhyNot: 先に消してから改名しない — 間で電源が落ちると指し先そのものが消え、
+    // 次の起動は「指し先が無い」として同梱バージョンへ黙って戻る。改名が通らない
+    // 場合 (Windows は行き先があると失敗する) だけ、消してからもう一度やる。
+    // WhyNot: 書きっぱなしにしない — 呼ぶ側が「切り替えました」と言い切るので、
+    // 実際に読み返せた時だけ true を返す。
+    pub def writeCurrent(home: String, version: String): Bool \ IO =
         try {
             discard new JFile(baseDir(home)).mkdirs();
             let path = currentFile(home);
             let temp = "${path}.tmp";
             writeText(temp, "${version}\n");
-            discard new JFile(path).delete();
-            discard new JFile(temp).renameTo(new JFile(path));
-            ()
+            if (not new JFile(temp).renameTo(new JFile(path))) {
+                discard new JFile(path).delete();
+                discard new JFile(temp).renameTo(new JFile(path))
+            } else ();
+            readTextIfFile(path) |> Option.flatMap(currentVersion) == Some(version)
         } catch {
-            case _: Exception => ()
+            case _: Exception => false
         }
 
     // ── ファイルの下回り ──────────────────────────────────

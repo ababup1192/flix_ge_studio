@@ -66,8 +66,11 @@ mod Editor {
         // ゲームまわりの器一式 (走行権・起こした Process・引き継ぎ・命令口)。命令口の
         // 覚え書きは、自動検査の焼きを走行中のゲームに頼むのに使う。
         let game = Game.makeRuntime();
-        // 新しいゲームづくり (make new-game) 用の走行権。焼き・ゲーム起動と同時でも走れる。
+        // 新しいゲームづくり (make new-game) 用の走行権。絵の書き出し・ゲーム起動と同時でも走れる。
         let scaffold = Runner.make();
+        // engine の差し替え用の走行権。新しいゲームづくりと器を分けるのは、
+        // 進み具合のログが混ざると人がどちらの話か読めなくなるため。
+        let engineUpdate = Runner.make();
         // 検査と基準の自動追随の記録 (見た目が変わった知らせ)。
         let changes = Changes.make();
         // 常駐する焼き係（ゲーム自身のコードで音を作る係）の世話係。
@@ -80,7 +83,7 @@ mod Editor {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, scaffold, changes, bakeHost, launchGuard, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, engineUpdate, changes, bakeHost, launchGuard, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -124,7 +127,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, engineUpdate: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -141,6 +144,16 @@ mod Editor {
             // いま使っている engine のバージョン。プロジェクト未選択でも答える
             // (engine はプロジェクトの持ち物ではないので)。
             case ("GET", "/engine/version") => sendJson(200, EngineStore.versionJson(), exchange)
+            // 新しい engine が出ているか。網の向こうの都合で失敗しても available=false を返す。
+            case ("GET", "/engine/update/check") => sendJson(200, EngineUpdate.checkJson(), exchange)
+            // 差し替えを裏で始める。押すのは人 (バージョン上げは絵と挙動まで変わる)。
+            case ("POST", "/engine/update") => {
+                // 開いているゲームは、差し替えた後にそのまま載せ替えの相手になる。
+                let (status, json) = EngineUpdate.launch(
+                    engineUpdate, Projects.currentDir(selection), readBody(exchange));
+                sendJson(status, json, exchange)
+            }
+            case ("GET", "/engine/update/log") => sendJson(200, Runner.logJson(engineUpdate), exchange)
             // 「新しいゲームをはじめる」のジャンル一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("GET", "/genesis/genres") => sendJson(200, Genesis.genresJson(), exchange)
