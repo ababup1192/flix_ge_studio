@@ -3,7 +3,7 @@
 //
 // 期待する引数列は engine の bin/flix ラッパが展開していたコマンドと同じ形 + UTF-8 固定:
 //   java [-XstartOnFirstThread(mac)] [-Djava.awt.headless=true(ウィンドウなし)]
-//        -Xss16m -XX:MaxRAMPercentage=50 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8
+//        -Xss16m <ヒープと GC の旗> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8
 //        -jar flix.jar <flix引数>
 
 mod TestEngineTasks {
@@ -13,16 +13,19 @@ mod TestEngineTasks {
     /// macOS 以外はウィンドウの旗が消える (他の OS の JVM はこの旗で起動に失敗するため)。
     /// 出力の UTF-8 固定と積むスタックの広げ (-Xss16m) はどの OS のどの仕事にも必ず付く
     /// (Windows の文字化け対策と、型検査の深い再帰でスタックが溢れるのを防ぐため)。
+    /// ヒープと GC の旗は仕事で変わる (実機再生は ZGC + 2GB・他は MaxRAMPercentage)。
     @Test
     def testArgv(): Unit \ Assert =
         let exec = {javaExe = "/jre/bin/java", flixJar = "/engine/bin/flix.jar"};
-        let always = "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
+        let utf8 = "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
+        let play = "-Xss16m" :: "-XX:+UseZGC" :: "-Xmx2g" :: utf8;
+        let headless = "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: utf8;
         Assert.assertEq(
             expected = (
-                ("/jre/bin/java" :: "-XstartOnFirstThread" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
-                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
-                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
-                ("/jre/bin/java" :: always) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil)),
+                ("/jre/bin/java" :: "-XstartOnFirstThread" :: play) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil),
+                ("/jre/bin/java" :: "-XstartOnFirstThread" :: "-Djava.awt.headless=true" :: headless) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
+                ("/jre/bin/java" :: "-Djava.awt.headless=true" :: headless) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: "--entrypoint" :: "SceneRender.all" :: Nil),
+                ("/jre/bin/java" :: play) ::: ("-jar" :: "/engine/bin/flix.jar" :: "run" :: Nil)),
             (EngineTasks.argv(exec, true, Task.Debug),
              EngineTasks.argv(exec, true, Task.Render),
              EngineTasks.argv(exec, false, Task.Render),

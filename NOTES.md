@@ -1,5 +1,13 @@
 # NOTES
 
+## 次やること（2026-08-19・Play の JVM 旗）
+
+1. Play ボタン（Task.Debug）だけ `-XX:+UseZGC -Xmx2g` で起動するようにした
+   （`EngineTasks.memoryArgs`）。ウィンドウを開かない仕事は従来どおり `-XX:MaxRAMPercentage=50`
+2. `make swap-jar` 済み（/Applications と build 先の .app）。Studio は Cmd+Q → 開き直しで反映
+3. **人の目で確かめる**のは実機再生を長めに遊んだときのカクつき。ログ先頭の
+   `[runner] 起動:` 行に ZGC と 2GB が乗っているかも同時に見る
+
 ## 次やること（2026-08-18・紹介ページのダウンロード導線）
 
 1. 紹介ページ（GitHub Pages）に**ダウンロードのボタン**を足した。リンクは

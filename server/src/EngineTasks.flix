@@ -62,6 +62,20 @@ mod EngineTasks {
             case _          => Nil
         }
 
+    /// ヒープと GC の旗。実機再生 (Play ボタン) だけは ZGC + ヒープ上限 2GB で走らせる。
+    /// ZGC は止まる時間 (GC でゲームが固まる一瞬) がヒープの大きさに関係なく短く、
+    /// 遊んでいる間のカクつきが出にくい。上限を 2GB に固定するのは、GC を待たせない
+    /// 代わりにメモリを多めに使う ZGC が、Studio 本体と同じ機械で際限なく太らないように。
+    /// ウィンドウを開かない仕事 (検査・テスト・焼き) は据え置き:
+    /// flix run はコンパイラとゲームが 1 つの JVM を分け合い、コンパイラの残した山が
+    /// ヒープに居座る。既定の上限 (物理メモリの 25%) だとメモリ 8GB の機械で 2GB しか
+    /// 無く、大きなゲームの焼きが詰まる。50% なら Studio 本体と同居しても押し出し合わない。
+    pub def memoryArgs(task: Task): List[String] =
+        match task {
+            case Task.Debug => "-XX:+UseZGC" :: "-Xmx2g" :: Nil
+            case _          => "-XX:MaxRAMPercentage=50" :: Nil
+        }
+
     /// 起動する 1 本のコマンドの完全な引数列。
     /// -XstartOnFirstThread は macOS のウィンドウの決まりごと (他の OS の JVM はこの旗を知らず
     /// 起動に失敗する) なので、macOS のときだけ付ける。
@@ -70,15 +84,13 @@ mod EngineTasks {
     /// -Xss16m は削らない。Flix の型検査は式の深さぶん再帰するので、スレッドの既定スタックが
     /// 1MB の Windows では少し大きいゲームで StackOverflowError になる
     /// (macOS/arm64 は既定 2MB なので手元では気づけない)。
-    /// -XX:MaxRAMPercentage=50 も削らない。flix run はコンパイラとゲームが 1 つの JVM を
-    /// 分け合い、コンパイラの残した山がヒープに居座ったままゲームが走る。既定の上限
-    /// (物理メモリの 25%) だとメモリ 8GB の機械で 2GB しか無く、遊んでいる間 GC が頻発して
-    /// カクつく。50% なら Studio 本体と同居しても押し出し合わない。
+    /// ヒープと GC の旗は仕事で分ける (memoryArgs)。
     pub def argv(exec: Exec, isMacHost: Bool, task: Task): List[String] =
         (exec#javaExe :: Nil)
             ::: (if (isMacHost) "-XstartOnFirstThread" :: Nil else Nil)
             ::: (if (isHeadless(task)) "-Djava.awt.headless=true" :: Nil else Nil)
-            ::: ("-Xss16m" :: "-XX:MaxRAMPercentage=50" :: Nil)
+            ::: ("-Xss16m" :: Nil)
+            ::: memoryArgs(task)
             ::: ("-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil)
             ::: ("-jar" :: exec#flixJar :: Nil)
             ::: flixArgs(task)
