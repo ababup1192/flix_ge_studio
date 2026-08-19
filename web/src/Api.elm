@@ -40,6 +40,7 @@ module Api exposing
     , frameShotDecoder
     , referenceStatusDecoder
     , pngFrameCount
+    , engineVersionDecoder
     , runningGamesDecoder
     , searchResultsDecoder
     , spriteColorsDecoder
@@ -382,6 +383,14 @@ projectEntryDecoder =
     D.map2 ProjectEntry
         (D.field "dir" D.string)
         (D.field "title" D.string)
+
+
+{-| GET /engine/version の version。Makefile が読めないサーバは null を返すので、
+その場合は Nothing = バージョンを出さないだけ(表示は補助なので静かに倒す)。
+-}
+engineVersionDecoder : D.Decoder (Maybe String)
+engineVersionDecoder =
+    D.field "version" (D.nullable D.string)
 
 
 {-| Tauri の list_running_games (デスクトップだけで中身が入る)。

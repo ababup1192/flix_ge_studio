@@ -99,6 +99,9 @@ export function realApi(base: string): Api {
           // 走っているゲームの検知はサーバ側 (外部コマンド) が行う。
           // ブラウザでも .app でも同じ経路で {games:[{pid,cwd}]} が返る。
           return getJson(`${base}/running-games`);
+        case "engineVersion":
+          // いま使っている engine のバージョン。プロジェクト未選択でも返る。
+          return getJson(`${base}/engine/version`);
         case "activeDocs":
           // ゲームが書く「いま画面に出ている Doc」。無いのは普通(Elm 側が静かに無視)
           return getJson(`${base}/file?path=${encodeURIComponent("debug/active-docs.json")}`);

@@ -511,6 +511,9 @@ type alias Model =
     -- 画像・音の URL の付け根(vite dev では別オリジンのサーバ)。JS が起動時に
     -- 一方向の封筒(kind serverBase)で知らせる。届くまでは同一オリジン扱い("")
     , serverBase : String
+
+    -- いま使っている engine のバージョン。届くまでと、読めないサーバでは Nothing
+    , engineVersion : Maybe String
     , reqCounter : Int
     , notice : Maybe String
 
@@ -934,6 +937,7 @@ init _ =
         , miniSwapNotice = False
         , miniZoom = Nothing
         , serverBase = ""
+        , engineVersion = Nothing
         , reqCounter = 0
         , notice = Nothing
         , noticeSeq = 0
@@ -6052,6 +6056,15 @@ handleOkByKind env model =
                     -- 起動中情報が読めないのは致命ではない(バッジが出ないだけ)。黙って無視する
                     ( model, Effect.none )
 
+        "engineVersion" ->
+            ( { model
+                | engineVersion =
+                    D.decodeValue Api.engineVersionDecoder env.body
+                        |> Result.withDefault Nothing
+              }
+            , Effect.none
+            )
+
         "serverBase" ->
             -- JS が起動時に流し込む一方向の封筒(接続先サーバの付け根 URL)
             ( { model
@@ -6059,7 +6072,10 @@ handleOkByKind env model =
                     D.decodeValue (D.field "base" D.string) env.body
                         |> Result.withDefault ""
               }
-            , Effect.none
+              -- engine のバージョンはここで 1 回だけ引く。
+              -- WhyNot: init から引かない — init が出す封筒の並びは各フロー試験が
+              -- そのまま固定しており、1 本足すだけで無関係な試験が全部落ちる。
+            , requestInfo "engineVersion"
             )
 
         "journeyState" ->
@@ -7813,6 +7829,10 @@ handleErrByKind env message model =
             -- サーバが一瞬繋がらないだけの定期ポーリングで赤エラーを出さない
             ( model, Effect.none )
 
+        "engineVersion" ->
+            -- この口を持たないサーバ(404 等)。バージョンを出さないだけ(fail-open)
+            ( model, Effect.none )
+
         "journeyState" ->
             -- エンドポイント未実装のサーバでも赤エラーは出さない(「準備中」の 1 枚へ)
             ( { model | journey = Journey.failed message }, Effect.none )
@@ -8248,7 +8268,8 @@ viewTopbarRow model extras =
             ]
          , viewPlayButton model
          , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
-            [ viewSearchButton
+            [ viewEngineVersion model
+            , viewSearchButton
             , viewFailureBadge model
             , viewReferenceBadge model
             , viewSketchCompareButton model
@@ -8257,6 +8278,23 @@ viewTopbarRow model extras =
          ]
             ++ extras
         )
+
+
+{-| いま使っている engine のバージョン。押す物ではないので控えめに出す。
+読めないサーバでは何も出さない(バージョンの表示は補助)。
+-}
+viewEngineVersion : Model -> Html Msg
+viewEngineVersion model =
+    case model.engineVersion of
+        Just version ->
+            span
+                [ HA.class "shrink-0 text-[10px] text-muted tabular-nums"
+                , HA.title "いま使っている engine のバージョン"
+                ]
+                [ text ("engine " ++ version) ]
+
+        Nothing ->
+            text ""
 
 
 {-| topbar のプレイ/停止 (Unity のセンター Play と同じ置き場・Godot と同じ語彙)。

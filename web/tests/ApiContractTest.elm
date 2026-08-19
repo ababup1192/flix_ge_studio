@@ -42,6 +42,23 @@ galleryScenesFixture =
     """
 
 
+engineVersionFixture : String
+engineVersionFixture =
+    """
+    {
+      "ok": true,
+      "dir": "/Users/abab/.flix_ge_studio/engines/0.31.0",
+      "version": "0.31.0",
+      "bundled": "0.31.0"
+    }
+    """
+
+
+engineVersionUnknownFixture : String
+engineVersionUnknownFixture =
+    """{"ok": true, "dir": "/Users/abab/Desktop/flix_game_engine", "version": null, "bundled": null}"""
+
+
 healthNoProjectFixture : String
 healthNoProjectFixture =
     """{"ok": false, "error": {"message": "no project selected"}}"""
@@ -181,6 +198,16 @@ suite =
                 \_ ->
                     D.decodeString Api.healthResultDecoder healthNoProjectFixture
                         |> Expect.equal (Ok (Api.HealthErr "no project selected"))
+            ]
+        , describe "/engine/version"
+            [ test "いま使っている engine のバージョンが読める" <|
+                \_ ->
+                    D.decodeString Api.engineVersionDecoder engineVersionFixture
+                        |> Expect.equal (Ok (Just "0.31.0"))
+            , test "Makefile が読めないサーバの null は Nothing になる" <|
+                \_ ->
+                    D.decodeString Api.engineVersionDecoder engineVersionUnknownFixture
+                        |> Expect.equal (Ok Nothing)
             ]
         , describe "/projects"
             [ test "current 未選択(null)+ recent / found の {dir, title} 列が読める" <|

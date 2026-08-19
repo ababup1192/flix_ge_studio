@@ -11,10 +11,30 @@ mod TestEngineHome {
                         "/home/me/Desktop/flix_game_engine",
                         "/home/me/Desktop/flix_game_engine",
                         "/home/me/Desktop/flix_game_engine"),
-            (EngineHome.resolve(Some("/Applications/Flix GE Studio.app/Contents/Resources/engine"), "/home/me"),
-             EngineHome.resolve(None, "/home/me"),
-             EngineHome.resolve(Some(""), "/home/me"),
-             EngineHome.resolve(Some("   "), "/home/me")))
+            (EngineHome.resolve(None, Some("/Applications/Flix GE Studio.app/Contents/Resources/engine"), "/home/me"),
+             EngineHome.resolve(None, None, "/home/me"),
+             EngineHome.resolve(None, Some(""), "/home/me"),
+             EngineHome.resolve(None, Some("   "), "/home/me")))
+
+    /// 置き場 (engines/<バージョン>/) が決まっていれば、同梱先より先にそれを使う。
+    @Test
+    def testResolvePrefersStore(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("/home/me/.flix_ge_studio/engines/0.32.0",
+                        "/home/me/.flix_ge_studio/engines/0.32.0"),
+            (EngineHome.resolve(Some("/home/me/.flix_ge_studio/engines/0.32.0"),
+                                Some("/Applications/Flix GE Studio.app/Contents/Resources/engine"),
+                                "/home/me"),
+             EngineHome.resolve(Some("/home/me/.flix_ge_studio/engines/0.32.0"), None, "/home/me")))
+
+    /// 置き場の中かどうか (中ならゲームへ渡すのは別名の方)。
+    @Test
+    def testIsStorePath(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false),
+            (EngineHome.isStorePath("/home/me", "/home/me/.flix_ge_studio/engines/0.31.0"),
+             EngineHome.isStorePath("/home/me", "/home/me/Desktop/flix_game_engine"),
+             EngineHome.isStorePath("/home/me", "/Applications/Flix GE Studio.app/Contents/Resources/engine")))
 
     /// 空白を含む道はそのまま渡せない (ゲームの Makefile が千切る)。
     @Test

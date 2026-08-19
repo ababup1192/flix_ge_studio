@@ -97,6 +97,10 @@ mod Editor {
         // ConcurrentHashMap と putIfAbsent の排他(Runner)で既に並行前提の作り。
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
+        // 同梱 engine を .app の外 (~/.flix_ge_studio/engines/<バージョン>/) へ 1 回だけ写す。
+        // WhyNot: server.start() より前に置かない — 60MB の写しでランチャーの /health 待ち
+        // (20 秒) を食う。写し終わるまでは EngineHome が同梱先に倒れるので困らない。
+        EngineStore.seed();
         // 音を焼く口を持つゲームなら、開いた瞬間から焼き係を温め始める
         // （立ち上げに 1〜2 分かかるので、触られてからでは間に合わない）。
         Option.forEach(dir -> if (BakeHost.canHost(dir)) BakeHost.ensure(bakeHost, dir) else (),
@@ -134,6 +138,9 @@ mod Editor {
             case ("GET", "/workspace") => sendJson(200, workspaceJson(), exchange)
             case ("POST", "/workspace") => handleSetWorkspace(readBody(exchange), exchange)
             case ("GET", "/running-games") => sendJson(200, Game.runningGamesJson(), exchange)
+            // いま使っている engine のバージョン。プロジェクト未選択でも答える
+            // (engine はプロジェクトの持ち物ではないので)。
+            case ("GET", "/engine/version") => sendJson(200, EngineStore.versionJson(), exchange)
             // 「新しいゲームをはじめる」のジャンル一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("GET", "/genesis/genres") => sendJson(200, Genesis.genresJson(), exchange)
