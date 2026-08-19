@@ -1,15 +1,21 @@
 module EngineUpdate exposing
     ( Check
+    , Game
     , State
     , Step(..)
+    , canUpgradeGame
     , checkDecoder
+    , gameDecoder
     , gotCheck
+    , gotGameCheck
     , gotLog
     , init
     , isPolling
     , logDecoder
     , pendingVersion
     , started
+    , startedGameUpgrade
+    , switchedGame
     , startFailed
     , unavailable
     , view
@@ -61,12 +67,29 @@ type alias State =
     -- 走っているはずなのに始まった気配が無い回数。サーバが差し替えの最中に
     -- 立ち上がり直すと「走っていない・終わってもいない」が返り続けるため
     , idleTicks : Int
+
+    -- 開いているゲームが engine より古いときの、そのゲームのバージョン
+    , gameLag : Maybe String
+
+    -- 押させない理由。空なら押せる
+    , blocked : String
+
+    -- 押せるはずなのに道具が無い。このときだけ理由を帯へ出す
+    , stuck : Bool
     }
 
 
 init : State
 init =
-    { step = Idle, latest = Nothing, updatable = False, note = "", idleTicks = 0 }
+    { step = Idle
+    , latest = Nothing
+    , updatable = False
+    , note = ""
+    , idleTicks = 0
+    , gameLag = Nothing
+    , blocked = ""
+    , stuck = False
+    }
 
 
 {-| GET /engine/update/check の中身。
@@ -75,27 +98,84 @@ type alias Check =
     { available : Bool
     , version : Maybe String
     , updatable : Bool
+    , reason : String
+    , stuck : Bool
     }
 
 
 checkDecoder : D.Decoder Check
 checkDecoder =
-    D.map3 Check
+    D.map5 Check
         (D.oneOf [ D.field "available" D.bool, D.succeed False ])
         (D.oneOf [ D.field "version" (D.nullable D.string), D.succeed Nothing ])
         -- WhyNot: 既定を True にしない — この印を持たない古いサーバで
         -- 押せるボタンを出すと、無い口を叩いて理由の出ない失敗になる
         (D.oneOf [ D.field "updatable" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "reason" D.string, D.succeed "" ])
+        -- WhyNot: 押せない理由を常に帯へ出さない — engine のリポで開発している間や
+        -- Windows では「押せない」が正常な姿なので、出しっぱなしはただの雑音になる。
+        -- 出すのは、押せるはずなのに道具が無い (人が動かないと直らない) ときだけ
+        (D.oneOf [ D.field "stuck" D.bool, D.succeed False ])
 
 
 gotCheck : Check -> State -> State
 gotCheck check state =
     case ( check.available, check.version ) of
         ( True, Just version ) ->
-            { state | step = Offered, latest = Just version, updatable = check.updatable }
+            { state
+                | step = Offered
+                , latest = Just version
+                , updatable = check.updatable
+                , blocked = check.reason
+                , stuck = check.stuck
+            }
 
         _ ->
-            { state | step = Idle, latest = Nothing }
+            { state | step = Idle, latest = Nothing, blocked = check.reason, stuck = check.stuck }
+
+
+{-| GET /engine/game/check の中身。開いているゲームが engine に追いついているか。
+-}
+type alias Game =
+    { engine : String
+    , game : Maybe String
+    , behind : Bool
+    }
+
+
+gameDecoder : D.Decoder Game
+gameDecoder =
+    D.map3 Game
+        (D.oneOf [ D.field "engine" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "game" (D.nullable D.string), D.succeed Nothing ])
+        (D.oneOf [ D.field "behind" D.bool, D.succeed False ])
+
+
+{-| 別のゲームへ切り替えた。応答が返るまで前のゲームのボタンを押させない。
+-}
+switchedGame : State -> State
+switchedGame state =
+    { state | gameLag = Nothing }
+
+
+gotGameCheck : Game -> State -> State
+gotGameCheck check state =
+    { state
+        | gameLag =
+            if check.behind then
+                check.game
+
+            else
+                Nothing
+    }
+
+
+{-| 「このゲームだけ追いつかせる」を押せるか。engine の差し替えが走っている間は
+押させない(同じ走行権なので、どのみち受け付けられない)。
+-}
+canUpgradeGame : State -> Bool
+canUpgradeGame state =
+    state.step /= Working && state.gameLag /= Nothing
 
 
 {-| 押したときに投げるバージョン。押せる姿でなければ何も投げない。
@@ -114,6 +194,13 @@ pendingVersion state =
 started : State -> State
 started state =
     { state | step = Working, note = "engine を迎えに行っています", idleTicks = 0 }
+
+
+{-| ゲームだけを追いつかせる方の 202。進み具合は engine の差し替えと同じ口から出る。
+-}
+startedGameUpgrade : State -> State
+startedGameUpgrade state =
+    { state | step = Working, note = "ゲームを載せ替えています", idleTicks = 0 }
 
 
 startFailed : String -> State -> State
@@ -211,11 +298,21 @@ isPolling state =
 -- 画面
 
 
-view : { onUpdate : String -> msg } -> State -> Html msg
+view : { onUpdate : String -> msg, onUpgradeGame : msg } -> State -> Html msg
 view handlers state =
     case state.step of
         Idle ->
-            text ""
+            -- engine は最新でも、開いているゲームだけが古いことがある
+            -- (engine を上げた時に開いていなかったゲームは置いていかれる)
+            gameLagView handlers state
+
+        Finished ->
+            -- WhyNot: 済んだ知らせを出したまま留まらない — 差し替えの後に別のゲームを
+            -- 開いたとき、そのゲームが古くてもボタンが出せなくなる
+            span [ HA.class "flex shrink-0 items-center gap-1" ]
+                [ span [ HA.class "text-[10px] text-muted" ] [ text state.note ]
+                , gameLagView handlers state
+                ]
 
         Offered ->
             case ( state.latest, state.updatable ) of
@@ -233,21 +330,71 @@ view handlers state =
 
                 ( Just version, False ) ->
                     span [ HA.class "shrink-0 text-[10px] text-muted tabular-nums" ]
-                        [ text ("engine " ++ version ++ " が出ています — Studio ごと入れ直してください") ]
+                        [ text ("engine " ++ version ++ " が出ています — " ++ blockedNote state) ]
 
                 _ ->
                     text ""
 
         Working ->
-            span [ HA.class "shrink-0 text-[10px] text-muted" ]
-                [ text ("engine を差し替え中 — " ++ state.note) ]
-
-        Finished ->
             span [ HA.class "shrink-0 text-[10px] text-muted" ] [ text state.note ]
 
         Failed ->
-            span
-                [ HA.class "shrink-0 text-[10px] text-warn"
-                , HA.title state.note
+            -- WhyNot: 決まり文句にしない — ここへは engine の差し替えだけでなく、
+            -- ゲームの載せ替えや「ゲームを開いてから押してください」も来る
+            span [ HA.class "flex shrink-0 items-center gap-1" ]
+                [ span [ HA.class "text-[10px] text-warn", HA.title state.note ] [ text state.note ]
+                , gameLagView handlers state
                 ]
-                [ text "engine を差し替えられませんでした" ]
+
+
+{-| 押せるときだけ、そのゲームのバージョンを返す。
+-}
+ifCanUpgrade : State -> Maybe String
+ifCanUpgrade state =
+    if canUpgradeGame state then
+        state.gameLag
+
+    else
+        Nothing
+
+
+{-| 押させない理由。サーバが言わないとき(古いサーバ)だけ決まり文句で埋める。
+-}
+blockedNote : State -> String
+blockedNote state =
+    if String.trim state.blocked == "" then
+        "Studio ごと入れ直してください"
+
+    else
+        state.blocked
+
+
+{-| 開いているゲームだけが古いときの帯。古くなければ、押させない理由があればそれを置く。
+-}
+gameLagView : { a | onUpgradeGame : msg } -> State -> Html msg
+gameLagView handlers state =
+    case ifCanUpgrade state of
+        Just version ->
+            span [ HA.class "flex shrink-0 items-center gap-1" ]
+                [ span [ HA.class "text-[10px] text-muted tabular-nums" ]
+                    [ text ("このゲームは engine " ++ version ++ " のままです") ]
+                , button
+                    [ HA.class "btn btn-mini"
+                    , HA.title "このゲームが使う engine を、いま Studio が使っている物へそろえます"
+                    , HE.onClick handlers.onUpgradeGame
+                    ]
+                    [ text "そろえる" ]
+                ]
+
+        Nothing ->
+            -- 上げる先が分からないまま「上げられない」ときだけ、その理由を置く
+            -- (黙って何も出さないと、人からは壊れているのと区別が付かない)
+            if not state.stuck then
+                text ""
+
+            else
+                span
+                    [ HA.class "shrink-0 text-[10px] text-muted"
+                    , HA.title state.blocked
+                    ]
+                    [ text state.blocked ]

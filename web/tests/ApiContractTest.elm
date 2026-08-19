@@ -62,12 +62,22 @@ engineVersionUnknownFixture =
 
 engineUpdateAvailableFixture : String
 engineUpdateAvailableFixture =
-    """{"ok": true, "current": "0.31.0", "available": true, "version": "0.32.0", "updatable": true}"""
+    """{"ok": true, "current": "0.31.0", "available": true, "version": "0.32.0", "updatable": true, "reason": "", "stuck": false}"""
 
 
 engineUpdateNoneFixture : String
 engineUpdateNoneFixture =
-    """{"ok": true, "current": "0.32.0", "available": false, "version": null, "updatable": true}"""
+    """{"ok": true, "current": "0.32.0", "available": false, "version": null, "updatable": true, "reason": "", "stuck": false}"""
+
+
+engineUpdateBlockedFixture : String
+engineUpdateBlockedFixture =
+    """{"ok": true, "current": "0.31.0", "available": false, "version": null, "updatable": false, "reason": "この engine は自分で上げられません (Studio ごと入れ直してください)", "stuck": true}"""
+
+
+engineGameBehindFixture : String
+engineGameBehindFixture =
+    """{"ok": true, "engine": "0.32.0", "game": "0.31.0", "behind": true}"""
 
 
 engineUpdateOldServerFixture : String
@@ -245,11 +255,20 @@ suite =
             [ test "新しいバージョンが出ている応答から、帯に出す版と押せるかが読める" <|
                 \_ ->
                     D.decodeString EngineUpdate.checkDecoder engineUpdateAvailableFixture
-                        |> Expect.equal (Ok { available = True, version = Just "0.32.0", updatable = True })
+                        |> Expect.equal (Ok { available = True, version = Just "0.32.0", updatable = True, reason = "", stuck = False })
             , test "最新のときは何も出さない" <|
                 \_ ->
                     D.decodeString EngineUpdate.checkDecoder engineUpdateNoneFixture
-                        |> Expect.equal (Ok { available = False, version = Nothing, updatable = True })
+                        |> Expect.equal (Ok { available = False, version = Nothing, updatable = True, reason = "", stuck = False })
+            , test "開いているゲームが古い応答から、そのゲームのバージョンが読める" <|
+                \_ ->
+                    D.decodeString EngineUpdate.gameDecoder engineGameBehindFixture
+                        |> Expect.equal (Ok { engine = "0.32.0", game = Just "0.31.0", behind = True })
+            , test "自分で上げられない engine では、その理由が読める" <|
+                \_ ->
+                    D.decodeString EngineUpdate.checkDecoder engineUpdateBlockedFixture
+                        |> Result.map (\c -> ( c.reason, c.stuck ))
+                        |> Expect.equal (Ok ( "この engine は自分で上げられません (Studio ごと入れ直してください)", True ))
             , test "updatable を持たない古いサーバでは押せない扱いになる" <|
                 \_ ->
                     D.decodeString EngineUpdate.checkDecoder engineUpdateOldServerFixture

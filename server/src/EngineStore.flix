@@ -109,14 +109,14 @@ mod EngineStore {
     // ここを素通りさせると置き場の外へ書きに行けるうえ、読み返しで必ず弾かれて
     // 指し先が永久に立たない (毎回書いては読めない) 形になる。
     pub def versionOf(engineDir: String): Option[String] \ IO =
-        readTextIfFile("${engineDir}/Makefile")
+        loadTextIfFile("${engineDir}/Makefile")
             |> Option.flatMap(NewGame.versionFromMakefile)
             |> Option.filter(isVersionName)
 
     /// いま使う engine の置き場。指し先が読めない・実体が揃っていないなら None。
     pub def currentDir(): Option[String] \ IO =
         let home = System.getProperty("user.home");
-        readTextIfFile(currentFile(home))
+        loadTextIfFile(currentFile(home))
             |> Option.flatMap(currentVersion)
             |> Option.map(version -> versionDir(home, version))
             |> Option.filter(hasEngine)
@@ -192,7 +192,7 @@ mod EngineStore {
 
     /// 指し先が無い・指した先の実体が無いときだけ書く。
     def writeCurrentIfStale(home: String, version: String): Unit \ IO =
-        let current = readTextIfFile(currentFile(home)) |> Option.flatMap(currentVersion);
+        let current = loadTextIfFile(currentFile(home)) |> Option.flatMap(currentVersion);
         let exists = current |> Option.exists(v -> hasEngine(versionDir(home, v)));
         let newer = current |> Option.exists(v -> isNewerVersion(v, version));
         if (shouldWriteCurrent({current = current, currentDirExists = exists, bundledIsNewer = newer}))
@@ -215,7 +215,7 @@ mod EngineStore {
                 discard new JFile(path).delete();
                 discard new JFile(temp).renameTo(new JFile(path))
             } else ();
-            readTextIfFile(path) |> Option.flatMap(currentVersion) == Some(version)
+            loadTextIfFile(path) |> Option.flatMap(currentVersion) == Some(version)
         } catch {
             case _: Exception => false
         }
@@ -251,7 +251,8 @@ mod EngineStore {
         } else
             discard file.delete()
 
-    def readTextIfFile(path: String): Option[String] \ IO =
+    /// ファイルの中身を UTF-8 で読む。ファイルでなければ None。
+    pub def loadTextIfFile(path: String): Option[String] \ IO =
         try {
             if (new JFile(path).isFile())
                 Some(new JavaString(Files.readAllBytes(new JFile(path).toPath()), "UTF-8"))

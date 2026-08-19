@@ -46,13 +46,26 @@ mod EngineUpdate {
             :: "--toml-name" :: "flix_game_engine-${r#version}.toml"
             :: "--json" :: Nil
 
-    /// 差し替えを実行できる環境か。
+    /// 押させない理由。押せるなら空文字。
+    // WhyNot: 「押せない」を黙って帯ごと消さない — 人からは壊れているのと区別が付かず、
+    // 次に何をすればよいか (Studio ごと入れ直す) が誰にも伝わらない。
     // WhyNot: Windows で押させない — 公開されている zip は macOS 向けだけで、
     // 落とし切ってから中身の検査で必ず落ちる (帯の案内だけにする)。
     // WhyNot: 置き場から走っていないとき (engine のリポで開発中) も押させない —
     // 持ち越す元がリポ・置き先が置き場というちぐはぐな組み合わせになる。
-    pub def canUpdate(r: {onWindows = Bool, fromStore = Bool}): Bool =
-        not r#onWindows and r#fromStore
+    pub def blockReason(r: {onWindows = Bool, fromStore = Bool, hasTool = Bool}): String =
+        if (r#onWindows)
+            "Windows では engine を差し替えられません (Studio ごと入れ直してください)"
+        else if (not r#fromStore)
+            "engine のリポから走っているので、ここからは差し替えません"
+        else if (not r#hasTool)
+            "この engine は自分で上げられません (Studio ごと入れ直してください)"
+        else ""
+
+    /// 押せるはずの環境なのに道具が無い状態か。ここだけは、上げる先が分からなくても
+    /// 画面に理由を出す (押せる環境と見分けが付かないまま何も出ないのを避ける)。
+    pub def isStuck(r: {onWindows = Bool, fromStore = Bool, hasTool = Bool}): Bool =
+        not r#onWindows and r#fromStore and not r#hasTool
 
     /// 道具の出力から最後の JSON の行を採る。進み具合の行が前に並ぶため。
     pub def resultOf(lines: List[String]): Option[Map[String, Json]] =
@@ -77,6 +90,57 @@ mod EngineUpdate {
         if (code != 0) None
         else resultOf(lines) |> Option.flatMap(installedVersion)
 
+    /// ゲームの flix.toml から、そのゲームが使う engine のバージョンを読む。
+    // WhyNot: TOML として読まない — 要るのは依存 1 つの version だけ。
+    // WhyNot: 行ごとに見ない — 依存は次のように複数行へ割って書けるので、
+    // 行で切ると読めない (engine の道具の方は割れていても読める)。
+    //     "github:ababup1192/flix_game_engine" = {
+    //         version = "0.32.0", security = "unrestricted" }
+    pub def gameVersionOf(tomlText: String): Option[String] =
+        let body = stripComments(tomlText);
+        String.indexOfLeft(substr = engineDependencyKey(), body)
+            |> Option.map(i -> String.drop(i + String.length(engineDependencyKey()), body))
+            |> Option.flatMap(inlineTable)
+            |> Option.flatMap(versionIn)
+            |> Option.filter(EngineStore.isVersionName)
+
+    /// 依存の名前。owner まで含めて見る (フォークを本物と取り違えないため)。
+    def engineDependencyKey(): String = "\"github:ababup1192/flix_game_engine\""
+
+    /// `= { … }` の中身。次の閉じ括弧までを採る。
+    def inlineTable(rest: String): Option[String] =
+        String.indexOfLeft(substr = "{", rest)
+            |> Option.flatMap(open -> {
+                let inner = String.drop(open + 1, rest);
+                String.indexOfLeft(substr = "}", inner) |> Option.map(close -> String.take(close, inner))
+            })
+
+    def versionIn(table: String): Option[String] =
+        String.indexOfLeft(substr = "version", table)
+            |> Option.flatMap(i -> firstQuoted(String.drop(i, table)))
+
+    /// コメントの行を落とす (書き換え前の依存がコメントで残っていることがある)。
+    def stripComments(tomlText: String): String =
+        String.lines(tomlText)
+            |> List.filter(line -> not String.startsWith(prefix = "#", String.trim(line)))
+            |> String.unlines
+
+    def firstQuoted(text: String): Option[String] =
+        String.indexOfLeft(substr = "\"", text)
+            |> Option.flatMap(i -> {
+                let rest = String.drop(i + 1, text);
+                String.indexOfLeft(substr = "\"", rest) |> Option.map(j -> String.take(j, rest))
+            })
+
+    /// ゲームが engine に追いついていないか。載せ替えのボタンを出す条件。
+    // WhyNot: 「違う」ではなく「古い」で見る — ゲームの方が新しいときに押させると、
+    // engine を落とすのでなくゲームを引き戻すことになり、押した人の意図と逆になる。
+    pub def gameBehind(r: {game = Option[String], engine = String}): Bool =
+        match r#game {
+            case None    => false
+            case Some(v) => EngineStore.isNewerVersion(v, r#engine)
+        }
+
     /// 載せ替えの結果を人の言葉にする。終了コードは 0 上げ切った / 3 追随待ち / それ以外は失敗。
     pub def upgradeNote(code: Int32): String =
         match code {
@@ -87,12 +151,35 @@ mod EngineUpdate {
 
     // ── 走らせる ──────────────────────────────────────────
 
+    /// その仕事ができる道具を選ぶ。今使っている engine → .app 同梱 engine の順。
+    // WhyNot: 今の engine の道具に決め打ちしない — fetch-engine も upgrade-game も
+    // 0.32.0 で入ったので、それより古い engine を指していると、押せるのに必ず失敗する。
+    // 同梱の方は Studio を入れ直すたびに新しくなるので、逃げ道として使える。
+    pub def pickTool(verb: String): Option[String] \ IO =
+        let onWindows = isWindows();
+        (EngineHome.dir() :: (EngineStore.bundledDir() |> Option.toList))
+            |> List.map(dir -> toolPath(dir, onWindows))
+            |> List.distinct
+            |> List.find(tool -> hasVerb(tool, verb))
+
+    def hasVerb(tool: String, verb: String): Bool \ IO =
+        let (code, lines) = runLines(tool :: "--list" :: Nil);
+        code == 0 and List.exists(line -> String.trim(line) == verb, lines)
+
     /// GET /engine/update/check — 新しいバージョンが出ているか。
     pub def checkJson(): Json \ IO =
         let engine = EngineHome.dir();
         let current = EngineStore.versionOf(engine) |> Option.getWithDefault("");
-        let updatable = canUpdate({onWindows = isWindows(), fromStore = isFromStore(engine)});
-        let tool = toolPath(engine, isWindows());
+        let onWindows = isWindows();
+        let fromStore = isFromStore(engine);
+        // WhyNot: 先に環境を見てから道具を探す — Windows と engine のリポでは
+        // どのみち押させないので、探すために起こすプロセスがそのまま無駄になる。
+        let chosen = if (onWindows or not fromStore) None else pickTool("fetch-engine");
+        let hasTool = not Option.isEmpty(chosen);
+        let reason = blockReason({onWindows = onWindows, fromStore = fromStore, hasTool = hasTool});
+        let updatable = reason == "";
+        let stuck = isStuck({onWindows = onWindows, fromStore = fromStore, hasTool = hasTool});
+        let tool = chosen |> Option.getWithDefault(toolPath(engine, onWindows));
         let (code, lines) = runCapture(checkArgs(tool, current), _ -> checked_ecast(()));
         match (code, resultOf(lines)) {
             case (0, Some(fields)) => {
@@ -102,6 +189,8 @@ mod EngineUpdate {
                     "ok"        => JBool(true),
                     "current"   => JString(current),
                     "updatable" => JBool(updatable),
+                    "reason"    => JString(reason),
+                    "stuck"     => JBool(stuck),
                     "available" => JBool(available),
                     "version"   => if (available)
                                        stringAt("version", fields) |> Option.map(JString) |> Option.getWithDefault(JNull)
@@ -114,6 +203,8 @@ mod EngineUpdate {
                 "ok"        => JBool(true),
                 "current"   => JString(current),
                 "updatable" => JBool(updatable),
+                "reason"    => JString(reason),
+                "stuck"     => JBool(stuck),
                 "available" => JBool(false),
                 "version"   => JNull
             })
@@ -121,10 +212,9 @@ mod EngineUpdate {
 
     /// 落として組み立て、済んだら指し先を進め、開いているゲームを載せ替える。
     /// 返すのは終了コード。
-    pub def install(log: String -> Unit \ IO, version: String, game: Option[String]): Int32 \ IO =
+    pub def install(log: String -> Unit \ IO, tool: String, version: String, game: Option[String]): Int32 \ IO =
         let home = javaHome();
         let engine = EngineHome.dir();
-        let tool = toolPath(engine, isWindows());
         let versions = EngineStore.versionsDir(home);
         log("[update] engine ${version} を迎えに行きます");
         log("[update] いま走っているゲームは古い engine のまま動き続けます");
@@ -149,27 +239,74 @@ mod EngineUpdate {
                 } else {
                     EngineHome.relinkAlias();
                     log("[update] engine ${placed} に切り替えました");
-                    upgradeGame(log, placed, game);
+                    discard upgradeGame(log, tool, placed, game);
                     0
                 }
         }
 
+    /// GET /engine/game/check — 開いているゲームが engine に追いついているか。
+    // WhyNot: 道具の有無まで見てから behind を立てる — upgrade-game は 0.32.0 で
+    // 入ったので、それより古い engine ではボタンを出しても押した先で必ず失敗する。
+    pub def gameCheckJson(game: Option[String]): Json \ IO =
+        let engine = EngineStore.versionOf(EngineHome.dir()) |> Option.getWithDefault("");
+        let onGame = gameVersion(game);
+        let behind = gameBehind({game = onGame, engine = engine})
+            and not Option.isEmpty(pickTool("upgrade-game"));
+        JObject(Map#{
+            "ok"     => JBool(true),
+            "engine" => JString(engine),
+            "game"   => onGame |> Option.map(JString) |> Option.getWithDefault(JNull),
+            "behind" => JBool(behind)
+        })
+
+    /// 開いているゲームが使っている engine のバージョン。
+    def gameVersion(game: Option[String]): Option[String] \ IO =
+        game
+            |> Option.flatMap(dir -> EngineStore.loadTextIfFile("${dir}/flix.toml"))
+            |> Option.flatMap(gameVersionOf)
+
+    /// POST /engine/upgrade-game — engine はそのままで、開いているゲームだけを追いつかせる。
+    // WhyNot: engine の差し替えと同じ走行権を使う — どちらもゲームの lib を書き替えるので、
+    // 同時に走らせると片方の書き込みがもう片方の途中の姿を踏む。
+    pub def launchGameUpgrade(state: Runner.State, game: Option[String]): (Int32, Json) \ IO =
+        match (game, EngineStore.versionOf(EngineHome.dir()), pickTool("upgrade-game")) {
+            case (Some(dir), Some(version), Some(tool)) =>
+                Runner.launchWork(state, "engine-update",
+                    () -> upgradeGame(line -> Runner.logLine(state, line), tool, version, Some(dir)),
+                    busy = "engine を差し替えている最中です")
+            case (None, _, _) => (400, JObject(Map#{
+                "ok"    => JBool(false),
+                "error" => JString("ゲームを開いてから押してください")
+            }))
+            case (_, None, _) => (400, JObject(Map#{
+                "ok"    => JBool(false),
+                "error" => JString("いま使っている engine のバージョンが読めません")
+            }))
+            case (_, _, None) => (400, JObject(Map#{
+                "ok"    => JBool(false),
+                "error" => JString("この engine はゲームを載せ替えられません (Studio ごと入れ直してください)")
+            }))
+        }
+
     /// 開いているゲームを新しい engine へ載せ替える。開いていなければ何もしない。
+    /// 返すのは終了コード (追随が要るだけの 3 は、済んだ物として 0 で返す)。
     // WhyNot: 載せ替えの失敗で差し替えを失敗にしない — engine の切り替えは既に済んで
     // いて、ゲーム側は道具が元へ戻す。ここで赤にすると、済んだ物まで失敗に見える。
-    def upgradeGame(log: String -> Unit \ IO, version: String, game: Option[String]): Unit \ IO =
+    def upgradeGame(log: String -> Unit \ IO, tool: String, version: String,
+                    game: Option[String]): Int32 \ IO =
         match game {
-            case None => log("[update] 開いているゲームはありません")
+            case None => { log("[update] 開いているゲームはありません"); 0 }
             case Some(dir) => {
                 let engine = EngineHome.dir();
                 // 道具を呼ぶのは実パス (シェルを通さないので空白があってもよい)。
                 // ゲームの make へ流れる方 (--root) だけ別名を使う。
                 let forGames = EngineHome.forGames() |> Option.getWithDefault(engine);
                 log("[update] 開いているゲームを engine ${version} へ載せ替えます");
-                let args = upgradeArgs({tool = toolPath(engine, isWindows()), engineDir = forGames,
+                let args = upgradeArgs({tool = tool, engineDir = forGames,
                                         game = dir, version = version});
                 let (code, _) = runCapture(args, log);
-                log(upgradeNote(code))
+                log(upgradeNote(code));
+                if (code == 3) 0 else code
             }
         }
 
@@ -177,20 +314,27 @@ mod EngineUpdate {
     /// body は {version} の JSON。押すのは人 (バージョン上げは絵と挙動まで変わる)。
     pub def launch(state: Runner.State, game: Option[String], bodyText: String): (Int32, Json) \ IO =
         let engine = EngineHome.dir();
-        if (not canUpdate({onWindows = isWindows(), fromStore = isFromStore(engine)}))
+        let onWindows = isWindows();
+        let fromStore = isFromStore(engine);
+        let chosen = if (onWindows or not fromStore) None else pickTool("fetch-engine");
+        let reason = blockReason({onWindows = onWindows, fromStore = fromStore,
+                                  hasTool = not Option.isEmpty(chosen)});
+        if (reason != "")
             (400, JObject(Map#{
                 "ok"    => JBool(false),
-                "error" => JString("この環境では engine を差し替えられません (Studio ごと入れ直してください)")
+                "error" => JString(reason)
             }))
         else match requestedVersion(bodyText) {
             case None => (400, JObject(Map#{
                 "ok"    => JBool(false),
                 "error" => JString("body は {\"version\": \"0.32.0\"} の JSON で指定してください")
             }))
-            case Some(version) =>
+            case Some(version) => {
+                let tool = chosen |> Option.getWithDefault(toolPath(engine, onWindows));
                 Runner.launchWork(state, "engine-update",
-                    () -> install(line -> Runner.logLine(state, line), version, game),
+                    () -> install(line -> Runner.logLine(state, line), tool, version, game),
                     busy = "engine を差し替えている最中です")
+            }
         }
 
     /// body から差し替え先のバージョンを読む。置けない字は受けない。
@@ -203,7 +347,17 @@ mod EngineUpdate {
     def isFromStore(engine: String): Bool \ IO =
         EngineHome.isStorePath(javaHome(), engine)
 
+    /// 出力を全部そのまま採る (道具が何を持っているかの一覧を読むため)。
+    def runLines(args: List[String]): (Int32, List[String]) \ IO =
+        runWith(args, _ -> checked_ecast(()), _ -> true)
+
     def runCapture(args: List[String], onLine: String -> Unit \ IO): (Int32, List[String]) \ IO =
+        // WhyNot: 全行を溜めない — 読みたいのは道具が最後に出す JSON の 1 行だけで、
+        // 進み具合の行は log へ流した時点で役目が済んでいる。
+        runWith(args, onLine, line -> String.startsWith(prefix = "{", String.trim(line)))
+
+    def runWith(args: List[String], onLine: String -> Unit \ IO,
+                keep: String -> Bool): (Int32, List[String]) \ IO =
         try {
             let list = new ArrayList();
             foreach (arg <- args) discard list.add(arg);
@@ -214,7 +368,7 @@ mod EngineUpdate {
             discard env.remove("SDKROOT");
             let proc = pb.start();
             let reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-            let lines = readLines(reader, onLine, Nil);
+            let lines = readLines(reader, onLine, keep, Nil);
             (proc.waitFor(), lines)
         } catch {
             case e: Throwable => {
@@ -223,15 +377,14 @@ mod EngineUpdate {
             }
         }
 
-    // WhyNot: 全行を溜めない — 読みたいのは道具が最後に出す JSON の 1 行だけで、
-    // 進み具合の行は log へ流した時点で役目が済んでいる。
-    def readLines(reader: BufferedReader, onLine: String -> Unit \ IO, acc: List[String]): List[String] \ IO =
+    def readLines(reader: BufferedReader, onLine: String -> Unit \ IO,
+                  keep: String -> Bool, acc: List[String]): List[String] \ IO =
         let line = reader.readLine();
         if (Object.isNull(line)) List.reverse(acc)
         else {
             onLine(line);
-            let kept = if (String.startsWith(prefix = "{", String.trim(line))) line :: acc else acc;
-            readLines(reader, onLine, kept)
+            let kept = if (keep(line)) line :: acc else acc;
+            readLines(reader, onLine, keep, kept)
         }
 
     def javaHome(): String \ IO = System.getProperty("user.home")

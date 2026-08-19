@@ -113,6 +113,13 @@ export function realApi(base: string): Api {
           return sendJsonReason("POST", `${base}/engine/update`, payload);
         case "engineUpdateLog":
           return getJson(`${base}/engine/update/log`);
+        case "engineGameCheck":
+          // 開いているゲームが engine に追いついているか(網の向こうは見ない)
+          return getJson(`${base}/engine/game/check`);
+        case "engineGameUpgrade":
+          // engine はそのままで、開いているゲームだけを追いつかせる。
+          // 進み具合は engineUpdateLog と同じ口から出る(走行権を共有している)
+          return sendJsonReason("POST", `${base}/engine/upgrade-game`, payload);
         case "activeDocs":
           // ゲームが書く「いま画面に出ている Doc」。無いのは普通(Elm 側が静かに無視)
           return getJson(`${base}/file?path=${encodeURIComponent("debug/active-docs.json")}`);

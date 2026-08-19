@@ -83,14 +83,85 @@ mod TestEngineUpdate {
              EngineUpdate.shouldOffer({current = "", available = true}),
              EngineUpdate.shouldOffer({current = "0.31.0", available = false})))
 
-    /// 押せるのは、置き場から走っている macOS のときだけ。
+    /// 押せるのは、置き場から走っている macOS で、道具が揃っているときだけ。
     @Test
-    def testCanUpdate(): Unit \ Assert =
+    def testBlockReasonIsEmptyOnlyWhenEverythingIsReady(): Unit \ Assert =
         Assert.assertEq(
-            expected = (true, false, false),
-            (EngineUpdate.canUpdate({onWindows = false, fromStore = true}),
-             EngineUpdate.canUpdate({onWindows = true, fromStore = true}),
-             EngineUpdate.canUpdate({onWindows = false, fromStore = false})))
+            expected = "",
+            EngineUpdate.blockReason({onWindows = false, fromStore = true, hasTool = true}))
+
+    /// 押せないときは、次に何をすればよいかまで言う。
+    @Test
+    def testBlockReasonNamesTheWayOut(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, true, true),
+            (String.contains(substr = "Windows",
+                EngineUpdate.blockReason({onWindows = true, fromStore = true, hasTool = true})),
+             String.contains(substr = "リポ",
+                EngineUpdate.blockReason({onWindows = false, fromStore = false, hasTool = true})),
+             String.contains(substr = "入れ直して",
+                EngineUpdate.blockReason({onWindows = false, fromStore = true, hasTool = false}))))
+
+    /// 押せるはずなのに道具が無いときだけ、上げる先が分からなくても理由を出す。
+    @Test
+    def testIsStuckOnlyWhenTheToolIsMissing(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false, false),
+            (EngineUpdate.isStuck({onWindows = false, fromStore = true, hasTool = false}),
+             EngineUpdate.isStuck({onWindows = false, fromStore = true, hasTool = true}),
+             EngineUpdate.isStuck({onWindows = true, fromStore = true, hasTool = false}),
+             EngineUpdate.isStuck({onWindows = false, fromStore = false, hasTool = false})))
+
+    /// ゲームの flix.toml から、そのゲームが使う engine のバージョンを読む。
+    @Test
+    def testGameVersionOfReadsTheDependencyLine(): Unit \ Assert =
+        let toml = String.unlines(
+            "[package]" ::
+            "version     = \"0.1.0\"" ::
+            "[dependencies]" ::
+            "\"github:ababup1192/flix_game_engine\" = { version = \"0.31.0\", security = \"unrestricted\" }" :: Nil);
+        Assert.assertEq(expected = Some("0.31.0"), EngineUpdate.gameVersionOf(toml))
+
+    /// engine の依存を書いていない flix.toml では None (自分の version を拾わない)。
+    @Test
+    def testGameVersionOfWithoutTheEngineDependency(): Unit \ Assert =
+        Assert.assertEq(
+            expected = None,
+            EngineUpdate.gameVersionOf("[package]\nversion = \"0.1.0\"\n"))
+
+    /// 依存が複数行へ割れていても読む。
+    @Test
+    def testGameVersionOfAcrossLines(): Unit \ Assert =
+        let toml = String.unlines(
+            "[dependencies]" ::
+            "\"github:ababup1192/flix_game_engine\" = {" ::
+            "    version = \"0.32.0\", security = \"unrestricted\" }" :: Nil);
+        Assert.assertEq(expected = Some("0.32.0"), EngineUpdate.gameVersionOf(toml))
+
+    /// コメントで残っている古い依存は読まない。
+    @Test
+    def testGameVersionOfIgnoresCommentedOutLines(): Unit \ Assert =
+        let toml = String.unlines(
+            "# \"github:ababup1192/flix_game_engine\" = { version = \"0.20.0\" }" ::
+            "\"github:ababup1192/flix_game_engine\" = { version = \"0.32.0\" }" :: Nil);
+        Assert.assertEq(expected = Some("0.32.0"), EngineUpdate.gameVersionOf(toml))
+
+    /// 別の owner の同名リポは読まない (載せ替えの道具は ababup1192 の物しか触らない)。
+    @Test
+    def testGameVersionOfIgnoresOtherOwners(): Unit \ Assert =
+        Assert.assertEq(
+            expected = None,
+            EngineUpdate.gameVersionOf("\"github:someone/flix_game_engine\" = { version = \"0.31.0\" }"))
+
+    /// 載せ替えを勧めるのは、ゲームが engine より古いときだけ。
+    @Test
+    def testGameBehindOnlyWhenTheGameIsOlder(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, false, false, false),
+            (EngineUpdate.gameBehind({game = Some("0.31.0"), engine = "0.32.0"}),
+             EngineUpdate.gameBehind({game = Some("0.32.0"), engine = "0.32.0"}),
+             EngineUpdate.gameBehind({game = Some("0.33.0"), engine = "0.32.0"}),
+             EngineUpdate.gameBehind({game = None, engine = "0.32.0"})))
 
     /// 指し先を進めるのは、終了コードが 0 で、道具が置いたと言ったときだけ。
     @Test

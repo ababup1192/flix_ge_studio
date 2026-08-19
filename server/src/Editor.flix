@@ -154,6 +154,15 @@ mod Editor {
                 sendJson(status, json, exchange)
             }
             case ("GET", "/engine/update/log") => sendJson(200, Runner.logJson(engineUpdate), exchange)
+            // 開いているゲームが engine に追いついているか。
+            case ("GET", "/engine/game/check") =>
+                sendJson(200, EngineUpdate.gameCheckJson(Projects.currentDir(selection)), exchange)
+            // engine はそのままで、開いているゲームだけを追いつかせる。
+            case ("POST", "/engine/upgrade-game") => {
+                let (status, json) = EngineUpdate.launchGameUpgrade(
+                    engineUpdate, Projects.currentDir(selection));
+                sendJson(status, json, exchange)
+            }
             // 「新しいゲームをはじめる」のジャンル一覧と公式プロンプト。
             // プロジェクト未選択でも呼べる (まっさらからの入口なので)。
             case ("GET", "/genesis/genres") => sendJson(200, Genesis.genresJson(), exchange)

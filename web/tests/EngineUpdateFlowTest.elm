@@ -206,4 +206,93 @@ suite =
                 in
                 ( failed.engineUpdate.step, failed.engineUpdate.note )
                     |> Expect.equal ( EngineUpdate.Failed, "!! 照合の相手が揃っていません" )
+        , test "engine は最新でも、ゲームが古ければそろえるボタンを出す" <|
+            \() ->
+                ( behindGame.engineUpdate.gameLag
+                , EngineUpdate.canUpgradeGame behindGame.engineUpdate
+                )
+                    |> Expect.equal ( Just "0.31.0", True )
+        , test "ゲームが追いついていればボタンを出さない" <|
+            \() ->
+                let
+                    ( m0, _ ) =
+                        Main.init ()
+
+                    ( after, _ ) =
+                        Main.update
+                            (Main.GotApiResponse
+                                (response "engineGameCheck"
+                                    [ ( "engine", E.string "0.32.0" )
+                                    , ( "game", E.string "0.32.0" )
+                                    , ( "behind", E.bool False )
+                                    ]
+                                )
+                            )
+                            m0
+                in
+                EngineUpdate.canUpgradeGame after.engineUpdate
+                    |> Expect.equal False
+        , test "engine を差し替えた後でも、次に開いたゲームが古ければボタンが出る" <|
+            \() ->
+                let
+                    ( working, _ ) =
+                        Main.update (Main.EngineUpdateClicked "0.32.0") offered
+
+                    ( finished, _ ) =
+                        Main.update
+                            (Main.GotApiResponse
+                                (response "engineUpdateLog"
+                                    [ ( "running", E.bool False )
+                                    , ( "exitCode", E.int 0 )
+                                    , ( "lines", E.list E.string [ "[update] engine 0.32.0 に切り替えました" ] )
+                                    ]
+                                )
+                            )
+                            working
+
+                    ( after, _ ) =
+                        Main.update
+                            (Main.GotApiResponse
+                                (response "engineGameCheck"
+                                    [ ( "engine", E.string "0.32.0" )
+                                    , ( "game", E.string "0.31.0" )
+                                    , ( "behind", E.bool True )
+                                    ]
+                                )
+                            )
+                            finished
+                in
+                ( after.engineUpdate.step, EngineUpdate.canUpgradeGame after.engineUpdate )
+                    |> Expect.equal ( EngineUpdate.Finished, True )
+        , test "そろえるを押すと進み具合になり、同じログ口を引き始める" <|
+            \() ->
+                let
+                    ( working, _ ) =
+                        Main.update Main.EngineGameUpgradeClicked behindGame
+                in
+                ( working.engineUpdate.step, EngineUpdate.isPolling working.engineUpdate )
+                    |> Expect.equal ( EngineUpdate.Working, True )
         ]
+
+
+{-| engine は最新で、開いているゲームだけが古い姿。
+-}
+behindGame : Main.Model
+behindGame =
+    let
+        ( m0, _ ) =
+            Main.init ()
+
+        ( m1, _ ) =
+            Main.update
+                (Main.GotApiResponse
+                    (response "engineGameCheck"
+                        [ ( "engine", E.string "0.32.0" )
+                        , ( "game", E.string "0.31.0" )
+                        , ( "behind", E.bool True )
+                        ]
+                    )
+                )
+                m0
+    in
+    m1

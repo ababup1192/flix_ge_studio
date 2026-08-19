@@ -1272,6 +1272,7 @@ type Msg
     | ProjectNewPollTick
     | EngineUpdateClicked String
     | EngineUpdatePollTick
+    | EngineGameUpgradeClicked
       -- フォーム対象外(JSON-Schema)の右ペインに出すアトリエプレビューの読み込み失敗
     | ForeignPreviewFailed
 
@@ -1684,6 +1685,12 @@ update msg model =
 
         EngineUpdatePollTick ->
             ( model, requestInfo "engineUpdateLog" )
+
+        EngineGameUpgradeClicked ->
+            -- engine はそのままで、開いているゲームだけを追いつかせる
+            request "engineGameUpgrade"
+                (E.object [])
+                { model | engineUpdate = EngineUpdate.startedGameUpgrade model.engineUpdate }
 
         ForeignPreviewFailed ->
             -- プレビュー未焼成(404)。文言に切り替えるだけ(致命ではない)
@@ -6080,7 +6087,7 @@ handleOkByKind env model =
               }
               -- 新しいバージョンが出ているかは、今のバージョンが分かってから
               -- 1 回だけ見に行く(サーバが GitHub を叩くので繰り返さない)
-            , requestInfo "engineUpdateCheck"
+            , Effect.batch [ requestInfo "engineUpdateCheck", requestInfo "engineGameCheck" ]
             )
 
         "engineUpdateCheck" ->
@@ -6093,6 +6100,17 @@ handleOkByKind env model =
 
         "engineUpdateStart" ->
             -- 202(受理)。すぐ最初のログを取りに行く(以後は 1 秒のポーリング)
+            ( model, requestInfo "engineUpdateLog" )
+
+        "engineGameCheck" ->
+            case D.decodeValue EngineUpdate.gameDecoder env.body of
+                Ok check ->
+                    ( { model | engineUpdate = EngineUpdate.gotGameCheck check model.engineUpdate }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "engineGameUpgrade" ->
             ( model, requestInfo "engineUpdateLog" )
 
         "engineUpdateLog" ->
@@ -6109,7 +6127,7 @@ handleOkByKind env model =
                         -- 切り替わったので今のバージョンを引き直す。
                         -- WhyNot: 帯の版を信じて書き込まない — 指し先を進めるのは
                         -- サーバの仕事で、進んだかどうかはサーバに聞くのが確か
-                        ( m1, requestInfo "engineVersionOnly" )
+                        ( m1, Effect.batch [ requestInfo "engineVersionOnly", requestInfo "engineGameCheck" ] )
 
                     else
                         ( m1, Effect.none )
@@ -6644,6 +6662,7 @@ handleOkByKind env model =
                                     , root = result.dir
                                     , picker = emptyPicker
                                     , newGame = NewGame.init
+                                    , engineUpdate = EngineUpdate.switchedGame model.engineUpdate
                                     , groups = []
                                     , dashboards = []
                                     , dashboard = Nothing
@@ -6735,7 +6754,18 @@ handleOkByKind env model =
                                     ( m2, Effect.none )
                     in
                     -- 着地はホームなので、その中身(提案とチケット)も切替の足で取る
-                    ( m3, Effect.batch [ c1, c2, sketchFx, requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ] )
+                    -- engine に追いついているかはゲームごとに違うので、切替のたびに見直す
+                    ( m3
+                    , Effect.batch
+                        [ c1
+                        , c2
+                        , sketchFx
+                        , requestInfo "journeyState"
+                        , requestInfo "annotationsList"
+                        , requestInfo "sketchList"
+                        , requestInfo "engineGameCheck"
+                        ]
+                    )
 
                 Ok (Api.SwitchErr message) ->
                     ( { model | picker = updatePicker (\p -> { p | busy = Nothing, error = Just message }) model }
@@ -7745,6 +7775,13 @@ handleErrByKind env message model =
         "engineUpdateStart" ->
             ( { model | engineUpdate = EngineUpdate.startFailed message model.engineUpdate }, Effect.none )
 
+        "engineGameUpgrade" ->
+            ( { model | engineUpdate = EngineUpdate.startFailed message model.engineUpdate }, Effect.none )
+
+        "engineGameCheck" ->
+            -- 口が無い(古いサーバ)。ゲーム側の帯を出さないだけ
+            ( model, Effect.none )
+
         "getFile" ->
             if Just env.id == model.schemaReq then
                 -- スキーマが無いのは普通のこと(生テキスト編集は常に生きている)
@@ -8344,7 +8381,9 @@ viewTopbarRow model extras =
          , viewPlayButton model
          , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
             [ viewEngineVersion model
-            , EngineUpdate.view { onUpdate = EngineUpdateClicked } model.engineUpdate
+            , EngineUpdate.view
+                { onUpdate = EngineUpdateClicked, onUpgradeGame = EngineGameUpgradeClicked }
+                model.engineUpdate
             , viewSearchButton
             , viewFailureBadge model
             , viewReferenceBadge model
