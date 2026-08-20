@@ -13,12 +13,13 @@ mod TestEngineTasks {
     /// macOS 以外はウィンドウの旗が消える (他の OS の JVM はこの旗で起動に失敗するため)。
     /// 出力の UTF-8 固定と積むスタックの広げ (-Xss16m) はどの OS のどの仕事にも必ず付く
     /// (Windows の文字化け対策と、型検査の深い再帰でスタックが溢れるのを防ぐため)。
-    /// ヒープと GC の旗は仕事で変わる (実機再生は ZGC + 2GB・他は MaxRAMPercentage)。
+    /// ヒープと GC の旗は仕事で変わる (実機再生は世代別 ZGC + 512MB・他は MaxRAMPercentage 50%)。
     @Test
     def testArgv(): Unit \ Assert =
         let exec = {javaExe = "/jre/bin/java", flixJar = "/engine/bin/flix.jar"};
         let utf8 = "-Dstdout.encoding=UTF-8" :: "-Dstderr.encoding=UTF-8" :: Nil;
-        let play = "-Xss16m" :: "-XX:+UseZGC" :: "-Xmx2g" :: utf8;
+        let play = "-Xss16m" :: "-XX:+UseZGC" :: "-XX:+ZGenerational" :: "-Xmx2g"
+            :: "-XX:SoftMaxHeapSize=512m" :: "-XX:ZUncommitDelay=60" :: utf8;
         let headless = "-Xss16m" :: "-XX:MaxRAMPercentage=50" :: utf8;
         Assert.assertEq(
             expected = (
