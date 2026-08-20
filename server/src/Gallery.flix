@@ -182,4 +182,10 @@ mod Gallery {
     /// gallery/ の PNG の mtime 一覧 (NextStep の鮮度判定に使う)。
     pub def galleryMtimes(dir: String): List[Int64] \ IO =
         listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#mtime)
+
+    /// gallery/ の PNG のうち、指定の時刻以降に書かれた物の名前 (Changes の自動追随が使う)。
+    pub def galleryNamesSince(dir: String, since: Int64): List[String] \ IO =
+        listNamed(suffix = ".png", dir, "gallery")
+            |> List.filter(entry -> entry#mtime >= since)
+            |> List.map(entry -> entry#name)
 }

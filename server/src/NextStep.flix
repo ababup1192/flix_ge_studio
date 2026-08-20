@@ -10,7 +10,7 @@ mod NextStep {
     use Util.Json.Json.{JObject, JString, JNumber, JBool}
 
     /// 判断の材料。atelierCandidates = atelier/ の試作 JSON の数、
-    /// staleGallery = アセットの方が絵より新しい (焼き直しが要る)、diffCount = リファレンス画像との差分の数、
+    /// staleGallery = アセットの方が絵より新しい (作り直しが要る)、diffCount = リファレンス画像との差分の数、
     /// gameRunning = このプロジェクトのゲームが走っているか。
     pub type alias Checks = {
         atelierCandidates = Int32,
@@ -67,21 +67,54 @@ mod NextStep {
               nav    = "atelier" }
 
     /// アセット (assets/*.json) の方が絵 (gallery/*.png) より新しいか。
-    /// 絵が 1 枚も無いのにアセットがあるときも「焼き直しが要る」。アセットが無ければ焼く物も無い。
+    /// 絵が 1 枚も無いのにアセットがあるときも「作り直しが要る」。アセットが無ければ作る物も無い。
+    ///
+    /// WhyNot: 絵の側の最も古い 1 枚と比べない。gallery/ には描き出しが書き直さない PNG
+    /// (別の道具が置いた調べ物のシート等) が混ざり得て、その 1 枚が古いまま居座ると
+    /// 判定が永久に真になる。描き出しても真のままなので、描き直しが止まらなくなる。
     pub def isStale(assetMtimes: List[Int64], galleryMtimes: List[Int64]): Bool =
+        needsBake(assetMtimes, galleryMtimes, None)
+
+    /// 絵を作り直す必要があるか。stamp は「最後に成功した描き出しを起こす直前に測った
+    /// アセットの新しさ」。
+    ///
+    /// WhyNot: stamp があるときに絵の mtime を見ない。絵を誰が書いたかは判定の材料にならず、
+    /// 「前の描き出しを起こした後にアセットが動いたか」だけが作り直す理由だから。
+    /// WhyNot: 絵が 1 枚も無い場合だけは stamp があっても描き出す — 人が gallery/ を
+    /// 消したときに「作り済み」のまま何も知らせず絵が戻らないのは、原因の分からない故障になる。
+    pub def needsBake(assetMtimes: List[Int64], galleryMtimes: List[Int64],
+                      stamp: Option[Int64]): Bool =
         match List.maximum(assetMtimes) {
-            case None           => false
-            case Some(newest)   => match List.minimum(galleryMtimes) {
-                case None         => true
-                case Some(oldest) => newest > oldest
-            }
+            case None         => false
+            case Some(newest) =>
+                if (List.isEmpty(galleryMtimes)) true
+                else match stamp {
+                    case Some(baked) => newest > baked
+                    // 覚えていない (Studio を起こした直後) は、いちばん新しい絵と比べる。
+                    case None        => match List.maximum(galleryMtimes) {
+                        case None        => true
+                        case Some(drawn) => newest > drawn
+                    }
+                }
         }
+
+    /// 描き出しの入力になるアセットか。*.palette.json は Studio が描き出しの前に毎回
+    /// 作り直す生成物 (mk/game.mk の palette と同じ物) なので、入力から外す。
+    /// 外さないと、描き出しを起こす直前に測った値をこのファイル自身が必ず追い越して、
+    /// 次の描き出しの理由になり続ける。
+    pub def isSourceAsset(name: String): Bool =
+        String.endsWith(suffix = ".json", name)
+            and not String.endsWith(suffix = ".palette.json", name)
 
     // ── IO: 材料集め ──────────────────────────────────────
 
-    /// アセット (assets/*.json) が絵 (gallery/*.png) より新しいか (Changes の自動検査が使う)。
-    pub def staleGalleryOf(dir: String): Bool \ IO =
-        isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir))
+    /// 絵を作り直す必要があるか (Changes の自動検査が使う)。stamp は Changes が覚えている。
+    pub def staleGalleryOf(dir: String, stamp: Option[Int64]): Bool \ IO =
+        needsBake(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir), stamp)
+
+    /// いまのアセットの新しさ (描き出しを起こす直前に測り、成功したら stamp にする値)。
+    pub def assetsMaxMtime(dir: String): Option[Int64] \ IO =
+        List.maximum(jsonMtimes(dir, "assets"))
 
     /// GET /journey/state の本文。unseen は Changes の未読の知らせの数。
     pub def stateJson(game: Game.Runtime, dir: String, unseen: Int32): Json \ IO =
@@ -136,5 +169,5 @@ mod NextStep {
         let entries = new JFile("${dir}/${subdir}").listFiles();
         if (Object.isNull(entries)) Nil
         else Array.toList(entries)
-            |> List.filter(file -> file.isFile() and String.endsWith(suffix = ".json", file.getName()))
+            |> List.filter(file -> file.isFile() and isSourceAsset(file.getName()))
 }

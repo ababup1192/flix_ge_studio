@@ -13,6 +13,7 @@
 // 「触っていないのに知らせが来た」を成立させるのが仕事。
 mod Changes {
     import java.util.concurrent.{ConcurrentHashMap => JMap}
+    import java.lang.System
     import java.io.{File => JFile}
     import java.io.FileOutputStream
     import java.nio.file.Files
@@ -20,7 +21,11 @@ mod Changes {
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JBool, JNumber}
 
-    /// dir ごとの記録 (キー: "<dir>|list" = "name,ver;name,ver…"、"<dir>|seen")。
+    /// dir ごとの記録 (キー: "<dir>|list" = "name,ver;name,ver…"、"<dir>|seen"、
+    /// "<dir>|stamp" = 最後に成功した描き出しを起こす直前のアセットの新しさ、
+    /// "<dir>|failedStamp" = 失敗したときの同じ値 (これを超えるまで起こし直さない)、
+    /// "<dir>|pending" = 起こした描き出しの通し番号、"<dir>|pendingStamp" = その控え、
+    /// "<dir>|renderAt" = 最後に描き出しを起こした時刻)。
     /// Runner と同じ理由で Java の Map を借りる (リクエストをまたいで生きる可変の器)。
     pub type alias State = JMap[String, String]
 
@@ -28,22 +33,36 @@ mod Changes {
 
     /// 1 目盛り進めて、いまの様子を返す。冪等 — 何度呼んでも安全。
     pub def pump(state: State, runner: Runner.State, game: Game.Runtime, dir: String): Json \ IO =
+        observeBake(state, runner, dir);
         let items = Gallery.diffItemsOf(dir);
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingReference") |> List.map(fst);
         let running = Runner.runningTarget(runner) == Some("render");
-        let stale = NextStep.staleGalleryOf(dir);
+        let stale = NextStep.staleGalleryOf(dir, stampOf(state, dir));
         let baking =
-            if (stale and not running) {
+            if (stale and not running and not isBlocked(state, dir)) {
+                // 起こす直前に測る。描き出している最中に入った保存はこの値より新しいので、
+                // 次の目盛りでそのまま拾える。
+                let candidate = NextStep.assetsMaxMtime(dir);
+                let startedAt = System.currentTimeMillis();
                 let (status, _) = launchBake(runner, game, dir);
+                if (status == 202) {
+                    discard state.put("${dir}|renderAt", "${startedAt}");
+                    match (Runner.currentRunId(runner), candidate) {
+                        case (Some(runId), Some(mtime)) =>
+                            discard state.put("${dir}|pending", "${runId}");
+                            discard state.put("${dir}|pendingStamp", "${mtime}")
+                        case _ => ()
+                    }
+                } else ();
                 status == 202
             } else
                 running;
-        // 焼きたての時だけ追随する (stale の間の差分は古い絵との比較なので信用しない)
+        // 描き出した直後の時だけ追随する (stale の間の差分は古い絵との比較なので信用しない)
         if (not stale and not baking and (not List.isEmpty(diffs) or not List.isEmpty(firsts))) {
             discard new JFile("${dir}/reference").mkdirs();
             discard new JFile("${dir}/reference/archive").mkdirs();
-            foreach (name <- firsts)
+            foreach (name <- ownNames(state, dir, firsts))
                 copyFile("${dir}/gallery/${name}", "${dir}/reference/${name}");
             foreach (name <- diffs) {
                 let ver = nextVer(dir, name);
@@ -67,6 +86,79 @@ mod Changes {
                     busy = "ほかの作業が走っています")
             case None =>
                 Runner.launchTarget(runner, dir, "render", busy = "ほかの作業が走っています")
+        }
+
+    // ── 描き出しの結果を後から観測する ─────────────────────
+
+    /// 自分が起こした描き出しが終わっていれば、起こす直前に測っておいた値 (pendingStamp) を
+    /// 成功なら stamp、失敗なら failedStamp へ移す。
+    ///
+    /// WhyNot: 通し番号が合わないときに結果を決めつけない。Runner が覚えているのは最後の
+    /// 1 本だけなので、自分の描き出しを観測する前にアトリエのプレビュー等が始まると
+    /// 永久にすれ違う。番号が自分より進んでいたら「結果は分からない」として控えだけ落とし、
+    /// 次の目盛りで判定をやり直す。
+    def observeBake(state: State, runner: Runner.State, dir: String): Unit \ IO =
+        match (pendingOf(state, dir), Runner.lastRun(runner)) {
+            case (Some(pending), Some(last)) =>
+                if (last#runId == pending) {
+                    let candidate = pendingStampOf(state, dir);
+                    clearPending(state, dir);
+                    if (last#exitCode == 0) {
+                        discard state.remove("${dir}|failedStamp");
+                        putStamp(state, "${dir}|stamp", candidate)
+                    } else
+                        // 失敗したまま起こし続けると、直らない限り繰り返しになる。
+                        // アセットがこの値を追い越す (＝誰かが直した) まで自動では起こさない。
+                        putStamp(state, "${dir}|failedStamp", candidate)
+                } else if (last#runId > pending)
+                    clearPending(state, dir)
+                else ()
+            case _ => ()
+        }
+
+    def clearPending(state: State, dir: String): Unit \ IO =
+        discard state.remove("${dir}|pending");
+        discard state.remove("${dir}|pendingStamp")
+
+    def putStamp(state: State, key: String, value: Option[Int64]): Unit \ IO =
+        match value {
+            case Some(mtime) => discard state.put(key, "${mtime}")
+            case None        => ()
+        }
+
+    def stampOf(state: State, dir: String): Option[Int64] \ IO =
+        int64At(state, "${dir}|stamp")
+
+    def pendingStampOf(state: State, dir: String): Option[Int64] \ IO =
+        int64At(state, "${dir}|pendingStamp")
+
+    def int64At(state: State, key: String): Option[Int64] \ IO =
+        let value = state.get(key);
+        if (Object.isNull(value)) None else Int64.fromString(value)
+
+    def pendingOf(state: State, dir: String): Option[Int32] \ IO =
+        let value = state.get("${dir}|pending");
+        if (Object.isNull(value)) None else Int32.fromString(value)
+
+    /// 前の描き出しが失敗した値のまま、アセットが動いていないか。
+    def isBlocked(state: State, dir: String): Bool \ IO =
+        match (int64At(state, "${dir}|failedStamp"), NextStep.assetsMaxMtime(dir)) {
+            case (Some(failed), Some(now)) => now <= failed
+            case (Some(_), None)           => true
+            case _                         => false
+        }
+
+    /// 追随してよい絵の名前 — 最後に起こした描き出しが書いた物だけ。
+    ///
+    /// WhyNot: gallery/ の PNG を名前だけで基準にしない。gallery/ には別の道具が置いた
+    /// 調べ物のシートが混ざり得て、それを基準に取り込むと、以後その道具が動くたびに
+    /// 「見た目が変わった」と知らせることになる。
+    def ownNames(state: State, dir: String, names: List[String]): List[String] \ IO =
+        match int64At(state, "${dir}|renderAt") {
+            case None     => Nil
+            case Some(at) =>
+                let written = Gallery.galleryNamesSince(dir, at);
+                names |> List.filter(name -> List.memberOf(name, written))
         }
 
     /// POST /changes/seen — 知らせを既読にする。

@@ -162,6 +162,32 @@ mod Runner {
         let targetVal: String = state.get("target");
         if (Object.isNull(runningVal) or Object.isNull(targetVal)) None else Some(targetVal)
 
+    /// 終わった最後の 1 本 (走行中は None)。Changes が「自分が起こした描き出しが
+    /// 成功して終わったか」を後から確かめるのに使う。
+    ///
+    /// WhyNot: 終了の瞬間に呼び戻す形にしない。終わりを記録するのは仕事の側のスレッドで、
+    /// 判定を持つのは HTTP スレッド。呼び戻しを通すと、走らせ方 3 通り (java 直呼び・
+    /// 走行中のゲームへの依頼・make) それぞれの終了点を全部つなぎ直すことになる。
+    pub def lastRun(state: State): Option[{target = String, runId = Int32, exitCode = Int32}] \ IO =
+        let runningVal: String = state.get("running");
+        let targetVal: String = state.get("target");
+        let runIdVal: String = state.get("runId");
+        let exitVal: String = state.get("exitCode");
+        if (not Object.isNull(runningVal) or Object.isNull(targetVal)
+            or Object.isNull(runIdVal) or Object.isNull(exitVal))
+            None
+        else
+            match (Int32.fromString(runIdVal), Int32.fromString(exitVal)) {
+                case (Some(runId), Some(exitCode)) =>
+                    Some({ target = targetVal, runId = runId, exitCode = exitCode })
+                case _ => None
+            }
+
+    /// いま記録されている通し番号 (まだ 1 本も走っていなければ None)。
+    pub def currentRunId(state: State): Option[Int32] \ IO =
+        let value: String = state.get("runId");
+        if (Object.isNull(value)) None else Int32.fromString(value)
+
     /// 通し番号を 1 進めて返す (コンテナが新品なら 1 から)。
     def nextRunId(state: State): Int32 \ IO =
         let prev: String = state.get("runId");
