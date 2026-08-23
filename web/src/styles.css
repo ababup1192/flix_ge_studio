@@ -694,6 +694,187 @@ sl-alert.notice::part(message) {
   color: var(--color-warn);
 }
 
+/* ---- タイムライン(固定トラック) ----
+   knob の「見え方」枠(狭い・幅可変)に入るので、並べ方はコンテナ基準。
+   ラベルは行の上に載せ、トラック面は常に全幅を使う。 */
+
+.tl-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  container-type: inline-size;
+  border: 1px solid var(--color-edge);
+  border-radius: 3px;
+  background: var(--color-panel);
+  padding: 0.6rem 0.7rem;
+  overflow: hidden;
+}
+
+.tl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.tl-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-soft);
+}
+
+.tl-note {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-ink-faint);
+}
+
+/* pointer 面。行が薄いので move はここで受ける。横 padding 0 で
+   トラック面と左右端をそろえる(fx の意味を一致させる) */
+.tl-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  touch-action: none;
+  user-select: none;
+}
+
+.tl-ticks {
+  position: relative;
+  height: 14px;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--color-edge);
+  pointer-events: none;
+}
+
+.tl-tick span {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-ink-faint);
+  white-space: nowrap;
+}
+
+.tl-row-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-ink-faint);
+  margin-top: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-track {
+  position: relative;
+  height: 26px;
+  cursor: ew-resize;
+  background: var(--color-well);
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+  overflow: visible;
+}
+
+/* トラック面の子は全て当たり判定を持たない。pointDecoder の offsetX は
+   target 基準なので、子が target になると割合が壊れる(sfx-wave と同じ理由) */
+.tl-track > * {
+  pointer-events: none;
+}
+
+.tl-phase,
+.tl-clip,
+.tl-rest {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--color-accent) 28%, transparent);
+  border-right: 1px solid var(--color-edge);
+}
+
+.tl-clip {
+  left: 0;
+}
+
+/* 何も動かないウェイト / クリップの残り(別の動きになる区間)は沈めて、
+   詰めるべき場所が目で分かるようにする */
+.tl-wait,
+.tl-rest {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+
+/* 上限秒で切られているバー。右端を伸ばしても絵が変わらない印 */
+.tl-capped {
+  border-right: 3px double var(--color-warn);
+}
+
+.tl-phase-label {
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.tl-grip {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 0;
+  border-left: 2px solid var(--color-accent);
+}
+
+.tl-grip-dot {
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-well);
+}
+
+.tl-grip-label {
+  position: absolute;
+  top: -12px;
+  left: -14px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+/* 帯全体の右端(総尺)。境目より太く、別の物だと分かるように */
+.tl-grip-total {
+  border-left: 4px solid var(--color-ok);
+}
+
+.tl-grip-total .tl-grip-dot {
+  background: var(--color-ok);
+}
+
+.tl-grip-total .tl-grip-label {
+  color: var(--color-ok);
+}
+
+.tl-empty {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-warn);
+}
+
 /* 検索から飛んだ欄の目印。1 度だけ薄く光らせて、どこへ来たのかを示す */
 .jump-flash {
   animation: jump-flash 1.2s ease-out;

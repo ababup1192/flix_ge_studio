@@ -15,12 +15,15 @@ update は Cmd でなく自前データ Effect を返す(Cmd 化は main の Eff
 -}
 
 import Api
+import Atelier
 import Browser
 import Browser.Events
-import Atelier
+import ContextMenu
+import CrossEdit
 import Dashboards
 import Dict exposing (Dict)
 import Doc
+import DocKind
 import Draft
 import Edit exposing (Op(..), Seg(..), encodeSeg, pathKey)
 import EditHistory
@@ -28,48 +31,46 @@ import Effect exposing (Effect)
 import EngineUpdate
 import EntryOps
 import EntryTable
-import GalleryView
-import ReferenceView
 import FileVerbs
+import FormHelp
+import GalleryView
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
 import Html.Keyed
-import FormHelp
 import Html.Lazy as HL
-import SketchCompare
-import SketchPad
-import Svg
-import Svg.Attributes as SA
 import Journey
 import Json.Decode as D
 import Json.Encode as E
 import Lint
-import NewGame
 import MapEditor
+import NewGame
 import PianoRoll
 import PixelEditor
-import SfxEditor
 import Plugins
 import Progress
+import ReferenceView
 import Refs
-import ContextMenu
-import CrossEdit
-import DocKind
 import SceneView
-import SearchView
-import Waveform
 import Schema
 import SchemaForm
+import SearchView
 import Selection exposing (EntrySel(..))
-import Skeleton
 import Set exposing (Set)
+import SfxEditor
+import Skeleton
+import SketchCompare
+import SketchPad
 import Sources
+import Svg
+import Svg.Attributes as SA
+import Table
 import Tickets
 import Time
-import Table
 import Url
+import Waveform
 import Widgets.KeyCapture as KeyCapture
+import Widgets.Timeline as Timeline
 import Widgets.Weights as Weights
 import Wizard
 
@@ -146,7 +147,8 @@ type SchemaState
     | SchemaReady Schema.Schema
 
 
-{-| 編集 1 件の封筒(語彙は Edit モジュール — 履歴も同じ形を運ぶ)。 -}
+{-| 編集 1 件の封筒(語彙は Edit モジュール — 履歴も同じ形を運ぶ)。
+-}
 type alias EditPayload =
     Edit.Payload
 
@@ -236,7 +238,8 @@ type DraftKind
         }
 
 
-{-| weights の数値欄の確定規則(0〜total・整数 total は整数丸め)。 -}
+{-| weights の数値欄の確定規則(0〜total・整数 total は整数丸め)。
+-}
 weightsSpec : Weights.Config -> Draft.NumberSpec
 weightsSpec config =
     { isInt = config.decimals == 0
@@ -256,7 +259,8 @@ type NavTarget
     | NavJump Jump
 
 
-{-| ダッシュボードからのジャンプ先(ファイルを開いて、このエントリを選ぶ)。 -}
+{-| ダッシュボードからのジャンプ先(ファイルを開いて、このエントリを選ぶ)。
+-}
 type alias Jump =
     { path : String
     , sectionKey : String
@@ -314,7 +318,8 @@ type alias PortraitImage =
     }
 
 
-{-| 肖像キャッシュの 1 項目。Loading を項目として持つのが二重リクエストの抑止。 -}
+{-| 肖像キャッシュの 1 項目。Loading を項目として持つのが二重リクエストの抑止。
+-}
 type PortraitState
     = PortraitLoading
     | PortraitReady PortraitImage
@@ -342,14 +347,16 @@ type alias CrossRenameRun =
     }
 
 
-{-| 進行中の 1 段(封筒 id・対象パス)。Putting は保存する本文の反映数も抱える。 -}
+{-| 進行中の 1 段(封筒 id・対象パス)。Putting は保存する本文の反映数も抱える。
+-}
 type CrossStep
     = CrossGetting Int String
     | CrossEditing Int String Int
     | CrossPutting Int String Int
 
 
-{-| catalog id 改名の 1 回ぶん(どのセクションのどの id を何に)。 -}
+{-| catalog id 改名の 1 回ぶん(どのセクションのどの id を何に)。
+-}
 type alias RenameRequest =
     { sectionKey : String
     , oldId : String
@@ -368,7 +375,8 @@ type alias RenameState =
     }
 
 
-{-| view のイベントが持ち回る「draft の素」。text だけが後から育つ。 -}
+{-| view のイベントが持ち回る「draft の素」。text だけが後から育つ。
+-}
 type alias DraftSeed =
     { path : List Seg
     , kind : DraftKind
@@ -402,7 +410,8 @@ type alias DragState =
     }
 
 
-{-| 幅を変えられるペイン。中央は残り幅なのでつまみを持たない。 -}
+{-| 幅を変えられるペイン。中央は残り幅なのでつまみを持たない。
+-}
 type PaneSide
     = LeftPane
     | RightPane
@@ -425,6 +434,7 @@ type PreviewState
     = PreviewNone
     | PreviewShowing Api.Preview
     | PreviewFailed String
+
 
 
 -- 「+ 新しいファイル」ウィザード
@@ -718,6 +728,7 @@ type alias Model =
     -- pendingDraft は起こし終えた後にどちらで焼くか
     , wakeReq : Maybe Int
     , wakeSeconds : Int
+
     -- 起こし終えた後にやること(焼く / 実機で演じる)
     , pendingAction : PendingAction
 
@@ -792,6 +803,10 @@ type alias Model =
     -- 道具・選択・一筆の途中だけ(書き戻しは既存の編集直列に乗せる)
     , pixel : PixelEditor.Model
     , sfx : SfxEditor.Model
+
+    -- 演出のテンポを帯で触るタイムライン(持つのはドラッグの途中だけ。
+    -- トラックの構成はスキーマの widget 宣言から毎描画組み立てる)
+    , timeline : Timeline.Model
 
     -- 焼き係を温め始めたか(1 つの文書につき 1 回だけ頼む)
     , sfxWarmed : Bool
@@ -922,7 +937,8 @@ type ChangesModal
 
 init : () -> ( Model, Effect )
 init _ =
-    request "health" (E.object [])
+    request "health"
+        (E.object [])
         { screen = Booting
         , tab = HomeTab
         , journey = Journey.init
@@ -968,8 +984,8 @@ init _ =
         , loadReq = Nothing
         , putReq = Nothing
         , sketchSaveReq = Nothing
-      , pendingSketchSave = Nothing
-      , createdSketchReq = Nothing
+        , pendingSketchSave = Nothing
+        , createdSketchReq = Nothing
         , savingText = Nothing
         , conflict = Nothing
         , staleMtime = Nothing
@@ -1041,6 +1057,7 @@ init _ =
         , drag = Nothing
         , pixel = PixelEditor.init
         , sfx = SfxEditor.init
+        , timeline = Timeline.init
         , sfxWarmed = False
         , sfxWarming = False
         , sfxWaitSeq = 0
@@ -1190,6 +1207,7 @@ type Msg
     | EditsQueued (List EditPayload)
     | PixelMsg PixelEditor.Msg
     | SfxMsg SfxEditor.Msg
+    | TimelineMsg Timeline.Msg
     | SfxWaitTick Int
     | MapMsg MapEditor.Msg
     | WeightsAddOpened (List Seg)
@@ -1763,7 +1781,8 @@ update msg model =
                         -- 破棄=開いた時の本文へ戻す(ReloadChosen と同じ意味論)。
                         -- dirty を消さないと移動のやり直しが再びこのゲートに阻まれる
                         m1 =
-                            withDoc model.current model.openedText
+                            withDoc model.current
+                                model.openedText
                                 { model
                                     | pendingNav = Nothing
                                     , dirty = False
@@ -2413,29 +2432,57 @@ update msg model =
                 Nothing ->
                     ( model, Effect.none )
 
+        TimelineMsg tmsg ->
+            case timelineConfigOf model of
+                Just config ->
+                    let
+                        ( timeline, out ) =
+                            Timeline.update config tmsg model.timeline
+
+                        m1 =
+                            { model | timeline = timeline }
+                    in
+                    case out of
+                        Timeline.Silent ->
+                            ( m1, Effect.none )
+
+                        -- 書くだけ。保存は autosave、実機への反映は watchFile の仕事
+                        -- (焼き・再生を持つ sfx と違い、後段の待ちは無い)
+                        Timeline.Edited edit ->
+                            queueEdit
+                                { op = SetOp
+                                , path = List.map KeySeg edit.path
+                                , value = E.float edit.value
+                                , isInt = False
+                                }
+                                m1
+
+                Nothing ->
+                    ( model, Effect.none )
+
         SfxWaitTick seq ->
             -- 焼き上がりを知らせてくれる口が無いので、少し置いてから絵を取り直し、
             -- 待たせていた再生をここで鳴らす。
             if seq /= model.sfxWaitSeq || model.sfxWaitLeft <= 0 then
                 ( model, Effect.none )
 
+            else if model.sfxWarming then
+                request "sfxWarm"
+                    (E.object [])
+                    { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
+
             else
-                if model.sfxWarming then
-                    request "sfxWarm" (E.object [])
-                        { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
+                case sfxConfigOf model of
+                    Just config ->
+                        requestPreview_
+                            { name = config.sound
+                            , loop = model.sfx.looping == Just config.sound
+                            }
+                            config
+                            { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
 
-                else
-                    case sfxConfigOf model of
-                        Just config ->
-                            requestPreview_
-                                { name = config.sound
-                                , loop = model.sfx.looping == Just config.sound
-                                }
-                                config
-                                { model | sfxWaitLeft = model.sfxWaitLeft - 1 }
-
-                        Nothing ->
-                            ( model, Effect.none )
+                    Nothing ->
+                        ( model, Effect.none )
 
         PixelMsg pmsg ->
             case spriteDocCurrent model of
@@ -2620,16 +2667,16 @@ update msg model =
             -- 触り始めた欄を、右の JSON でも指し示す(2 ペインで開いている時だけ)
             highlightJson seed.path <|
                 case model.activeDraft of
-                -- 同じ欄への focus 再入(確定失敗の赤を直しに戻った等)は下書きを消さない
-                Just d ->
-                    if d.path == seed.path then
-                        ( model, Effect.none )
+                    -- 同じ欄への focus 再入(確定失敗の赤を直しに戻った等)は下書きを消さない
+                    Just d ->
+                        if d.path == seed.path then
+                            ( model, Effect.none )
 
-                    else
+                        else
+                            ( startInteraction { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
+
+                    Nothing ->
                         ( startInteraction { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
-
-                Nothing ->
-                    ( startInteraction { model | activeDraft = Just (draftFrom seed seed.original) }, Effect.none )
 
         DraftTyped seed text_ ->
             let
@@ -3094,6 +3141,7 @@ openFile path model =
                 ( { m2 | schemaState = SchemaMissing }, loadFx )
 
 
+
 -- ダッシュボード(複数リソース横断の閲覧ボード)
 
 
@@ -3163,7 +3211,8 @@ openDashboard decl model =
     )
 
 
-{-| ダッシュボード読み込みの応答なら該当スロットへ収める(Nothing = 別物)。 -}
+{-| ダッシュボード読み込みの応答なら該当スロットへ収める(Nothing = 別物)。
+-}
 dashApply : Int -> Api.FileContent -> Maybe DashState -> Maybe DashState
 dashApply id fc =
     dashUpdate id
@@ -3279,7 +3328,8 @@ requestCrossDocsIfNeeded model =
             ( model, Effect.none )
 
 
-{-| 横断辞書読み込みの応答なら該当スロットへ収める(Nothing = 別物)。 -}
+{-| 横断辞書読み込みの応答なら該当スロットへ収める(Nothing = 別物)。
+-}
 crossApply : Int -> Api.FileContent -> List CrossSlot -> Maybe (List CrossSlot)
 crossApply id fc slots =
     if List.any (\s -> s.dataReq == Just id || s.schemaReq == Just id) slots then
@@ -3331,7 +3381,8 @@ crossFailApply id slots =
         Nothing
 
 
-{-| 読み込み済みの横断辞書を純ロジック(Sources / Lint / SchemaForm)の形に。 -}
+{-| 読み込み済みの横断辞書を純ロジック(Sources / Lint / SchemaForm)の形に。
+-}
 crossSources : Model -> List Sources.SourceDoc
 crossSources model =
     crossSourcesOf model.crossSlots
@@ -3348,7 +3399,8 @@ crossSourcesOf slots =
             )
 
 
-{-| この改名で書き換えが要る他ファイル(パスと箇所数)。 -}
+{-| この改名で書き換えが要る他ファイル(パスと箇所数)。
+-}
 crossRenameFiles : Model -> RenameRequest -> List { path : String, count : Int }
 crossRenameFiles model req =
     Sources.externalUsages (crossSources model)
@@ -3373,7 +3425,8 @@ crossRenameFiles model req =
             []
 
 
-{-| 他ファイル改名の開始: 対象パスの列を積んで最初の 1 本を取りに行く。 -}
+{-| 他ファイル改名の開始: 対象パスの列を積んで最初の 1 本を取りに行く。
+-}
 startCrossRun : CrossRenamePlan -> Model -> ( Model, Effect )
 startCrossRun plan model =
     advanceCross
@@ -3389,7 +3442,8 @@ startCrossRun plan model =
         }
 
 
-{-| 次のファイルへ。残りが無ければ締めの文言を出して終わる。 -}
+{-| 次のファイルへ。残りが無ければ締めの文言を出して終わる。
+-}
 advanceCross : Model -> ( Model, Effect )
 advanceCross model =
     case model.crossRun of
@@ -3478,7 +3532,8 @@ crossRunOk env model =
             )
 
 
-{-| 取れた最新の本文へ書き換え列を導いて 1 バッチで当てる(0 件なら次へ)。 -}
+{-| 取れた最新の本文へ書き換え列を導いて 1 バッチで当てる(0 件なら次へ)。
+-}
 crossApplyFresh : String -> CrossRenameRun -> Api.Envelope -> Model -> ( Model, Effect )
 crossApplyFresh path run env model =
     let
@@ -3519,7 +3574,8 @@ crossApplyFresh path run env model =
             crossAbort path "本文かスキーマが読めません" model
 
 
-{-| 書き換え済みの本文を保存し、横断辞書のスロットも新しい本文へ進める。 -}
+{-| 書き換え済みの本文を保存し、横断辞書のスロットも新しい本文へ進める。
+-}
 crossPut : String -> Int -> CrossRenameRun -> Api.Envelope -> Model -> ( Model, Effect )
 crossPut path count run env model =
     case D.decodeValue (D.field "text" D.string) env.body of
@@ -3563,7 +3619,8 @@ crossAbort path reason model =
     )
 
 
-{-| 進行中の封筒の失敗(Nothing = この進行の封筒ではない)。 -}
+{-| 進行中の封筒の失敗(Nothing = この進行の封筒ではない)。
+-}
 crossRunErr : Api.Envelope -> String -> Model -> Maybe ( Model, Effect )
 crossRunErr env message model =
     model.crossRun
@@ -3651,7 +3708,8 @@ requestPortraits model =
         |> Tuple.mapSecond Effect.batch
 
 
-{-| 文書の中の uiDoc フィールド値(= 肖像 ui.json のパス)を全部拾う。 -}
+{-| 文書の中の uiDoc フィールド値(= 肖像 ui.json のパス)を全部拾う。
+-}
 portraitPathsIn : Schema.Schema -> D.Value -> List String
 portraitPathsIn schema doc =
     schema.sections
@@ -3761,7 +3819,8 @@ wizardBusy model =
             False
 
 
-{-| 重なり検査は「今画面が知っているファイル一覧」との突き合わせ。 -}
+{-| 重なり検査は「今画面が知っているファイル一覧」との突き合わせ。
+-}
 wizardErrors : Model -> Wizard.Draft -> List String
 wizardErrors model draft =
     Wizard.validate (declaredPaths model.groups ++ model.files) draft
@@ -3841,7 +3900,8 @@ sendWizardProjectPut newText w model =
     ( { m1 | wizard = Just { w | write = WizPutProject m1.reqCounter } }, cmd )
 
 
-{-| 3 点そろったら一覧を取り直し、作ったリソースを開いた状態で戻る。 -}
+{-| 3 点そろったら一覧を取り直し、作ったリソースを開いた状態で戻る。
+-}
 finishWizard : WizardState -> Model -> ( Model, Effect )
 finishWizard w model =
     let
@@ -3857,7 +3917,8 @@ finishWizard w model =
     ( m3, Effect.batch [ c1, c2, c3 ] )
 
 
-{-| 途中失敗はその場で止める。書けた分は消さない(部分成功を隠さない)。 -}
+{-| 途中失敗はその場で止める。書けた分は消さない(部分成功を隠さない)。
+-}
 wizardFail : String -> WizardState -> Model -> Model
 wizardFail message w model =
     { model
@@ -3896,7 +3957,8 @@ wizardAdvance env model =
                         onMatch id env (\_ -> sendWizardProjectGet w model)
 
                     WizGetProject id ->
-                        onMatch id env
+                        onMatch id
+                            env
                             (\body ->
                                 case D.decodeValue Api.fileContentDecoder body of
                                     Ok fc ->
@@ -3907,7 +3969,8 @@ wizardAdvance env model =
                             )
 
                     WizEditProject id ->
-                        onMatch id env
+                        onMatch id
+                            env
                             (\body ->
                                 case D.decodeValue (D.field "text" D.string) body of
                                     Ok newText ->
@@ -3931,7 +3994,8 @@ onMatch id env continue =
         Nothing
 
 
-{-| ウィザードの往復の失敗ならその場で止めて文言に段階名を添える。 -}
+{-| ウィザードの往復の失敗ならその場で止めて文言に段階名を添える。
+-}
 wizardFailed : Api.Envelope -> String -> Model -> Maybe ( Model, Effect )
 wizardFailed env message model =
     model.wizard
@@ -3971,7 +4035,8 @@ wizardPhase write =
             Just ( id, "project.json の書き込み" )
 
 
-{-| 見た目の好み(ペイン幅・ライブ反映)を端末(localStorage)へ。 -}
+{-| 見た目の好み(ペイン幅・ライブ反映)を端末(localStorage)へ。
+-}
 savePrefs : Model -> ( Model, Effect )
 savePrefs model =
     request "saveUiPrefs"
@@ -4016,7 +4081,8 @@ clampPaneWidth side w =
             clamp 240 640 w
 
 
-{-| 数秒で消える通知(トースト)。表示と同時に消灯を予約する。 -}
+{-| 数秒で消える通知(トースト)。表示と同時に消灯を予約する。
+-}
 showToast : String -> Model -> ( Model, Effect )
 showToast message model =
     let
@@ -4050,7 +4116,8 @@ savedNotice model =
             "保存しました"
 
 
-{-| savingText を ifMtime 付きの PUT /file へ送る(保存・上書き強行の共通口)。 -}
+{-| savingText を ifMtime 付きの PUT /file へ送る(保存・上書き強行の共通口)。
+-}
 sendPut : Maybe Int -> Model -> ( Model, Effect )
 sendPut ifMtime model =
     case ( model.current, model.savingText ) of
@@ -4075,7 +4142,8 @@ sendPut ifMtime model =
             ( { model | savingText = Nothing }, Effect.none )
 
 
-{-| 同じ列の再クリックは昇降の反転、別の列は昇順から。 -}
+{-| 同じ列の再クリックは昇降の反転、別の列は昇順から。
+-}
 toggleSort : String -> Maybe Table.SortState -> Table.SortState
 toggleSort column current =
     case current of
@@ -4177,6 +4245,7 @@ WhyNot: 以前は view から都度 D.decodeString していた。陳腐化は�
 判定(effectiveMode)と本体で 1 回の描画に何度も呼ばれるため、ドット絵の
 一筆はセルを跨ぐたびに 89KB の JSON を 6 回解き直していた — 重さの正体。
 入口を 1 つに絞れば、覚えても陳腐化は同じく構造で防げる。
+
 -}
 withDoc : Maybe String -> String -> Model -> Model
 withDoc path text model =
@@ -4237,7 +4306,8 @@ requestSpriteColors model =
             ( model, Effect.none )
 
 
-{-| いま開いているタブが効果音のつまみなら、その材料。 -}
+{-| いま開いているタブが効果音のつまみなら、その材料。
+-}
 sfxConfigOf : Model -> Maybe SfxEditor.Config
 sfxConfigOf model =
     currentSection model
@@ -4255,7 +4325,8 @@ sfxConfigOf model =
             )
 
 
-{-| そのセクションの数値だけを名前で引ける形に。数でない欄は落とす。 -}
+{-| そのセクションの数値だけを名前で引ける形に。数でない欄は落とす。
+-}
 sfxValues : String -> Model -> Dict String Float
 sfxValues key model =
     case D.decodeString D.value model.docText of
@@ -4276,6 +4347,96 @@ sfxValues key model =
 
         Err _ ->
             Dict.empty
+
+
+{-| いま開いているタブがタイムラインのトラックを持つなら、その材料。
+トラックはスキーマ全体から集める(1 枚のパネルに全トラックを出す) —
+どのトラックのタブを開いていても同じパネルが出て、左のフォームだけが変わる。
+-}
+timelineConfigOf : Model -> Maybe Timeline.Config
+timelineConfigOf model =
+    case ( model.schemaState, currentSection model ) of
+        ( SchemaReady schema, Just ( key, _ ) ) ->
+            let
+                specs =
+                    Timeline.specsFrom
+                        (schema.sections |> List.map (\( k, sec ) -> ( k, sec.widget )))
+            in
+            if List.any (\spec -> Timeline.sectionOf spec == key) specs then
+                Just
+                    { specs = specs
+                    , values = timelineValues specs model
+                    , fields = timelineFields schema
+                    }
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+{-| 文書の数値を「セクション.フィールド」の平らな 1 本に。root の数値は素の名前
+(総尺の multiply が root の欄を指すため)。数でない値は落とす — 欠けは
+widget 側がスキーマの default へ倒す。
+-}
+timelineValues : List Timeline.TrackSpec -> Model -> Dict String Float
+timelineValues specs model =
+    case D.decodeString D.value model.docText of
+        Ok doc ->
+            let
+                pick raw =
+                    raw
+                        |> D.decodeValue (D.dict (D.maybe D.float))
+                        |> Result.withDefault Dict.empty
+                        |> Dict.toList
+                        |> List.filterMap (\( k, mv ) -> Maybe.map (Tuple.pair k) mv)
+
+                sectionPairs =
+                    specs
+                        |> List.concatMap
+                            (\spec ->
+                                let
+                                    sec =
+                                        Timeline.sectionOf spec
+                                in
+                                pick (Doc.record sec doc)
+                                    |> List.map (\( k, v ) -> ( sec ++ "." ++ k, v ))
+                            )
+            in
+            Dict.fromList (pick doc ++ sectionPairs)
+
+        Err _ ->
+            Dict.empty
+
+
+{-| スキーマの宣言(min/max/step/default)を values と同じキーで。
+-}
+timelineFields : Schema.Schema -> Dict String Timeline.Limit
+timelineFields schema =
+    schema.sections
+        |> List.concatMap
+            (\( key, sec ) ->
+                case sec.kind of
+                    Schema.ValueKind field ->
+                        [ ( key, timelineLimit field ) ]
+
+                    _ ->
+                        sec.fields
+                            |> List.map (\( fname, field ) -> ( key ++ "." ++ fname, timelineLimit field ))
+            )
+        |> Dict.fromList
+
+
+timelineLimit : Schema.Field -> Timeline.Limit
+timelineLimit field =
+    { min = field.min
+    , max = field.max
+    , step = field.step
+    , default =
+        field.default
+            |> Maybe.andThen (\v -> D.decodeValue D.float v |> Result.toMaybe)
+    }
 
 
 sfxPayload : SfxEditor.Config -> { field : String, value : Float } -> EditPayload
@@ -4314,7 +4475,8 @@ requestPreview_ info config model =
     ( m2, Effect.batch [ previewFx, shapeFx ] )
 
 
-{-| タブを選んだ拍: 焼き係を温めつつ、その音の絵を取りに行く。 -}
+{-| タブを選んだ拍: 焼き係を温めつつ、その音の絵を取りに行く。
+-}
 warmThenShape : Model -> ( Model, Effect )
 warmThenShape model =
     let
@@ -4327,7 +4489,8 @@ warmThenShape model =
     ( m2, Effect.batch [ warmFx, shapeFx ] )
 
 
-{-| 実測を取りに行くべき音(まだ頼んでいない物だけ)。 -}
+{-| 実測を取りに行くべき音(まだ頼んでいない物だけ)。
+-}
 shapeWanted : Model -> Maybe String
 shapeWanted model =
     (case sfxConfigOf model of
@@ -4340,7 +4503,8 @@ shapeWanted model =
         |> Maybe.andThen (\sound -> SfxEditor.wanted sound model.sfx)
 
 
-{-| 焼き上がった音の実測を取りに行く。 -}
+{-| 焼き上がった音の実測を取りに行く。
+-}
 requestSfxShape : String -> Model -> ( Model, Effect )
 requestSfxShape sound model =
     request "sfxShape" (E.object [ ( "name", E.string (sound ++ ".wav") ) ]) model
@@ -4397,6 +4561,7 @@ pixelPayload edit =
 
 読めない文書は Nothing — 従来のフォーム/コード表示へ静かに倒れる
 (spriteDocCurrent と同じ流儀。毎回引くのも同じ理由)。
+
 -}
 mapDocCurrent : Model -> Maybe MapEditor.Doc
 mapDocCurrent model =
@@ -4404,7 +4569,8 @@ mapDocCurrent model =
         |> Maybe.andThen (MapEditor.fromDoc (mapAddableKeys model) (terrainDocCurrent model))
 
 
-{-| 編集に添える一言(無ければ Nothing)。止める判断はしない。 -}
+{-| 編集に添える一言(無ければ Nothing)。止める判断はしない。
+-}
 mapNotice : MapEditor.Edit -> Maybe String
 mapNotice edit =
     case edit of
@@ -4504,7 +4670,8 @@ requiresXy section =
         |> List.any (\( name, field ) -> (name == "x" || name == "y") && field.required)
 
 
-{-| キーに対応する list セクション(雛形を作るのに使う)。 -}
+{-| キーに対応する list セクション(雛形を作るのに使う)。
+-}
 mapSection : Model -> String -> Maybe Schema.Section
 mapSection model key =
     case model.schemaState of
@@ -4592,7 +4759,7 @@ mapEntryFrom section dropped override =
 
 
 {-| 地形パレットの素になる terrain Doc。editor.resources に宣言された
-*.terrain.json が横断辞書(crossSlots)で読めていればそれ(fail-open:
+\*.terrain.json が横断辞書(crossSlots)で読めていればそれ(fail-open:
 無ければ Nothing で、パレットは rows の文字から導かれる)。
 -}
 terrainDocCurrent : Model -> Maybe D.Value
@@ -4737,7 +4904,8 @@ addEntry model =
             ( model, Effect.none )
 
 
-{-| catalog 追加の確定。拒む理由(空・重複)は赤枠+理由で入力を残す — 黙って捨てない。 -}
+{-| catalog 追加の確定。拒む理由(空・重複)は赤枠+理由で入力を残す — 黙って捨てない。
+-}
 confirmAdd : Model -> ( Model, Effect )
 confirmAdd model =
     case ( model.addDialog, currentSection model, parsedDoc model ) of
@@ -4829,7 +4997,8 @@ deleteEntry model =
             ( model, Effect.none )
 
 
-{-| EntryOps の編集 1 件を docEdit の直列(queueEdit)へ流す。 -}
+{-| EntryOps の編集 1 件を docEdit の直列(queueEdit)へ流す。
+-}
 queueOp : EntryOps.Op -> Model -> ( Model, Effect )
 queueOp op model =
     queueEdit (opPayload op) model
@@ -4964,7 +5133,8 @@ liveTypedCommit model =
             ( model, Effect.none )
 
 
-{-| 確定できるなら (編集 1 件, 確定後に欄へ見せる文字)。 -}
+{-| 確定できるなら (編集 1 件, 確定後に欄へ見せる文字)。
+-}
 draftPayload : ActiveDraft -> Maybe ( EditPayload, String )
 draftPayload d =
     case d.kind of
@@ -5031,7 +5201,8 @@ listTextPayload fieldPath items =
     { op = SetOp, path = fieldPath, value = E.list E.string items, isInt = False }
 
 
-{-| weights の連動書き戻し 1 回ぶん(変わった行の set 列を applyDocEdits 1 本に)。 -}
+{-| weights の連動書き戻し 1 回ぶん(変わった行の set 列を applyDocEdits 1 本に)。
+-}
 weightsBatchPayload : Weights.Config -> List Seg -> List ( String, Float ) -> EditPayload
 weightsBatchPayload config fieldPath edits =
     { op = BatchSetOp
@@ -5206,13 +5377,15 @@ hitEntry hit =
             ByKey ""
 
 
-{-| 欄まで画面を送る(描き終わるのを待つのはブラウザ側の仕事)。 -}
+{-| 欄まで画面を送る(描き終わるのを待つのはブラウザ側の仕事)。
+-}
 scrollToField : List Seg -> Model -> ( Model, Effect )
 scrollToField path model =
     request "scrollTo" (E.object [ ( "id", E.string (fieldDomId path) ) ]) model
 
 
-{-| フォーム行の DOM id。検索から飛んだ欄を名指しするためだけの物。 -}
+{-| フォーム行の DOM id。検索から飛んだ欄を名指しするためだけの物。
+-}
 fieldDomId : List Seg -> String
 fieldDomId path =
     "row-" ++ pathDomId path
@@ -5382,7 +5555,8 @@ crossEditAbort file reason model =
     showToast ("書き戻しに失敗(" ++ file ++ "): " ++ reason) { model | crossEdit = Nothing }
 
 
-{-| 値の書き込み 1 件を applyDocEdits の形へ(改名バッチと同じ封筒)。 -}
+{-| 値の書き込み 1 件を applyDocEdits の形へ(改名バッチと同じ封筒)。
+-}
 encodeSetEdit : EditPayload -> E.Value
 encodeSetEdit payload =
     E.object
@@ -5464,13 +5638,15 @@ createFile path content model =
         { model | fileVerb = Nothing, skelReq = Nothing, verbTarget = Just { path = path, open = True } }
 
 
-{-| いま分かっているファイルの全部(宣言済み+その他)。動詞の重複判定に使う。 -}
+{-| いま分かっているファイルの全部(宣言済み+その他)。動詞の重複判定に使う。
+-}
 knownPaths : Model -> List String
 knownPaths model =
     model.files ++ declaredPaths model.groups
 
 
-{-| 動詞が通った後。一覧を取り直し、作った / 名前を変えたファイルを開く。 -}
+{-| 動詞が通った後。一覧を取り直し、作った / 名前を変えたファイルを開く。
+-}
 afterVerb : Model -> ( Model, Effect )
 afterVerb model =
     let
@@ -5516,6 +5692,7 @@ afterVerb model =
 手触りが正しい。両方に積むと ⌘Z が 2 つの履歴を交互に消費して、押した回数と
 戻る量が合わなくなる。だから前面に居る方だけが履歴を持つ(⌘Z の購読も同じ
 条件で切り替える)。
+
 -}
 recordEdit : Maybe String -> EditPayload -> Model -> Model
 recordEdit group payload model =
@@ -5541,7 +5718,8 @@ recordEdit group payload model =
             model
 
 
-{-| 前面の編集器が自前の undo を持っているか(マップ / ドット絵)。 -}
+{-| 前面の編集器が自前の undo を持っているか(マップ / ドット絵)。
+-}
 ownUndoFront : Model -> Bool
 ownUndoFront model =
     effectiveMode model
@@ -5562,7 +5740,8 @@ editGroup model payload =
         Just (Edit.pathKey payload.path ++ "#" ++ String.fromInt model.editSeq)
 
 
-{-| 新しいやり取りの始まり(欄への focus・盤面を掴んだ瞬間)。 -}
+{-| 新しいやり取りの始まり(欄への focus・盤面を掴んだ瞬間)。
+-}
 startInteraction : Model -> Model
 startInteraction model =
     { model | editSeq = model.editSeq + 1 }
@@ -5574,6 +5753,7 @@ startInteraction model =
 1 手が開いている文書の中で閉じているなら、いつもの編集直列(queueEdit)へ。
 ファイルをまたぐ手(横断置換)は、開いていないファイルへの直列(CrossEdit)で
 まとめて戻す — どちらも既存の書き戻し経路で、新しい道は作らない。
+
 -}
 stepHistory : (EditHistory.History -> Maybe ( List EditHistory.Step, EditHistory.History )) -> Model -> ( Model, Effect )
 stepHistory step model =
@@ -5599,20 +5779,23 @@ stepHistory step model =
             ( model, Effect.none )
 
 
-{-| ファイルごとに編集をまとめる(順序はそのまま — 同じファイルの手がばらけない)。 -}
+{-| ファイルごとに編集をまとめる(順序はそのまま — 同じファイルの手がばらけない)。
+-}
 groupByFile : List EditHistory.Step -> List CrossEdit.FileEdits
 groupByFile steps =
     steps
         |> List.foldl
             (\st acc ->
                 if List.any (\group -> group.file == st.file) acc then
-                    acc |> List.map (\group ->
-                        if group.file == st.file then
-                            { group | edits = group.edits ++ [ st.payload ] }
+                    acc
+                        |> List.map
+                            (\group ->
+                                if group.file == st.file then
+                                    { group | edits = group.edits ++ [ st.payload ] }
 
-                        else
-                            group
-                    )
+                                else
+                                    group
+                            )
 
                 else
                     acc ++ [ { file = st.file, edits = [ st.payload ] } ]
@@ -5737,7 +5920,8 @@ commitWeightsAdd model =
             ( model, Effect.none )
 
 
-{-| 文書パス(Seg 列)の指す先の値。 -}
+{-| 文書パス(Seg 列)の指す先の値。
+-}
 valueAt : List Seg -> D.Value -> Maybe D.Value
 valueAt segs doc =
     case segs of
@@ -5759,7 +5943,8 @@ valueAt segs doc =
 -- catalog id の改名(キー改名+全参照の書き換えを 1 バッチで)
 
 
-{-| 確定(Enter)。拒む理由があれば赤枠+理由で入力を残す — 黙って捨てない。 -}
+{-| 確定(Enter)。拒む理由があれば赤枠+理由で入力を残す — 黙って捨てない。
+-}
 commitRename : Model -> ( Model, Effect )
 commitRename model =
     case ( model.rename, D.decodeString D.value model.docText ) of
@@ -5948,7 +6133,8 @@ previewHit model point =
             Nothing
 
 
-{-| GET /prompt/extend の本文({title, prompt})。 -}
+{-| GET /prompt/extend の本文({title, prompt})。
+-}
 extendPromptDecoder : D.Decoder { title : String, prompt : String }
 extendPromptDecoder =
     D.map2 (\title prompt -> { title = title, prompt = prompt })
@@ -6018,7 +6204,6 @@ handleOkByKind env model =
                     ( { model | picker = updatePicker (\p -> { p | projects = Just projects }) model }
                     , Effect.none
                     )
-
 
                 Err _ ->
                     ( { model | notice = Just "projects 応答が読めませんでした" }, Effect.none )
@@ -6689,6 +6874,7 @@ handleOkByKind env model =
                                     , drag = Nothing
                                     , pixel = PixelEditor.init
                                     , sfx = SfxEditor.init
+                                    , timeline = Timeline.init
                                     , spriteColors = Api.noSpriteColors
                                     , spriteColorsReq = Nothing
                                     , mapEd = MapEditor.init
@@ -6815,54 +7001,56 @@ handleOkByKind env model =
                         let
                             ( m1, previewFx ) =
                                 requestPreview
-                                    (withDoc (Just fc.path) fc.content
-                                    { model
-                                        | loadReq = Nothing
-                                        , openedText = fc.content
-                                        , dirty = False
-                                        , mtime = fc.mtime
+                                    (withDoc (Just fc.path)
+                                        fc.content
+                                        { model
+                                            | loadReq = Nothing
+                                            , openedText = fc.content
+                                            , dirty = False
+                                            , mtime = fc.mtime
 
-                                        -- 読み込み(開く・読み直し・外で変わった)で
-                                        -- 元データが入れ替わる → 古い逆操作は当たらない
-                                        , history = EditHistory.cutOnExternalChange model.history
-                                        , notice = Nothing
-                                        , conflict = Nothing
-                                        , savingText = Nothing
+                                            -- 読み込み(開く・読み直し・外で変わった)で
+                                            -- 元データが入れ替わる → 古い逆操作は当たらない
+                                            , history = EditHistory.cutOnExternalChange model.history
+                                            , notice = Nothing
+                                            , conflict = Nothing
+                                            , savingText = Nothing
 
-                                        -- ドット絵の道具・履歴・実色表は開いたファイルの物(持ち越さない)
-                                        , pixel = PixelEditor.init
-                                        , sfx = SfxEditor.init
-                                        , spriteColors = Api.noSpriteColors
-                                        , spriteColorsReq = Nothing
-                                        , mapEd = MapEditor.init
+                                            -- ドット絵の道具・履歴・実色表は開いたファイルの物(持ち越さない)
+                                            , pixel = PixelEditor.init
+                                            , sfx = SfxEditor.init
+                                            , timeline = Timeline.init
+                                            , spriteColors = Api.noSpriteColors
+                                            , spriteColorsReq = Nothing
+                                            , mapEd = MapEditor.init
 
-                                        -- ジャンプで開いた時だけ選択が乗る。同じファイルの
-                                        -- 読み直しでは開いている場所を保つ(読み直すたびに
-                                        -- 先頭タブへ飛ぶと、作業の続きに戻れない)
-                                        , sectionKey =
-                                            case model.pendingJump of
-                                                Just jump ->
-                                                    Just jump.sectionKey
+                                            -- ジャンプで開いた時だけ選択が乗る。同じファイルの
+                                            -- 読み直しでは開いている場所を保つ(読み直すたびに
+                                            -- 先頭タブへ飛ぶと、作業の続きに戻れない)
+                                            , sectionKey =
+                                                case model.pendingJump of
+                                                    Just jump ->
+                                                        Just jump.sectionKey
 
-                                                Nothing ->
-                                                    if model.current == Just fc.path then
-                                                        model.sectionKey
+                                                    Nothing ->
+                                                        if model.current == Just fc.path then
+                                                            model.sectionKey
 
-                                                    else
-                                                        Nothing
-                                        , entrySel =
-                                            case model.pendingJump of
-                                                Just jump ->
-                                                    Just jump.entry
+                                                        else
+                                                            Nothing
+                                            , entrySel =
+                                                case model.pendingJump of
+                                                    Just jump ->
+                                                        Just jump.entry
 
-                                                Nothing ->
-                                                    if model.current == Just fc.path then
-                                                        model.entrySel
+                                                    Nothing ->
+                                                        if model.current == Just fc.path then
+                                                            model.entrySel
 
-                                                    else
-                                                        Nothing
-                                        , pendingJump = Nothing
-                                    }
+                                                        else
+                                                            Nothing
+                                            , pendingJump = Nothing
+                                        }
                                     )
 
                             ( m2, crossFx ) =
@@ -6926,6 +7114,7 @@ handleOkByKind env model =
 
                                     ( m4, portraitFx ) =
                                         requestPortraits m3
+
                                     ( m5, sfxFx ) =
                                         requestSfxShapeIfNeeded m4
 
@@ -7686,7 +7875,8 @@ texturesFrom content =
         |> Result.withDefault []
 
 
-{-| 往復中に文書が進んでいたら、応答を受けた足で取り直す。 -}
+{-| 往復中に文書が進んでいたら、応答を受けた足で取り直す。
+-}
 resendPreviewIfStale : Model -> ( Model, Effect )
 resendPreviewIfStale model =
     if model.previewStale then
@@ -7696,7 +7886,8 @@ resendPreviewIfStale model =
         ( model, Effect.none )
 
 
-{-| 封筒 ok:false(fetch 失敗・HTTP エラー)。body は {message}。 -}
+{-| 封筒 ok:false(fetch 失敗・HTTP エラー)。body は {message}。
+-}
 handleErr : Api.Envelope -> Model -> ( Model, Effect )
 handleErr env model =
     let
@@ -8079,7 +8270,8 @@ handleErrByKind env message model =
             ( { model | notice = Just message }, Effect.none )
 
 
-{-| debug/active-docs.json の中身。値は 1 本(文字列)でも列でも同じ形に読む。 -}
+{-| debug/active-docs.json の中身。値は 1 本(文字列)でも列でも同じ形に読む。
+-}
 activeDocsDecoder : D.Decoder (Dict.Dict String (List String))
 activeDocsDecoder =
     D.field "active"
@@ -8204,7 +8396,8 @@ requestInfo kind =
     Effect.SendApi { id = 0, kind = kind, payload = E.object [] }
 
 
-{-| 読み込み中の見比べモーダルだけ畳む(場面を見ている最中は触らない)。 -}
+{-| 読み込み中の見比べモーダルだけ畳む(場面を見ている最中は触らない)。
+-}
 closeIfLoading : Maybe ChangesModal -> Maybe ChangesModal
 closeIfLoading modal =
     if modal == Just ChangesLoading then
@@ -8440,7 +8633,8 @@ viewPlayButton model =
                     [ playIconSvg, text "プレイ" ]
 
 
-{-| プレイの三角 (currentColor でボタンの文字色に追従)。 -}
+{-| プレイの三角 (currentColor でボタンの文字色に追従)。
+-}
 playIconSvg : Html msg
 playIconSvg =
     Svg.svg
@@ -8448,7 +8642,8 @@ playIconSvg =
         [ Svg.path [ SA.d "M8 5v14l11-7z" ] [] ]
 
 
-{-| 停止の四角。 -}
+{-| 停止の四角。
+-}
 stopIconSvg : Html msg
 stopIconSvg =
     Svg.svg
@@ -8456,7 +8651,8 @@ stopIconSvg =
         [ Svg.path [ SA.d "M6 6h12v12H6z" ] [] ]
 
 
-{-| 検索の虫眼鏡 (絵文字だと検索に見えないので線画で描く)。 -}
+{-| 検索の虫眼鏡 (絵文字だと検索に見えないので線画で描く)。
+-}
 searchIconSvg : Html msg
 searchIconSvg =
     Svg.svg
@@ -8473,7 +8669,8 @@ searchIconSvg =
         ]
 
 
-{-| プロジェクトのフォルダ。 -}
+{-| プロジェクトのフォルダ。
+-}
 folderIconSvg : Html msg
 folderIconSvg =
     Svg.svg
@@ -8506,7 +8703,8 @@ viewFailureBadge model =
             text ""
 
 
-{-| 最後にしくじった仕事のログを読むモーダル (topbar の ⚠ ログ から)。 -}
+{-| 最後にしくじった仕事のログを読むモーダル (topbar の ⚠ ログ から)。
+-}
 viewFailureDialog : Model -> Html Msg
 viewFailureDialog model =
     case ( model.failureOpen, model.lastFailure ) of
@@ -8566,7 +8764,8 @@ viewReferenceBadge model =
             text ""
 
 
-{-| 検索の入口。ショートカットだけだと、知らない人には無い機能と同じ。 -}
+{-| 検索の入口。ショートカットだけだと、知らない人には無い機能と同じ。
+-}
 viewSearchButton : Html Msg
 viewSearchButton =
     button
@@ -9001,10 +9200,10 @@ viewPicker canReturn newGame picker =
                       else
                         text ""
                     ]
+
               -- ワークスペース = ゲームを集める作業フォルダ (Godot のプロジェクト一覧と同じ考え方)。
               -- 決めてあれば下の「見つかった」はこの配下、新しいゲームもここに作成される
               , viewWorkspaceRow picker.workspace
-
               , div [ HA.class "picker-open-row mb-2 flex gap-2" ]
                     [ button
                         [ HA.class "btn inline-flex items-center gap-1.5"
@@ -9052,7 +9251,8 @@ viewPicker canReturn newGame picker =
         )
 
 
-{-| ワークスペースの行。未設定なら「選ぶ/作る」を促し、設定済みなら場所と変更ボタンを出す。 -}
+{-| ワークスペースの行。未設定なら「選ぶ/作る」を促し、設定済みなら場所と変更ボタンを出す。
+-}
 viewWorkspaceRow : Maybe String -> Html Msg
 viewWorkspaceRow workspace =
     case workspace of
@@ -9134,32 +9334,32 @@ viewEditing model =
                                         viewKnobPanes model
 
                                     else
-                                    case effectiveMode model of
-                                        VisualMode ->
-                                            case ( mapDocCurrent model, spriteDocCurrent model ) of
-                                                -- マップは 1 枚のマップエディタで完結
-                                                -- (道具・グリッド・パレットを内側に持つ)
-                                                ( Just mdoc, _ ) ->
-                                                    [ MapEditor.view MapMsg (viewMapInspector model) mdoc model.mapEd ]
+                                        case effectiveMode model of
+                                            VisualMode ->
+                                                case ( mapDocCurrent model, spriteDocCurrent model ) of
+                                                    -- マップは 1 枚のマップエディタで完結
+                                                    -- (道具・グリッド・パレットを内側に持つ)
+                                                    ( Just mdoc, _ ) ->
+                                                        [ MapEditor.view MapMsg (viewMapInspector model) mdoc model.mapEd ]
 
-                                                -- ドット絵は 1 枚のピクセルエディタで完結
-                                                ( _, Just pdoc ) ->
-                                                    [ Html.map PixelMsg (PixelEditor.view model.spriteColors pdoc model.pixel) ]
+                                                    -- ドット絵は 1 枚のピクセルエディタで完結
+                                                    ( _, Just pdoc ) ->
+                                                        [ Html.map PixelMsg (PixelEditor.view model.spriteColors pdoc model.pixel) ]
 
-                                                _ ->
-                                                    [ viewVisualCenter model
-                                                    , viewPaneHandle RightPane
-                                                    , viewVisualSide model
-                                                    ]
+                                                    _ ->
+                                                        [ viewVisualCenter model
+                                                        , viewPaneHandle RightPane
+                                                        , viewVisualSide model
+                                                        ]
 
-                                        SplitMode ->
-                                            [ viewEditorPane model
-                                            , viewPaneHandle RightPane
-                                            , viewFormPane model
-                                            ]
+                                            SplitMode ->
+                                                [ viewEditorPane model
+                                                , viewPaneHandle RightPane
+                                                , viewFormPane model
+                                                ]
 
-                                        CodeMode ->
-                                            [ viewEditorPane model ]
+                                            CodeMode ->
+                                                [ viewEditorPane model ]
                            )
                     )
 
@@ -9285,7 +9485,8 @@ viewKnobPanes model =
            )
 
 
-{-| 見え方の枠。JSON を畳んでいる間は、空いた高さをこちらが受け取る。 -}
+{-| 見え方の枠。JSON を畳んでいる間は、空いた高さをこちらが受け取る。
+-}
 viewKnobPreviewBox : Model -> Maybe (List (Html Msg)) -> List (Html Msg)
 viewKnobPreviewBox model preview =
     case preview of
@@ -9350,7 +9551,8 @@ viewKnobJsonBox model =
         )
 
 
-{-| 見せる物が何も無い Doc で JSON を畳んだ時の細い縦タブ(開き直す入口)。 -}
+{-| 見せる物が何も無い Doc で JSON を畳んだ時の細い縦タブ(開き直す入口)。
+-}
 viewJsonTab : Html Msg
 viewJsonTab =
     button
@@ -9362,7 +9564,8 @@ viewJsonTab =
         [ text "JSON" ]
 
 
-{-| 行を選んだ拍の 1 枚焼き。控えにあれば即その絵、無ければ少し置いてから頼む。 -}
+{-| 行を選んだ拍の 1 枚焼き。控えにあれば即その絵、無ければ少し置いてから頼む。
+-}
 peekFrame : Model -> ( Model, Effect )
 peekFrame model =
     case ( bakeUrlOf model, selectedCut model ) of
@@ -9384,7 +9587,8 @@ peekFrame model =
             ( { model | frameShot = Nothing }, Effect.none )
 
 
-{-| 焼き係へ 1 枚だけ頼む(宣言の口 + "/frame")。 -}
+{-| 焼き係へ 1 枚だけ頼む(宣言の口 + "/frame")。
+-}
 requestFrameShot : Model -> ( Model, Effect )
 requestFrameShot model =
     case ( bakeUrlOf model, model.current, selectedCut model ) of
@@ -9407,7 +9611,8 @@ requestFrameShot model =
             ( model, Effect.none )
 
 
-{-| 選んでいるカットの番号(1 始まり)。一覧の行でなければ Nothing。 -}
+{-| 選んでいるカットの番号(1 始まり)。一覧の行でなければ Nothing。
+-}
 selectedCut : Model -> Maybe Int
 selectedCut model =
     case ( model.entrySel, currentSection model ) of
@@ -9422,7 +9627,8 @@ selectedCut model =
             Nothing
 
 
-{-| 控えの鍵。同じファイル・同じカット・同じ保存の姿なら焼き直さない。 -}
+{-| 控えの鍵。同じファイル・同じカット・同じ保存の姿なら焼き直さない。
+-}
 frameKey : Model -> Int -> String
 frameKey model cut =
     Maybe.withDefault "" model.current
@@ -9471,7 +9677,8 @@ lookForBaked model =
             ( model, Effect.none )
 
 
-{-| その置き場に絵があるか訊く(あった時だけ出す — 無い絵を先に出さない)。 -}
+{-| その置き場に絵があるか訊く(あった時だけ出す — 無い絵を先に出さない)。
+-}
 probeBaked : String -> Model -> ( Model, Effect )
 probeBaked path model =
     request "mediaExists"
@@ -9527,7 +9734,8 @@ startBake model =
             ( model, Effect.none )
 
 
-{-| 起こしてから、やることへ進む共通の入り口(焼き係も実機も同じ道)。 -}
+{-| 起こしてから、やることへ進む共通の入り口(焼き係も実機も同じ道)。
+-}
 startWake : PendingAction -> Maybe String -> Model -> ( Model, Effect )
 startWake action url model =
     case url of
@@ -9564,7 +9772,8 @@ askWake launch model =
             ( { model | waking = False }, Effect.none )
 
 
-{-| 立ち上がりを待つ上限(初回はコンパイルで数分かかる)。 -}
+{-| 立ち上がりを待つ上限(初回はコンパイルで数分かかる)。
+-}
 wakeGiveUpSeconds : Int
 wakeGiveUpSeconds =
     240
@@ -9613,7 +9822,8 @@ sendPerform from path model =
             ( model, Effect.none )
 
 
-{-| 開いているファイルの宣言が持つ実機の口(無ければ「実機で再生」は出さない)。 -}
+{-| 開いているファイルの宣言が持つ実機の口(無ければ「実機で再生」は出さない)。
+-}
 performUrlOf : Model -> Maybe String
 performUrlOf model =
     currentGroup model |> Maybe.andThen .performUrl
@@ -9668,13 +9878,15 @@ sendBake path model =
             ( model, Effect.none )
 
 
-{-| 開いているファイルの宣言が、焼き係の起こし方を持つか(案内の出し分け)。 -}
+{-| 開いているファイルの宣言が、焼き係の起こし方を持つか(案内の出し分け)。
+-}
 bakeCmdDeclared : Model -> Bool
 bakeCmdDeclared model =
     (currentGroup model |> Maybe.andThen .bakeCmd) /= Nothing
 
 
-{-| 開いているファイルの宣言が持つ焼き係の URL(無ければ「焼く」は出さない)。 -}
+{-| 開いているファイルの宣言が持つ焼き係の URL(無ければ「焼く」は出さない)。
+-}
 bakeUrlOf : Model -> Maybe String
 bakeUrlOf model =
     currentGroup model |> Maybe.andThen .bakeUrl
@@ -9707,7 +9919,8 @@ noteMarks result =
         |> Dict.fromList
 
 
-{-| 今のセクションの欄 1 つ(種類の入れ替えで既定値を作るのに使う)。 -}
+{-| 今のセクションの欄 1 つ(種類の入れ替えで既定値を作るのに使う)。
+-}
 sectionFieldNamed : Model -> String -> Maybe Schema.Field
 sectionFieldNamed model name =
     currentSection model
@@ -9717,7 +9930,8 @@ sectionFieldNamed model name =
             )
 
 
-{-| いま選んでいるエントリの中の音符の列(形が合う物があれば)。 -}
+{-| いま選んでいるエントリの中の音符の列(形が合う物があれば)。
+-}
 rollOf : Model -> Maybe { field : String, notes : List PianoRoll.Note }
 rollOf model =
     case ( parsedDoc model, currentSection model, model.entrySel ) of
@@ -9730,7 +9944,8 @@ rollOf model =
             Nothing
 
 
-{-| 音符 1 つの書き戻し先(= JSON の行)。ロールで押した物を右の JSON で指すのに使う。 -}
+{-| 音符 1 つの書き戻し先(= JSON の行)。ロールで押した物を右の JSON で指すのに使う。
+-}
 notePath : Model -> Int -> Maybe (List Seg)
 notePath model index =
     case ( currentSection model, model.entrySel, rollOf model ) of
@@ -9741,7 +9956,8 @@ notePath model index =
             Nothing
 
 
-{-| 拍の速さ。文書が宣言していなければ 120 拍(拍線の目安が無いと読めないため)。 -}
+{-| 拍の速さ。文書が宣言していなければ 120 拍(拍線の目安が無いと読めないため)。
+-}
 tempoOf : Model -> Float
 tempoOf model =
     parsedDoc model
@@ -9774,10 +9990,11 @@ playSound name model =
         { model | playingSound = Just name }
 
 
-{-| プレビュー枠に縦の場所が要るか(音の編集器を出す時)。 -}
+{-| プレビュー枠に縦の場所が要るか(音の編集器・タイムラインを出す時)。
+-}
 tallPreview : Model -> Bool
 tallPreview model =
-    sfxConfigOf model /= Nothing
+    sfxConfigOf model /= Nothing || timelineConfigOf model /= Nothing
 
 
 {-| 右上の「見え方」。音の文書なら ▶(選んでいる音)、絵のある文書なら
@@ -9802,18 +10019,29 @@ viewKnobPreviewBody model =
             Just [ Html.map SfxMsg (SfxEditor.view config model.sfx) ]
 
         Nothing ->
-            case DocKind.playableSound model.sounds (selectedSoundName model) of
-                Just name ->
-                    Just [ viewSoundPlayer model name ]
+            case timelineConfigOf model of
+                -- タイムライン: 帯の境目とクリップの右端を掴んで、演出のテンポを触る
+                Just config ->
+                    Just [ Html.map TimelineMsg (Timeline.view config model.timeline) ]
 
                 Nothing ->
-                    case viewPreviewCard model of
-                        [] ->
-                            -- 絵も音も無い文書。空の枠を出さない(呼び側が畳む)
-                            Nothing
+                    viewKnobPreviewRest model
 
-                        cards ->
-                            Just cards
+
+viewKnobPreviewRest : Model -> Maybe (List (Html Msg))
+viewKnobPreviewRest model =
+    case DocKind.playableSound model.sounds (selectedSoundName model) of
+        Just name ->
+            Just [ viewSoundPlayer model name ]
+
+        Nothing ->
+            case viewPreviewCard model of
+                [] ->
+                    -- 絵も音も無い文書。空の枠を出さない(呼び側が畳む)
+                    Nothing
+
+                cards ->
+                    Just cards
 
 
 {-| 焼き上がりの場面。描き出すボタン・注意の件数・GIF・フレーム送り。
@@ -9989,6 +10217,7 @@ viewBakePanel model =
 出しているのはどちらか(model.previewMode)は「最後に指した方」で決めるが、
 どちらか一方しか無ければそちらを優先する(両方無ければ何も出さない)。
 未保存の編集があるうちは「今のスクリプト」ではないことを小さく断る(勝手には保存しない)。
+
 -}
 viewPreview : Model -> List (Html Msg)
 viewPreview model =
@@ -10017,7 +10246,8 @@ viewPreview model =
                     viewFilmPreview model result gif
 
 
-{-| 前回の焼き産物を「絵だけある」状態として持つ(フレーム数は分からないので 0)。 -}
+{-| 前回の焼き産物を「絵だけある」状態として持つ(フレーム数は分からないので 0)。
+-}
 pastBake : String -> Api.BakeResult
 pastBake gif =
     { reachable = True
@@ -10029,13 +10259,15 @@ pastBake gif =
     }
 
 
-{-| 焼き上がりの絵(GIF)。フレーム別 PNG が焼けているかは Api.pngFrameCount で見る。 -}
+{-| 焼き上がりの絵(GIF)。フレーム別 PNG が焼けているかは Api.pngFrameCount で見る。
+-}
 filmOf : Model -> Maybe ( Api.BakeResult, String )
 filmOf model =
     model.bake |> Maybe.andThen (\result -> result.gif |> Maybe.map (\gif -> ( result, gif )))
 
 
-{-| カットの瞬間(frameShot)を枠に出す。拡大はその 1 枚(BakeZoomShot)。 -}
+{-| カットの瞬間(frameShot)を枠に出す。拡大はその 1 枚(BakeZoomShot)。
+-}
 viewShotPreview : Model -> { cut : Int, png : String } -> List (Html Msg)
 viewShotPreview model shot =
     [ div [ HA.class "frame-shot relative mb-2" ]
@@ -10143,7 +10375,6 @@ viewFilmPreview model result gif =
 
       else
         viewFilmControls model at last
-
     , div [ HA.class "text-[10px] text-ink-faint" ]
         [ text "描き出した絵は保存したスクリプトのもの(編集しただけでは変わりません)" ]
     ]
@@ -10226,7 +10457,8 @@ loadSketchDraft model =
             ( model, Effect.none )
 
 
-{-| リファレンス画像と今(焼き上がり)の絵の URL。置き場だけが違う。 -}
+{-| リファレンス画像と今(焼き上がり)の絵の URL。置き場だけが違う。
+-}
 referenceUrl : Model -> Api.ReferenceItem -> String
 referenceUrl model item =
     SceneView.galleryImageUrl model.serverBase model.root "reference" item.name
@@ -10382,7 +10614,8 @@ framesDir _ result =
             "debug/cutscene/frames/"
 
 
-{-| 焼き上がりの置き場(debug/…)を、既存の絵の配信に載せた URL へ。 -}
+{-| 焼き上がりの置き場(debug/…)を、既存の絵の配信に載せた URL へ。
+-}
 mediaUrl : Model -> String -> String
 mediaUrl model path =
     let
@@ -10397,7 +10630,8 @@ mediaUrl model path =
     SceneView.galleryImageUrl model.serverBase model.root dir name
 
 
-{-| スクリプトが指している部屋(定規つきの絵を選ぶ材料)。文書が持つ値。 -}
+{-| スクリプトが指している部屋(定規つきの絵を選ぶ材料)。文書が持つ値。
+-}
 roomOf : Model -> Maybe String
 roomOf model =
     parsedDoc model
@@ -10426,7 +10660,8 @@ roomColumns model room =
             )
 
 
-{-| 開いているスクリプトの id(フレームの置き場を指すのに使う)。宣言でなく文書が持つ値。 -}
+{-| 開いているスクリプトの id(フレームの置き場を指すのに使う)。宣言でなく文書が持つ値。
+-}
 sceneId : Model -> Maybe String
 sceneId model =
     parsedDoc model
@@ -10536,7 +10771,8 @@ viewSoundControls model name =
         ]
 
 
-{-| 生 JSON。分割モードのテキストと同じ部品(書き戻しも同じ経路)。 -}
+{-| 生 JSON。分割モードのテキストと同じ部品(書き戻しも同じ経路)。
+-}
 viewJsonBox : Model -> Html Msg
 viewJsonBox model =
     textarea
@@ -10595,24 +10831,24 @@ effectiveMode model =
                 VisualMode
 
             else
-            case ( spriteDocCurrent model, model.schemaState, parsedDoc model ) of
-                ( Just _, _, _ ) ->
-                    VisualMode
-
-                ( _, SchemaReady schema, Just _ ) ->
-                    -- 出せるセクションが 1 つも無い(全部フォーム未対応)なら
-                    -- テキストが主役の分割へ
-                    if List.isEmpty (supportedSections schema) then
-                        SplitMode
-
-                    else
+                case ( spriteDocCurrent model, model.schemaState, parsedDoc model ) of
+                    ( Just _, _, _ ) ->
                         VisualMode
 
-                ( _, SchemaLoading, _ ) ->
-                    VisualMode
+                    ( _, SchemaReady schema, Just _ ) ->
+                        -- 出せるセクションが 1 つも無い(全部フォーム未対応)なら
+                        -- テキストが主役の分割へ
+                        if List.isEmpty (supportedSections schema) then
+                            SplitMode
 
-                _ ->
-                    SplitMode
+                        else
+                            VisualMode
+
+                    ( _, SchemaLoading, _ ) ->
+                        VisualMode
+
+                    _ ->
+                        SplitMode
 
         ( mode, _ ) ->
             mode
@@ -10774,7 +11010,8 @@ viewUndoCount model =
             [ text ("↩ " ++ String.fromInt undoable) ]
 
 
-{-| 右の JSON ペインの開閉。「常設が邪魔」への逃げ道を、道具の列に常に置く。 -}
+{-| 右の JSON ペインの開閉。「常設が邪魔」への逃げ道を、道具の列に常に置く。
+-}
 viewJsonToggle : Model -> Html Msg
 viewJsonToggle model =
     button
@@ -10788,7 +11025,7 @@ viewJsonToggle model =
         [ text "⌨ JSON" ]
 
 
-{-| モード切替(flix_ge_editor と同じ 3 連セグメント)。光るのは選択でなく
+{-| モード切替(flix\_ge\_editor と同じ 3 連セグメント)。光るのは選択でなく
 実際に出ているモード — スキーマ無しでコードに落ちている事実を隠さない。
 -}
 viewModeSeg : Model -> Html Msg
@@ -10814,7 +11051,8 @@ viewModeSeg model =
         ]
 
 
-{-| 開いているファイルの属するリソースグループ(ヘッダの現在地表示)。 -}
+{-| 開いているファイルの属するリソースグループ(ヘッダの現在地表示)。
+-}
 currentGroup : Model -> Maybe Api.ResourceGroup
 currentGroup model =
     model.current |> Maybe.andThen (groupForPath model)
@@ -10831,7 +11069,8 @@ groupForPath model path =
         |> List.head
 
 
-{-| このプロジェクトのゲームがいま走っているか(ミニプレイヤーの状態行と同じ判定)。 -}
+{-| このプロジェクトのゲームがいま走っているか(ミニプレイヤーの状態行と同じ判定)。
+-}
 projectGameRunning : Model -> Bool
 projectGameRunning model =
     Maybe.withDefault (Journey.gameRunning model.journey) model.atelier.gameRunning
@@ -10887,6 +11126,7 @@ baseName path =
 
 ファイル数が増えると `assets/town_ground.sprite.json` のような機械の名前では
 中身を思い出せない。title は人が読む言葉で書く。
+
 -}
 displayName : Model -> String -> String
 displayName model path =
@@ -10913,7 +11153,6 @@ titleOf model path =
         |> List.filter (\f -> f.path == path)
         |> List.head
         |> Maybe.andThen .title
-
 
 
 {-| フォーム/エディタの下の境界の 1 行。開いたファイルが
@@ -11081,7 +11320,8 @@ viewResourceWarnings warnings =
 
 
 {-| ファイル行の頭に置く書類アイコン(currentColor で行の色に追従)。
-「これは開けるファイル」を一目で示し、見出し(下の eyebrow)と区別する。 -}
+「これは開けるファイル」を一目で示し、見出し(下の eyebrow)と区別する。
+-}
 fileIcon : Html Msg
 fileIcon =
     Svg.svg
@@ -11101,14 +11341,15 @@ fileIcon =
 
 
 {-| 見出し(グループの題)。クリックできる行と紛れないよう、字間を広げた小さな
-eyebrow ラベルにする — 選択不可・上に間を空け、下のファイル行(アイコン付き)と役割を分ける。 -}
+eyebrow ラベルにする — 選択不可・上に間を空け、下のファイル行(アイコン付き)と役割を分ける。
+-}
 viewGroupHeading : String -> Html Msg
 viewGroupHeading label =
     div [ HA.class "file-group select-none px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint" ]
         [ text label ]
 
 
-{-| 宣言グループの見出し。「+ 新規」は "*" を持つ宣言(何本でも置ける物)にだけ。
+{-| 宣言グループの見出し。「+ 新規」は "\*" を持つ宣言(何本でも置ける物)にだけ。
 1 本しか置けない宣言(hitbox.json 等)に「新規」は意味を持たない。
 -}
 viewGroupHeadingFor : Api.ResourceGroup -> Html Msg
@@ -11185,7 +11426,8 @@ viewFileRow model path =
         ]
 
 
-{-| その場編集の欄の名指し(カーソルを置く頼み事に使う)。同時に 1 つしか開かない。 -}
+{-| その場編集の欄の名指し(カーソルを置く頼み事に使う)。同時に 1 つしか開かない。
+-}
 fileRenameBoxId : String
 fileRenameBoxId =
     "file-rename-box"
@@ -11232,7 +11474,8 @@ viewFileRenameBox renaming =
         []
 
 
-{-| 行にカーソルがある時のキー。F2=名前の変更・Delete/Backspace=削除(IDE の作法)。 -}
+{-| 行にカーソルがある時のキー。F2=名前の変更・Delete/Backspace=削除(IDE の作法)。
+-}
 onFileRowKeys : String -> Html.Attribute Msg
 onFileRowKeys path =
     HE.custom "keydown"
@@ -11255,7 +11498,8 @@ onFileRowKeys path =
         )
 
 
-{-| 行の右クリックメニュー(VS Code の並びに合わせる)。 -}
+{-| 行の右クリックメニュー(VS Code の並びに合わせる)。
+-}
 viewFileMenu : Model -> Html Msg
 viewFileMenu model =
     case model.fileMenu of
@@ -11373,7 +11617,8 @@ dashDocs slots =
             )
 
 
-{-| 一覧の 1 行: 肖像サムネ+名前+id。 -}
+{-| 一覧の 1 行: 肖像サムネ+名前+id。
+-}
 viewDashEntry : Model -> Maybe String -> Dashboards.EntryItem -> Html Msg
 viewDashEntry model selected item =
     let
@@ -11506,7 +11751,8 @@ viewDashField model line =
         ]
 
 
-{-| メーター 1 本(値の文字+バー)。ratio は 0〜1 に丸めて描く。 -}
+{-| メーター 1 本(値の文字+バー)。ratio は 0〜1 に丸めて描く。
+-}
 viewMeter : String -> Float -> Html Msg
 viewMeter shown ratio =
     div [ HA.class "flex items-center gap-2" ]
@@ -11627,7 +11873,8 @@ viewPortrait model size path =
             box "portrait-blank" [] []
 
 
-{-| フォーム上部の肖像カード(uiDoc フィールドを持つエントリを選んだ時)。 -}
+{-| フォーム上部の肖像カード(uiDoc フィールドを持つエントリを選んだ時)。
+-}
 viewEntryPortrait : Model -> Schema.Section -> D.Value -> List (Html Msg)
 viewEntryPortrait model section entry =
     let
@@ -11705,6 +11952,7 @@ viewEditorPane model =
         )
 
 
+
 -- ビジュアルモード(テーブル+フォームで完結する既定画面)
 
 
@@ -11725,7 +11973,8 @@ defaultTabLabel =
 
 {-| 文書のメモ(規約で認めた note)。どの Doc でも同じ名前・同じ位置(いちばん最後)に
 置く — 書いた順のままだと先頭に来ることが多く、開いた人が「まず何をすればいいか」を
-見失う。 -}
+見失う。
+-}
 noteKey : String
 noteKey =
     "note"
@@ -11877,7 +12126,8 @@ unsupportedSectionCount schema =
     List.length schema.sections - List.length (supportedSections schema)
 
 
-{-| フォームに出していない項目の存在をペイン最下部で 1 行だけ伝える(0 件なら無音)。 -}
+{-| フォームに出していない項目の存在をペイン最下部で 1 行だけ伝える(0 件なら無音)。
+-}
 viewUnsupportedFooter : Model -> List (Html Msg)
 viewUnsupportedFooter model =
     case model.schemaState of
@@ -12040,7 +12290,8 @@ viewVisualSideBody model schema doc =
                         ++ viewVisualSideSection model doc guide key section
 
 
-{-| 右ペインのセクション 1 枚ぶん(選択エントリのフォーム)。 -}
+{-| 右ペインのセクション 1 枚ぶん(選択エントリのフォーム)。
+-}
 viewVisualSideSection : Model -> D.Value -> Html Msg -> String -> Schema.Section -> List (Html Msg)
 viewVisualSideSection model doc guide key section =
     case section.kind of
@@ -12128,7 +12379,8 @@ viewKindGuide model =
 -- スキーマ駆動フォーム(右ペイン)
 
 
-{-| 分割モードの右ペイン(幅を持つ側)。 -}
+{-| 分割モードの右ペイン(幅を持つ側)。
+-}
 viewFormPane : Model -> Html Msg
 viewFormPane model =
     viewFormPaneIn
@@ -12217,6 +12469,7 @@ viewFormPaneIn attrs model =
 絵(PNG)はサーバが焼いた物のまま。選択枠・掴み所・ドラッグ追従の円は
 その上に % 配置で重ねる対話レイヤの div — 「エンジンが唯一のレンダラ」の原則は
 絵の話で、選択やドラッグ中という対話の印はこちらの担当。
+
 -}
 viewPreviewCard : Model -> List (Html Msg)
 viewPreviewCard model =
@@ -12285,7 +12538,8 @@ viewPreviewCard model =
             []
 
 
-{-| 表(または盤面)で選択中の行の rect を枠 div で示す。 -}
+{-| 表(または盤面)で選択中の行の rect を枠 div で示す。
+-}
 viewSelectedRect : Plugins.Plugin -> Model -> Api.Preview -> List (Html Msg)
 viewSelectedRect plugin model p =
     case ( model.sectionKey, model.entrySel ) of
@@ -12328,7 +12582,8 @@ viewDragGhost drag design =
             []
 
 
-{-| design 座標の矩形を % で img に重ねる div(位置決めはどの層も同じ式)。 -}
+{-| design 座標の矩形を % で img に重ねる div(位置決めはどの層も同じ式)。
+-}
 percentDiv : String -> List (Html.Attribute Msg) -> Api.Design -> Api.PreviewRect -> Html Msg
 percentDiv className attrs design r =
     let
@@ -12534,7 +12789,8 @@ viewRenameHeader model key name =
                 ]
 
 
-{-| Esc だけ破棄に使う(複数行入力は Enter を改行に譲る)。 -}
+{-| Esc だけ破棄に使う(複数行入力は Enter を改行に譲る)。
+-}
 escCancels : Html.Attribute Msg
 escCancels =
     HE.custom "keydown"
@@ -12633,7 +12889,8 @@ tableHandlers =
     }
 
 
-{-| 表の見え方に効く今の状態だけを渡す(Model 丸ごとは渡さない)。 -}
+{-| 表の見え方に効く今の状態だけを渡す(Model 丸ごとは渡さない)。
+-}
 tableState : Model -> EntryTable.State
 tableState model =
     { entrySel = model.entrySel
@@ -12644,7 +12901,8 @@ tableState model =
     }
 
 
-{-| キーのセクション(種類は問わない — 配列も単体も同じフォームに掛ける)。 -}
+{-| キーのセクション(種類は問わない — 配列も単体も同じフォームに掛ける)。
+-}
 sectionByKey : Model -> String -> Maybe Schema.Section
 sectionByKey model key =
     case model.schemaState of
@@ -13073,7 +13331,8 @@ viewControl model path control =
 
                 invalid =
                     isDrafting model.activeDraft path
-                        && (D.decodeString D.value shown |> Result.toMaybe) == Nothing
+                        && (D.decodeString D.value shown |> Result.toMaybe)
+                        == Nothing
 
                 -- 長い 1 行 JSON を折り返した後の見かけの行数を、幅を読めない view でも
                 -- ざっくり見積もる(1 行 ≒ 48 文字)。改行があればその分も足す
@@ -13217,7 +13476,8 @@ sliderValue =
         ]
 
 
-{-| sl-range は step="any" を受け付けない(数値必須)ため、未指定の float は細かい固定刻み。 -}
+{-| sl-range は step="any" を受け付けない(数値必須)ため、未指定の float は細かい固定刻み。
+-}
 rangeStep : Maybe Float -> Bool -> String
 rangeStep step isInt =
     case ( step, isInt ) of
@@ -13269,7 +13529,8 @@ viewDraftBox activeDraft opts =
         []
 
 
-{-| % 併記(0.35 → 35%)。数字になっていない下書きの間は "–" で場所だけ保つ。 -}
+{-| % 併記(0.35 → 35%)。数字になっていない下書きの間は "–" で場所だけ保つ。
+-}
 percentNote : Draft.NumberSpec -> Maybe Float -> String -> List (Html Msg)
 percentNote spec factor shown =
     case factor of
@@ -13290,7 +13551,8 @@ percentNote spec factor shown =
             ]
 
 
-{-| 0.1 刻みまでで丸めた % 文字(0.35×100 の桁ゴミを見せない)。 -}
+{-| 0.1 刻みまでで丸めた % 文字(0.35×100 の桁ゴミを見せない)。
+-}
 percentText : Float -> String
 percentText p =
     let
@@ -13306,7 +13568,8 @@ percentText p =
         ++ "%"
 
 
-{-| vec2 の [x][y] 2 連 draft 数値欄。軸ごとに文書の x / y キーへ書き戻す。 -}
+{-| vec2 の [x][y] 2 連 draft 数値欄。軸ごとに文書の x / y キーへ書き戻す。
+-}
 viewVec2 : Maybe ActiveDraft -> List Seg -> { x : Maybe Float, y : Maybe Float } -> Html Msg
 viewVec2 activeDraft path v =
     let
@@ -13334,7 +13597,8 @@ viewVec2 activeDraft path v =
         (axisBox "x" v.x ++ axisBox "y" v.y)
 
 
-{-| 色(#rrggbb 文字列)。ピッカーで選ぶとその場で確定(スライダーと同じ流儀)。 -}
+{-| 色(#rrggbb 文字列)。ピッカーで選ぶとその場で確定(スライダーと同じ流儀)。
+-}
 viewColor : List Seg -> Maybe String -> Html Msg
 viewColor path hex =
     div [ HA.class "control-color flex items-center gap-2" ]
@@ -13391,7 +13655,8 @@ viewTexture activeDraft path t =
         ]
 
 
-{-| datalist の id 用。パスは 1 画面に同じ物が 2 つ出ない(フォームは選択 1 件)。 -}
+{-| datalist の id 用。パスは 1 画面に同じ物が 2 つ出ない(フォームは選択 1 件)。
+-}
 pathDomId : List Seg -> String
 pathDomId path =
     path
@@ -13521,7 +13786,8 @@ viewWeightRow model path w ( key, value ) =
         ]
 
 
-{-| 行の追加(キー名のインライン入力・Enter 確定 / Esc 破棄)。 -}
+{-| 行の追加(キー名のインライン入力・Enter 確定 / Esc 破棄)。
+-}
 viewWeightsAdd : Model -> List Seg -> Html Msg
 viewWeightsAdd model path =
     case model.weightsAdd |> Maybe.andThen (matching path) of
@@ -13849,6 +14115,7 @@ viewSelect path choices selected =
         )
 
 
+
 -- 「+ 新しいファイル」ウィザード(3 ペインの代わりに出す切替画面)
 
 
@@ -14053,7 +14320,8 @@ viewTypeSelect i f =
         )
 
 
-{-| type ごとの追加入力。enum は値の列・ref は参照先・数値は min/max、それ以外は無し。 -}
+{-| type ごとの追加入力。enum は値の列・ref は参照先・数値は min/max、それ以外は無し。
+-}
 viewFieldExtra : Int -> Wizard.FieldDraft -> Html Msg
 viewFieldExtra i f =
     div [ HA.class "f-extra flex min-w-0 flex-1 items-center gap-1.5" ]
@@ -14220,6 +14488,7 @@ wizardCreateLabel write =
 lazy に包むのは、検査が文書全体を舐めるから — ドット絵の一筆はセルを跨ぐたびに
 view が回るので、素の view のたびだと 89KB の検査がカーソルに付いて回る。
 種(文書・スキーマ・横断辞書)が動かない限り前の結果でよい。
+
 -}
 viewProblemBar : Model -> Html Msg
 viewProblemBar model =
@@ -14365,7 +14634,8 @@ viewAddDialog dialog =
         ]
 
 
-{-| 使用中エントリの削除確認。件数と使用元を見せる — 黙って参照を宙に浮かせない。 -}
+{-| 使用中エントリの削除確認。件数と使用元を見せる — 黙って参照を宙に浮かせない。
+-}
 viewDeleteDialog : DeleteConfirmState -> Html Msg
 viewDeleteDialog confirm =
     let
@@ -14445,7 +14715,8 @@ bakeZoomKeyDecoder model =
             )
 
 
-{-| ⌘⇧F(開く / 閉じる)と、開いている間の Esc(閉じる)。 -}
+{-| ⌘⇧F(開く / 閉じる)と、開いている間の Esc(閉じる)。
+-}
 searchKeyDecoder : Bool -> D.Decoder Msg
 searchKeyDecoder isOpen =
     D.map4 (\key meta ctrl shift -> { key = key, meta = meta, ctrl = ctrl, shift = shift })
@@ -14531,7 +14802,8 @@ keyCaptureKeyDecoder =
             )
 
 
-{-| 文字を打つ場所か(素の欄と、Shoelace の欄部品)。 -}
+{-| 文字を打つ場所か(素の欄と、Shoelace の欄部品)。
+-}
 isTypingTag : String -> Bool
 isTypingTag tag =
     let
