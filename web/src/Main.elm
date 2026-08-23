@@ -4367,6 +4367,10 @@ timelineConfigOf model =
                     { specs = specs
                     , values = timelineValues specs model
                     , fields = timelineFields schema
+                    , labels =
+                        schema.sections
+                            |> List.filterMap (\( k, sec ) -> sec.label |> Maybe.map (Tuple.pair k))
+                            |> Dict.fromList
                     }
 
             else
@@ -9990,11 +9994,11 @@ playSound name model =
         { model | playingSound = Just name }
 
 
-{-| プレビュー枠に縦の場所が要るか(音の編集器・タイムラインを出す時)。
+{-| プレビュー枠に縦の場所が要るか(音の編集器を出す時)。
 -}
 tallPreview : Model -> Bool
 tallPreview model =
-    sfxConfigOf model /= Nothing || timelineConfigOf model /= Nothing
+    sfxConfigOf model /= Nothing
 
 
 {-| 右上の「見え方」。音の文書なら ▶(選んでいる音)、絵のある文書なら
@@ -10019,29 +10023,18 @@ viewKnobPreviewBody model =
             Just [ Html.map SfxMsg (SfxEditor.view config model.sfx) ]
 
         Nothing ->
-            case timelineConfigOf model of
-                -- タイムライン: 帯の境目とクリップの右端を掴んで、演出のテンポを触る
-                Just config ->
-                    Just [ Html.map TimelineMsg (Timeline.view config model.timeline) ]
+            case DocKind.playableSound model.sounds (selectedSoundName model) of
+                Just name ->
+                    Just [ viewSoundPlayer model name ]
 
                 Nothing ->
-                    viewKnobPreviewRest model
+                    case viewPreviewCard model of
+                        [] ->
+                            -- 絵も音も無い文書。空の枠を出さない(呼び側が畳む)
+                            Nothing
 
-
-viewKnobPreviewRest : Model -> Maybe (List (Html Msg))
-viewKnobPreviewRest model =
-    case DocKind.playableSound model.sounds (selectedSoundName model) of
-        Just name ->
-            Just [ viewSoundPlayer model name ]
-
-        Nothing ->
-            case viewPreviewCard model of
-                [] ->
-                    -- 絵も音も無い文書。空の枠を出さない(呼び側が畳む)
-                    Nothing
-
-                cards ->
-                    Just cards
+                        cards ->
+                            Just cards
 
 
 {-| 焼き上がりの場面。描き出すボタン・注意の件数・GIF・フレーム送り。
@@ -12456,11 +12449,25 @@ viewFormPaneIn attrs model =
                        ]
 
             ( Just _, SchemaReady schema ) ->
-                viewPreviewCard model ++ viewForm model schema
+                viewPreviewCard model ++ viewTimelinePanel model ++ viewForm model schema
          )
             ++ viewKindGuide model
             ++ viewUnsupportedFooter model
         )
+
+
+{-| タイムライン(演出のテンポを触る帯)。開いているタブがトラックを宣言して
+いるときだけ、フォームの上に全幅で出す。右の「見え方」枠は幅 320px で
+字が重なって読めないため、こちらに置く。
+-}
+viewTimelinePanel : Model -> List (Html Msg)
+viewTimelinePanel model =
+    case timelineConfigOf model of
+        Just config ->
+            [ Html.map TimelineMsg (Timeline.view config model.timeline) ]
+
+        Nothing ->
+            []
 
 
 {-| 盤面プレビューのカード(枠+タイトル+design 寸法)。失敗は枠の中の文言だけ —

@@ -73,6 +73,7 @@ config =
             [ ( "turnCue.swapEnd", { min = Just 0, max = Just 1, step = Just 0.01, default = Just 0.6 } )
             , ( "turnBeatScale", { min = Just 1, max = Just 5, step = Nothing, default = Just 2.2 } )
             ]
+    , labels = Dict.empty
     }
 
 

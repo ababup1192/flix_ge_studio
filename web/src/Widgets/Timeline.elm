@@ -189,6 +189,9 @@ type alias Config =
     { specs : List TrackSpec
     , values : Dict String Float
     , fields : Dict String Limit
+
+    -- セクションキー → 表示名(スキーマの label)。無ければキーのまま出す
+    , labels : Dict String String
     }
 
 
@@ -495,6 +498,11 @@ trackSecondsIn config section =
         |> Maybe.withDefault 0
 
 
+labelOf : Config -> String -> String
+labelOf config section =
+    Dict.get section config.labels |> Maybe.withDefault section
+
+
 {-| そのトラックの宣言が住むセクション(親が「いま開いているタブに出すか」を
 判じる材料)。
 -}
@@ -794,8 +802,9 @@ viewPhaseTrack config ruler trackSeconds track =
         handles =
             boundaryHandles ++ totalHandle
     in
+    -- 総尺は右端のグリップが「全体 1.28s」と言うので、ここでは繰り返さない
     [ div [ HA.class "tl-row-label" ]
-        [ text (track.section ++ " — 全体 " ++ secondsText trackSeconds) ]
+        [ text (labelOf config track.section) ]
     , div
         [ HA.class "tl-track tl-track-phase"
         , onPointerDown (pickNearest handles)
