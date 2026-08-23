@@ -756,16 +756,27 @@ viewPhaseTrack config ruler trackSeconds track =
         segments =
             List.map3
                 (\phase start end ->
+                    let
+                        width =
+                            widthOf (Basics.max 0 (end - start))
+                    in
                     div
                         [ HA.classList
                             [ ( "tl-phase", True )
                             , ( "tl-wait", phase.wait )
                             ]
                         , HA.style "left" (percent (widthOf start))
-                        , HA.style "width" (percent (widthOf (Basics.max 0 (end - start))))
+                        , HA.style "width" (percent width)
                         , HA.title (Maybe.withDefault phase.label phase.description)
                         ]
-                        [ span [ HA.class "tl-phase-label" ] [ text phase.label ] ]
+                        -- 名前が入り切らない狭い区間は隠す(切れた半端な字は誤読の元。
+                        -- ホバーの title で読める)。1 文字 ≈ 物差しの 1.7% の見積もり
+                        (if width * 100 >= 1.7 * toFloat (String.length phase.label) then
+                            [ span [ HA.class "tl-phase-label" ] [ text phase.label ] ]
+
+                         else
+                            []
+                        )
                 )
                 track.phases
                 starts
@@ -809,7 +820,10 @@ viewPhaseTrack config ruler trackSeconds track =
         [ HA.class "tl-track tl-track-phase"
         , onPointerDown (pickNearest handles)
         ]
-        (segments ++ List.map viewGrip handles)
+        -- 秒ラベルは隣どうしが近いと重なるので、上下 2 段に互い違いで置く
+        (segments
+            ++ List.indexedMap (\i handle -> viewGrip (modBy 2 i == 1) handle) handles
+        )
     ]
 
 
@@ -883,14 +897,15 @@ viewClipRow config ruler beatSeconds section clip span_ =
         [ HA.class "tl-track tl-track-clip"
         , onPointerDown (pickNearest [ handle ])
         ]
+        -- バーの中に名前は書かない(すぐ上の行見出しと同じ物が 2 度並ぶだけ)
         (div
             [ HA.classList [ ( "tl-clip", True ), ( "tl-capped", span_.capped ) ]
             , HA.style "width" (percent (widthOf span_.seconds))
             , HA.title capTitle
             ]
-            [ span [ HA.class "tl-phase-label" ] [ text clip.label ] ]
+            []
             :: rest
-            ++ [ viewGrip handle ]
+            ++ [ viewGrip False handle ]
         )
     ]
 
@@ -919,11 +934,14 @@ pickNearest handles point =
         |> Maybe.withDefault Released
 
 
-viewGrip : ( Float, Handle, String ) -> Html Msg
-viewGrip ( fx, handle, label ) =
+{-| グリップ 1 本。alt = 秒ラベルを上の段に逃がす(隣と互い違いにして重なりを断つ)。
+-}
+viewGrip : Bool -> ( Float, Handle, String ) -> Html Msg
+viewGrip alt ( fx, handle, label ) =
     div
         [ HA.classList
             [ ( "tl-grip", True )
+            , ( "tl-grip-alt", alt )
             , ( "tl-grip-total", isTotal handle )
             ]
         , HA.style "left" (percent fx)
