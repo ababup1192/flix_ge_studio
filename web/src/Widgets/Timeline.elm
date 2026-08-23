@@ -944,13 +944,29 @@ viewClipRow config ruler beatSeconds section clip span_ =
             widthOf span_.seconds
 
         -- 名前はバーの中に書く(区間の名前は塗りの中、で全トラック統一)。
-        -- 入り切らない狭さの時は隠してホバーの title に任せる
+        -- 入り切らない狭さの時は、バーの右の空きへはみ出して書く
+        -- (隠すと行が名無しになる。動画編集ソフトの短いクリップと同じ扱い)
+        nameFits =
+            clipWidth * 100 >= 1.7 * toFloat (String.length clip.label + 1)
+
         clipName =
-            if clipWidth * 100 >= 1.7 * toFloat (String.length clip.label + 1) then
+            if nameFits then
                 [ span [ HA.class "tl-phase-label" ] [ text clip.label ] ]
 
             else
                 []
+
+        nameOutside =
+            if nameFits then
+                []
+
+            else
+                [ span
+                    [ HA.class "tl-phase-label tl-label-out"
+                    , HA.style "left" (percent clipWidth)
+                    ]
+                    [ text clip.label ]
+                ]
 
         rest =
             case clip.restLabel of
@@ -990,6 +1006,7 @@ viewClipRow config ruler beatSeconds section clip span_ =
                 ]
                 clipName
             :: rest
+            ++ nameOutside
             ++ [ viewGrip False handle ]
         )
     ]

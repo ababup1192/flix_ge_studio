@@ -888,9 +888,25 @@ sl-alert.notice::part(message) {
   background: color-mix(in oklab, #35b8a5 45%, transparent);
 }
 
-/* 上限秒で切られているバー。右端を伸ばしても絵が変わらない印 */
+/* 上限秒で切られているバー。右端を伸ばしても絵が変わらない印。
+   二重線は塗りの内側に描く(右端そのものに置くとグリップの線と重なる) */
 .tl-capped {
-  border-right: 3px double var(--color-warn);
+  background-image: linear-gradient(
+    to left,
+    transparent 2px,
+    var(--color-warn) 2px 4px,
+    transparent 4px 6px,
+    var(--color-warn) 6px 8px,
+    transparent 8px
+  );
+}
+
+/* 入り切らない狭いバーの名前は、バーの右の空きへはみ出して書く */
+.tl-label-out {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: 14px;
 }
 
 .tl-phase-label {
