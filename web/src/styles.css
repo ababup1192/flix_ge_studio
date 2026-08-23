@@ -763,6 +763,19 @@ sl-alert.notice::part(message) {
   white-space: nowrap;
 }
 
+/* ワンショットの束の見出し + 起点の注記(誤読しやすい所なので常に出す) */
+.tl-group-note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-ink-soft);
+  margin-top: 0.6rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--color-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tl-row-label {
   font-family: var(--font-mono);
   font-size: 10px;

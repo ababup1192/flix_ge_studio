@@ -820,17 +820,23 @@ viewClipTrack :
     -> { section : String, total : TotalSpec, items : List ClipSpec }
     -> List (Html Msg)
 viewClipTrack config ruler beatSeconds track =
-    track.items
-        |> List.concatMap
-            (\clip ->
-                case clipSpan config { section = track.section, beatSeconds = beatSeconds } clip of
-                    -- 値も default も無いクリップは行ごと出さない(fail-open)
-                    Nothing ->
-                        []
+    -- ワンショットの起点はターンの頭の帯の中の位置ではなく「トリガーの瞬間」
+    -- (札の発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
+    -- 横位置は描かず(描くと嘘になる)、全部左端 0 = トリガーとして長さだけ見せる
+    div [ HA.class "tl-group-note" ]
+        [ text (labelOf config track.section ++ " — 左端 0s はトリガー(発動・被弾)の瞬間。持つのは長さだけ") ]
+        :: (track.items
+                |> List.concatMap
+                    (\clip ->
+                        case clipSpan config { section = track.section, beatSeconds = beatSeconds } clip of
+                            -- 値も default も無いクリップは行ごと出さない(fail-open)
+                            Nothing ->
+                                []
 
-                    Just span_ ->
-                        viewClipRow config ruler beatSeconds track.section clip span_
-            )
+                            Just span_ ->
+                                viewClipRow config ruler beatSeconds track.section clip span_
+                    )
+           )
 
 
 viewClipRow :
