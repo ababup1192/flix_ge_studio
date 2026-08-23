@@ -733,11 +733,33 @@ sl-alert.notice::part(message) {
 /* pointer 面。行が薄いので move はここで受ける。横 padding 0 で
    トラック面と左右端をそろえる(fx の意味を一致させる) */
 .tl-surface {
+  /* tl-beatline(全行を貫く縦線)の基準になる */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
   touch-action: none;
   user-select: none;
+}
+
+/* 1 ビートの線。目盛りの下から最後の行まで貫く縦の点線 */
+.tl-beatline {
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  border-left: 2px dashed var(--color-beat, #b48ae0);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tl-beatline span {
+  position: absolute;
+  top: -14px;
+  left: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-beat, #b48ae0);
+  white-space: nowrap;
 }
 
 .tl-ticks {
@@ -786,16 +808,25 @@ sl-alert.notice::part(message) {
   text-overflow: ellipsis;
 }
 
+/* トラック = 当たり判定(全幅・透明)。見た目の枠は tl-frame が総尺の所で切る */
 .tl-track {
   position: relative;
   height: 26px;
   /* 見出しとバーの間に秒ラベル専用の帯を空ける(バーに被せない) */
   margin-top: 15px;
   cursor: ew-resize;
+  overflow: visible;
+}
+
+/* 枠 = そのトラックの時間の入れ物。枠の外 = 時間の外(何も描かない) */
+.tl-frame {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   background: var(--color-well);
   border: 1px solid var(--color-edge);
   border-radius: 2px;
-  overflow: visible;
 }
 
 /* フェーズの帯は境目が隣り合うので、秒ラベル 2 段ぶんの帯を空ける */
@@ -841,11 +872,20 @@ sl-alert.notice::part(message) {
   left: 0;
 }
 
-/* 何も動かないウェイト / クリップの残り(別の動きになる区間)は沈めて、
-   詰めるべき場所が目で分かるようにする */
-.tl-wait,
+/* 塗りの意味は 3 つだけ: 塗り = 動いている時間 / 斜線 = ウェイト /
+   描かない = 時間の外。斜線はウェイトにしか使わない */
+.tl-wait {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklab, var(--color-accent) 30%, transparent) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+/* クリップの残り(同じバーの中の第 2 の動き)。「動いている時間」の仲間なので
+   沈めず、色味だけ変える */
 .tl-rest {
-  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  background: color-mix(in oklab, #35b8a5 45%, transparent);
 }
 
 /* 上限秒で切られているバー。右端を伸ばしても絵が変わらない印 */

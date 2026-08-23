@@ -20,11 +20,11 @@ turnCueWidget =
       { "timeline": {
           "totalSeconds": { "multiply": ["beatSeconds", "turnBeatScale"], "to": "turnBeatScale" },
           "phases": [
-            { "label": "ドラム",   "to": "drumEnd", "description": "ターン数が回る" },
-            { "label": "ウェイト", "to": "swapStart", "wait": true },
-            { "label": "スワップ", "to": "swapEnd" },
-            { "label": "ウェイト", "to": "moveStart", "wait": true },
-            { "label": "ムーブ",   "to": "end" } ] } }
+            { "label": "ターン表示",   "to": "turnCounterEnd", "description": "ターン数が回る" },
+            { "label": "ウェイト", "to": "countdownStart", "wait": true },
+            { "label": "カウントダウン", "to": "countdownEnd" },
+            { "label": "ウェイト", "to": "enterFieldStart", "wait": true },
+            { "label": "場に出る",   "to": "end" } ] } }
     """
 
 
@@ -36,7 +36,7 @@ fxTimingWidget =
       { "clips": {
           "totalSeconds": { "multiply": ["beatSeconds"] },
           "items": [
-            { "label": "玉が飛ぶ", "length": "orbFlightRatio", "restLabel": "炸裂" },
+            { "label": "玉が対象へ飛ぶ", "length": "orbFlightRatio", "restLabel": "炸裂" },
             { "label": "踏み込み", "length": "lungeRatio", "capSeconds": "lungeMaxSeconds" } ] } }
     """
 
@@ -60,17 +60,17 @@ config =
         Dict.fromList
             [ ( "beatSeconds", 0.58 )
             , ( "turnBeatScale", 2.2 )
-            , ( "turnCue.drumEnd", 0.26 )
-            , ( "turnCue.swapStart", 0.36 )
-            , ( "turnCue.swapEnd", 0.6 )
-            , ( "turnCue.moveStart", 0.68 )
+            , ( "turnCue.turnCounterEnd", 0.26 )
+            , ( "turnCue.countdownStart", 0.36 )
+            , ( "turnCue.countdownEnd", 0.6 )
+            , ( "turnCue.enterFieldStart", 0.68 )
             , ( "fxTiming.orbFlightRatio", 0.65 )
             , ( "fxTiming.lungeRatio", 0.45 )
             , ( "fxTiming.lungeMaxSeconds", 0.26 )
             ]
     , fields =
         Dict.fromList
-            [ ( "turnCue.swapEnd", { min = Just 0, max = Just 1, step = Just 0.01, default = Just 0.6 } )
+            [ ( "turnCue.countdownEnd", { min = Just 0, max = Just 1, step = Just 0.01, default = Just 0.6 } )
             , ( "turnBeatScale", { min = Just 1, max = Just 5, step = Nothing, default = Just 2.2 } )
             ]
     , labels = Dict.empty
@@ -120,7 +120,7 @@ suite =
                 )
                     |> Expect.equal
                         ( 5
-                        , ( 2, [ "drumEnd", "swapStart", "swapEnd", "moveStart" ] )
+                        , ( 2, [ "turnCounterEnd", "countdownStart", "countdownEnd", "enterFieldStart" ] )
                         , ( [ "beatSeconds", "turnBeatScale" ], Just "turnBeatScale" )
                         )
         , test "fxTiming 宣言は上限秒とレストの有無ごとクリップに読める" <|
@@ -148,7 +148,7 @@ suite =
                               "totalSeconds": { "multiply": ["beatSeconds"] },
                               "phases": [
                                 { "label": "x", "to": "end" },
-                                { "label": "y", "to": "swapEnd" } ] } }
+                                { "label": "y", "to": "countdownEnd" } ] } }
                         """
                       )
                     , ( "d", Nothing )
@@ -164,17 +164,17 @@ suite =
         , test "境目のドラッグ: 物差しの位置 → トラックの割合 → step 0.01 へ丸めて書く" <|
             \_ ->
                 -- fx 0.43 × 1.4674s = 0.631s → ÷1.276s = 0.4945 → 0.49
-                dragTo (Timeline.Boundary { section = "turnCue", target = "swapEnd" }) 0.43
-                    |> Expect.equal ( [ "turnCue", "swapEnd" ], 490 )
+                dragTo (Timeline.Boundary { section = "turnCue", target = "countdownEnd" }) 0.43
+                    |> Expect.equal ( [ "turnCue", "countdownEnd" ], 490 )
         , test "境目のドラッグは schema の範囲で clamp する(右端いっぱい → 1.0)" <|
             \_ ->
                 -- fx 1.0 は割合 1.15 相当だが、max 1.0 で止まる
-                dragTo (Timeline.Boundary { section = "turnCue", target = "swapEnd" }) 1.0
-                    |> Expect.equal ( [ "turnCue", "swapEnd" ], 1000 )
+                dragTo (Timeline.Boundary { section = "turnCue", target = "countdownEnd" }) 1.0
+                    |> Expect.equal ( [ "turnCue", "countdownEnd" ], 1000 )
         , test "丸めた結果が今の値と同じなら書かない(step が洪水のスロットルになる)" <|
             \_ ->
                 -- fx 0.5217 × 1.4674s ÷ 1.276s = 0.5999… → 0.60 = 今の値
-                dragTo (Timeline.Boundary { section = "turnCue", target = "swapEnd" }) 0.5217
+                dragTo (Timeline.Boundary { section = "turnCue", target = "countdownEnd" }) 0.5217
                     |> Expect.equal ( [], 0 )
         , test "帯全体の右端: 秒 → turnBeatScale の逆算(総尺 ÷ beatSeconds)" <|
             \_ ->
@@ -196,7 +196,7 @@ suite =
         , test "文書に無い欄は schema の default へ倒れる" <|
             \_ ->
                 Timeline.valueOf
-                    { config | values = Dict.remove "turnCue.swapEnd" config.values }
-                    "turnCue.swapEnd"
+                    { config | values = Dict.remove "turnCue.countdownEnd" config.values }
+                    "turnCue.countdownEnd"
                     |> Expect.equal (Just 0.6)
         ]

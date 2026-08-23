@@ -661,7 +661,8 @@ view config model =
                 :: dragAttrs model
             )
             (viewTicks ruler
-                :: (config.specs |> List.concatMap (viewTrack config ruler))
+                :: viewBeatLine config ruler
+                ++ (config.specs |> List.concatMap (viewTrack config ruler))
             )
         ]
 
@@ -676,6 +677,40 @@ dragAttrs model =
         , HE.on "pointerup" (D.succeed Released)
         , HE.on "pointercancel" (D.succeed Released)
         ]
+
+
+{-| 1 ビートの線。全行を貫く縦の点線で、ワンショットの枠の右端はこの線に一致する
+(ワンショットは必ず 1 ビートの中で終わる、を線が語る)。ビートの長さは
+クリップのトラックの総尺(beatSeconds の掛け算)から取る。
+-}
+viewBeatLine : Config -> Float -> List (Html Msg)
+viewBeatLine config ruler =
+    config.specs
+        |> List.filterMap
+            (\spec ->
+                case spec of
+                    ClipTrack _ ->
+                        Just (totalSecondsOf config spec)
+
+                    PhaseTrack _ ->
+                        Nothing
+            )
+        |> List.head
+        |> Maybe.andThen
+            (\beat ->
+                if ruler <= 0 || beat <= 0 then
+                    Nothing
+
+                else
+                    Just
+                        [ div
+                            [ HA.class "tl-beatline"
+                            , HA.style "left" (percent (beat / ruler))
+                            ]
+                            [ span [] [ text ("1 ビート " ++ secondsText beat) ] ]
+                        ]
+            )
+        |> Maybe.withDefault []
 
 
 {-| 秒の目盛り。0.1 / 0.25 / 0.5 / 1s から「4〜8 本になる間隔」を選ぶ。
@@ -829,8 +864,15 @@ viewPhaseTrack config ruler trackSeconds track =
         [ HA.class "tl-track tl-track-phase"
         , onPointerDown (pickNearest handles)
         ]
+        -- 枠は総尺の所で切る(枠の外 = 時間の外。何も描かない)。当たり判定は
+        -- トラック全幅のままなので、fx の座標系は変わらない
         -- 秒ラベルは隣どうしが近いと重なるので、上下 2 段に互い違いで置く
-        (segments
+        (div
+            [ HA.class "tl-frame"
+            , HA.style "width" (percent (trackSeconds / ruler))
+            ]
+            []
+            :: segments
             ++ List.indexedMap (\i handle -> viewGrip (modBy 2 i == 1) handle) handles
         )
     ]
@@ -843,11 +885,11 @@ viewClipTrack :
     -> { section : String, total : TotalSpec, items : List ClipSpec }
     -> List (Html Msg)
 viewClipTrack config ruler beatSeconds track =
-    -- ワンショットの起点はターンの頭の帯の中の位置ではなく「トリガーの瞬間」
-    -- (札の発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
+    -- ワンショットの起点はターンの頭のバーの中の位置ではなく「トリガーの瞬間」
+    -- (カードの発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
     -- 横位置は描かず(描くと嘘になる)、全部左端 0 = トリガーとして長さだけ見せる
     div [ HA.class "tl-group-note" ]
-        [ text (labelOf config track.section ++ " — 左端 0s はトリガー(発動・被弾)の瞬間。持つのは長さだけ") ]
+        [ text (labelOf config track.section ++ " — トリガー(カードの発動・被弾)ごとに 1 回だけ再生。始まる時刻は実行時に決まるので、ここでは長さだけを編集する。枠は 1 ビート") ]
         :: (track.items
                 |> List.concatMap
                     (\clip ->
@@ -875,10 +917,21 @@ viewClipRow config ruler beatSeconds section clip span_ =
         widthOf sec =
             sec / ruler
 
+        -- 秒に「ビートに対する割合」を併記する(下のフォームの数値と照合できる)。
+        -- 上限で切られている間は割合を動かしても絵が変わらないので、代わりに(上限)と言う
+        gripLabel =
+            if span_.capped then
+                secondsText span_.seconds ++ " (上限)"
+
+            else
+                valueOf config (section ++ "." ++ clip.length)
+                    |> Maybe.map (\r -> secondsText span_.seconds ++ " (" ++ String.fromInt (round (r * 100)) ++ "%)")
+                    |> Maybe.withDefault (secondsText span_.seconds)
+
         handle =
             ( widthOf span_.seconds
             , ClipEnd { section = section, target = clip.length }
-            , secondsText span_.seconds
+            , gripLabel
             )
 
         capTitle =
@@ -887,12 +940,24 @@ viewClipRow config ruler beatSeconds section clip span_ =
                 |> Maybe.map (\cap -> "上限 " ++ secondsText cap ++ " で切られている(超える値は左のフォームで)")
                 |> Maybe.withDefault ""
 
+        clipWidth =
+            widthOf span_.seconds
+
+        -- 名前はバーの中に書く(区間の名前は塗りの中、で全トラック統一)。
+        -- 入り切らない狭さの時は隠してホバーの title に任せる
+        clipName =
+            if clipWidth * 100 >= 1.7 * toFloat (String.length clip.label + 1) then
+                [ span [ HA.class "tl-phase-label" ] [ text clip.label ] ]
+
+            else
+                []
+
         rest =
             case clip.restLabel of
                 Just label ->
                     [ div
                         [ HA.class "tl-rest"
-                        , HA.style "left" (percent (widthOf span_.seconds))
+                        , HA.style "left" (percent clipWidth)
                         , HA.style "width" (percent (widthOf (Basics.max 0 (beatSeconds - span_.seconds))))
                         , HA.title label
                         ]
@@ -902,18 +967,28 @@ viewClipRow config ruler beatSeconds section clip span_ =
                 Nothing ->
                     []
     in
-    [ div [ HA.class "tl-row-label" ] [ text clip.label ]
-    , div
+    [ div
         [ HA.class "tl-track tl-track-clip"
         , onPointerDown (pickNearest [ handle ])
         ]
-        -- バーの中に名前は書かない(すぐ上の行見出しと同じ物が 2 度並ぶだけ)
+        -- 枠 = 1 ビート(ワンショットはこの中で終わる)。枠の外には何も描かない
         (div
-            [ HA.classList [ ( "tl-clip", True ), ( "tl-capped", span_.capped ) ]
-            , HA.style "width" (percent (widthOf span_.seconds))
-            , HA.title capTitle
+            [ HA.class "tl-frame"
+            , HA.style "width" (percent (widthOf beatSeconds))
             ]
             []
+            :: div
+                [ HA.classList [ ( "tl-clip", True ), ( "tl-capped", span_.capped ) ]
+                , HA.style "width" (percent clipWidth)
+                , HA.title
+                    (if capTitle == "" then
+                        clip.label
+
+                     else
+                        clip.label ++ "。" ++ capTitle
+                    )
+                ]
+                clipName
             :: rest
             ++ [ viewGrip False handle ]
         )
