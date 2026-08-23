@@ -803,9 +803,24 @@ sl-alert.notice::part(message) {
   margin-top: 27px;
 }
 
-/* トラック面の子は全て当たり判定を持たない。pointDecoder の offsetX は
+/* トラック面の子は原則当たり判定を持たない。pointDecoder の offsetX は
    target 基準なので、子が target になると割合が壊れる(sfx-wave と同じ理由) */
 .tl-track > * {
+  pointer-events: none;
+}
+
+/* 例外: セグメント(帯)はホバーの title を出すため当たり判定を返す。
+   座標は pointDecoder の segmentShift(offsetParent がトラックなら left を
+   足す)が補正する。ドラッグ中(tl-drag)は切って move の基準を面に固定 */
+.tl-surface:not(.tl-drag) .tl-phase,
+.tl-surface:not(.tl-drag) .tl-clip,
+.tl-surface:not(.tl-drag) .tl-rest {
+  pointer-events: auto;
+}
+
+.tl-phase > *,
+.tl-clip > *,
+.tl-rest > * {
   pointer-events: none;
 }
 
@@ -839,7 +854,8 @@ sl-alert.notice::part(message) {
 }
 
 .tl-phase-label {
-  padding: 0 4px;
+  /* 左はグリップの丸(境目から 5px 食い込む)を避けて右へ逃がす */
+  padding: 0 4px 0 12px;
   font-family: var(--font-mono);
   font-size: 9px;
   color: var(--color-ink-soft);

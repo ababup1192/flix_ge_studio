@@ -651,7 +651,15 @@ view config model =
             -- pointer 面。行が薄いので、move はここで受ける(行から縦に
             -- ずれても途絶えない)。横 padding 0 でトラック面と左右端をそろえ、
             -- fx の意味を一致させる
-            (HA.class "tl-surface" :: dragAttrs model)
+            (HA.classList
+                [ ( "tl-surface", True )
+
+                -- ドラッグ中はセグメントの pointer-events を切る(move の
+                -- target を面そのものに保ち、offsetX の基準を揺らさない)
+                , ( "tl-drag", isDragging model )
+                ]
+                :: dragAttrs model
+            )
             (viewTicks ruler
                 :: (config.specs |> List.concatMap (viewTrack config ruler))
             )
@@ -770,8 +778,9 @@ viewPhaseTrack config ruler trackSeconds track =
                         , HA.title (Maybe.withDefault phase.label phase.description)
                         ]
                         -- 名前が入り切らない狭い区間は隠す(切れた半端な字は誤読の元。
-                        -- ホバーの title で読める)。1 文字 ≈ 物差しの 1.7% の見積もり
-                        (if width * 100 >= 1.7 * toFloat (String.length phase.label) then
+                        -- ホバーの title で読める)。1 文字 ≈ 物差しの 1.7% の見積もりに、
+                        -- グリップを避ける左の余白ぶん +1 文字
+                        (if width * 100 >= 1.7 * toFloat (String.length phase.label + 1) then
                             [ span [ HA.class "tl-phase-label" ] [ text phase.label ] ]
 
                          else
@@ -885,6 +894,7 @@ viewClipRow config ruler beatSeconds section clip span_ =
                         [ HA.class "tl-rest"
                         , HA.style "left" (percent (widthOf span_.seconds))
                         , HA.style "width" (percent (widthOf (Basics.max 0 (beatSeconds - span_.seconds))))
+                        , HA.title label
                         ]
                         [ span [ HA.class "tl-phase-label" ] [ text label ] ]
                     ]
@@ -967,14 +977,37 @@ onPointerDown toMsg =
 
 
 {-| 押した場所を「その要素の中の割合」で読む(SfxEditor と同じ)。
+セグメント(帯)はホバーの title を出すために pointer-events を持つので、
+その上で押すと offsetX はセグメント基準になる — segmentShift で track 基準へ戻す。
 -}
 pointDecoder : D.Decoder Point
 pointDecoder =
-    D.map4 (\x y w h -> { fx = safeDiv x w, fy = safeDiv y h })
+    D.map5 (\x y w h dx -> { fx = safeDiv (x + dx) w, fy = safeDiv y h })
         (D.field "offsetX" D.float)
         (D.field "offsetY" D.float)
         (D.at [ "currentTarget", "clientWidth" ] D.float)
         (D.at [ "currentTarget", "clientHeight" ] D.float)
+        segmentShift
+
+
+{-| target がトラック直下の絶対配置の子(offsetParent = tl-track)のときだけ、
+その子の left を足して offsetX をトラック基準に直す。target がトラック自身や
+tl-surface のときは offsetParent がトラックではないので 0 のまま。
+-}
+segmentShift : D.Decoder Float
+segmentShift =
+    D.oneOf
+        [ D.at [ "target", "offsetParent", "className" ] D.string
+            |> D.andThen
+                (\cls ->
+                    if String.contains "tl-track" cls then
+                        D.at [ "target", "offsetLeft" ] D.float
+
+                    else
+                        D.succeed 0
+                )
+        , D.succeed 0
+        ]
 
 
 safeDiv : Float -> Float -> Float
