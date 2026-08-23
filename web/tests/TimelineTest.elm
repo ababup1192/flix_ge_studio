@@ -88,6 +88,13 @@ outKey out =
         Timeline.Edited edit ->
             ( edit.path, round (edit.value * 1000) )
 
+        -- ズームは文書を書かない(スクロール合わせの頼み事だけ)
+        Timeline.Zoomed zoomed ->
+            ( [ "zoom" ], round (zoomed.ratio * 1000) )
+
+        Timeline.ZoomReset ->
+            ( [ "zoom-reset" ], 0 )
+
 
 {-| ハンドルを掴んで(Pressed)、位置 fx まで動かした(Moved)ときに出る Out。
 押しただけでは書かないので、書き戻しは必ずこの 2 手で起きる。
@@ -199,4 +206,29 @@ suite =
                     { config | values = Dict.remove "turnCue.countdownEnd" config.values }
                     "turnCue.countdownEnd"
                     |> Expect.equal (Just 0.6)
+
+        -- ズーム: 倍率は無段階に掛かるが、1(全体が収まる)より縮めない。
+        -- ×1.3 のあと ×0.1 を掛けても 1 で止まる
+        , test "ズームは掛け算で効き、1 未満へは縮まない" <|
+            \_ ->
+                let
+                    ( zoomedIn, _ ) =
+                        Timeline.update config (Timeline.ZoomBy { fx = 0.5, fy = 0 } 1.3) Timeline.init
+
+                    ( clamped, _ ) =
+                        Timeline.update config (Timeline.ZoomBy { fx = 0.5, fy = 0 } 0.1) zoomedIn
+                in
+                ( zoomedIn.zoom, clamped.zoom ) |> Expect.equal ( 1.3, 1 )
+
+        -- 全体へ戻る: 倍率が 1 に戻り、スクロールを左端へ戻す頼み事が出る
+        , test "ZoomHome は倍率 1 + スクロールのリセットを頼む" <|
+            \_ ->
+                let
+                    ( zoomedIn, _ ) =
+                        Timeline.update config (Timeline.ZoomBy { fx = 0.5, fy = 0 } 2) Timeline.init
+
+                    ( home, out ) =
+                        Timeline.update config Timeline.ZoomHome zoomedIn
+                in
+                ( home.zoom, outKey out ) |> Expect.equal ( 1, ( [ "zoom-reset" ], 0 ) )
         ]

@@ -732,9 +732,37 @@ sl-alert.notice::part(message) {
 
 /* pointer 面。行が薄いので move はここで受ける。横 padding 0 で
    トラック面と左右端をそろえる(fx の意味を一致させる) */
+/* 横スクロールの窓。ズームで面が窓より広くなったぶんはここで送る */
+.tl-viewport {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* ズーム中に出る「×1.4 全体へ戻る」(Premiere の \ / Final Cut の Shift+Z 相当) */
+.tl-zoom-home {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-accent);
+  background: var(--color-well);
+  border: 1px solid var(--color-edge);
+  border-radius: 3px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.tl-zoom-home:hover {
+  background: color-mix(in oklab, var(--color-accent) 15%, var(--color-well));
+}
+
+.tl-zoom-home:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
 .tl-surface {
   /* tl-beatline(全行を貫く縦線)の基準になる */
   position: relative;
+  min-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -916,6 +944,10 @@ sl-alert.notice::part(message) {
   font-size: 9px;
   color: var(--color-ink-soft);
   white-space: nowrap;
+  /* 入り切らない名前は … で切る(動画編集ソフトの流儀)。全文はホバーの title */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .tl-grip {

@@ -73,6 +73,14 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.WakePolled info.seq)
 
+        -- Browser.Dom は SimulatedEffect に無い。スクロール位置はテストの
+        -- 関心外なので何もしない
+        Effect.ZoomViewport _ ->
+            SimulatedEffect.Cmd.none
+
+        Effect.ResetViewport _ ->
+            SimulatedEffect.Cmd.none
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 

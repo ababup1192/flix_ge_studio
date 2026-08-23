@@ -14,6 +14,7 @@ Cmd を直接返すとテストから中身が見えない(POST を発行した�
 
 -}
 
+import Browser.Dom
 import Json.Encode as E
 import Process
 import Task
@@ -21,6 +22,11 @@ import Task
 
 type Effect
     = SendApi { id : Int, kind : String, payload : E.Value }
+      -- タイムラインのズーム後に横スクロールを合わせる(掴んだ点 anchorFx が
+      -- 画面の同じ場所に残るように)。ratio = 新しい倍率 ÷ 前の倍率
+    | ZoomViewport { id : String, anchorFx : Float, ratio : Float }
+      -- タイムラインの「全体へ戻る」— 横スクロールを左端へ
+    | ResetViewport { id : String }
       -- トースト通知の消灯予約。seq と message は「その通知がまだ最新の物か」を
       -- 発火時に確かめる照合キー(古いタイマーが新しい通知を消さない)
     | ExpireNotice { seq : Int, message : String, afterMs : Float }
@@ -75,6 +81,7 @@ perform :
     , searchDebounced : Int -> msg
     , framePeeked : Int -> msg
     , wakePolled : Int -> msg
+    , scrolled : msg
     }
     -> Effect
     -> Cmd msg
@@ -82,6 +89,33 @@ perform caps effect =
     case effect of
         SendApi req ->
             caps.toPort (encodeRequest req)
+
+        ZoomViewport info ->
+            Browser.Dom.getViewportOf info.id
+                |> Task.andThen
+                    (\vp ->
+                        let
+                            anchorPx =
+                                info.anchorFx * vp.scene.width
+
+                            inView =
+                                anchorPx - vp.viewport.x
+                        in
+                        -- 新しい幅の再レンダリングを 1 フレーム待ってから合わせる
+                        -- (先に setViewportOf すると古い最大値で頭打ちになる)
+                        Process.sleep 20
+                            |> Task.andThen
+                                (\_ ->
+                                    Browser.Dom.setViewportOf info.id
+                                        (anchorPx * info.ratio - inView)
+                                        vp.viewport.y
+                                )
+                    )
+                |> Task.attempt (\_ -> caps.scrolled)
+
+        ResetViewport info ->
+            Browser.Dom.setViewportOf info.id 0 0
+                |> Task.attempt (\_ -> caps.scrolled)
 
         ExpireNotice info ->
             Process.sleep info.afterMs

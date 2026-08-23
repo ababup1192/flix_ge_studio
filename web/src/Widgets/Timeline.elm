@@ -313,7 +313,12 @@ clipSpan config track clip =
 
 
 type alias Model =
-    { drag : Maybe Drag }
+    { drag : Maybe Drag
+
+    -- 横方向の倍率(1 = 全体が収まる)。無段階 — ピンチ / Ctrl+ホイールの
+    -- 増分をそのまま掛ける
+    , zoom : Float
+    }
 
 
 {-| 凍結するのは物差しだけ(TotalEnd を伸ばすと物差し自体が伸びて、掴んだ点が
@@ -339,6 +344,10 @@ type Msg
     = Pressed Handle Point
     | Moved Point
     | Released
+      -- ピンチ / Ctrl+ホイール。Point は掴んだ点(スクロールの中心に残す)、
+      -- Float は掛ける倍率(ホイールの増分から作るので無段階)
+    | ZoomBy Point Float
+    | ZoomHome
 
 
 type alias Point =
@@ -348,11 +357,14 @@ type alias Point =
 type Out
     = Silent
     | Edited { path : List String, value : Float }
+      -- ズーム後の横スクロール合わせを外(Main の Effect)へ頼む
+    | Zoomed { anchorFx : Float, ratio : Float }
+    | ZoomReset
 
 
 init : Model
 init =
-    { drag = Nothing }
+    { drag = Nothing, zoom = 1 }
 
 
 isDragging : Model -> Bool
@@ -380,6 +392,22 @@ update config msg model =
 
         Released ->
             ( { model | drag = Nothing }, Silent )
+
+        ZoomBy point factor ->
+            let
+                next =
+                    clamp 1 8 (model.zoom * factor)
+            in
+            if next == model.zoom then
+                ( model, Silent )
+
+            else
+                ( { model | zoom = next }
+                , Zoomed { anchorFx = point.fx, ratio = next / model.zoom }
+                )
+
+        ZoomHome ->
+            ( { model | zoom = 1 }, ZoomReset )
 
 
 {-| 掴んだ位置(物差しに対する割合)を、書き戻す値 1 つに写す。
@@ -641,6 +669,7 @@ view config model =
     div [ HA.class "tl-editor" ]
         [ div [ HA.class "tl-head" ]
             [ span [ HA.class "tl-title" ] [ text "タイムライン" ]
+            , viewZoomState model
             , span
                 [ HA.class "tl-note"
                 , HA.title "保存すると watchFile が実機へ即反映する。絵の確認は実機で。"
@@ -648,23 +677,81 @@ view config model =
                 [ text "保存 → 実機に即反映" ]
             ]
         , div
-            -- pointer 面。行が薄いので、move はここで受ける(行から縦に
-            -- ずれても途絶えない)。横 padding 0 でトラック面と左右端をそろえ、
-            -- fx の意味を一致させる
-            (HA.classList
-                [ ( "tl-surface", True )
+            -- 横スクロールの窓。ズームで面が窓より広くなったぶんはここで送る
+            [ HA.class "tl-viewport", HA.id viewportId ]
+            [ div
+                -- pointer 面。行が薄いので、move はここで受ける(行から縦に
+                -- ずれても途絶えない)。横 padding 0 でトラック面と左右端をそろえ、
+                -- fx の意味を一致させる。幅はズーム倍率ぶん伸ばすだけで、
+                -- fx(面に対する割合)の意味は変わらない
+                (HA.classList
+                    [ ( "tl-surface", True )
 
-                -- ドラッグ中はセグメントの pointer-events を切る(move の
-                -- target を面そのものに保ち、offsetX の基準を揺らさない)
-                , ( "tl-drag", isDragging model )
-                ]
-                :: dragAttrs model
-            )
-            (viewTicks ruler
-                :: viewBeatLine config ruler
-                ++ (config.specs |> List.concatMap (viewTrack config ruler))
-            )
+                    -- ドラッグ中はセグメントの pointer-events を切る(move の
+                    -- target を面そのものに保ち、offsetX の基準を揺らさない)
+                    , ( "tl-drag", isDragging model )
+                    ]
+                    :: HA.style "width" (String.fromFloat (model.zoom * 100) ++ "%")
+                    :: onZoomWheel
+                    :: dragAttrs model
+                )
+                (viewTicks ruler
+                    :: viewBeatLine config ruler
+                    ++ (config.specs |> List.concatMap (viewTrack config ruler model.zoom))
+                )
+            ]
         ]
+
+
+{-| スクロールの窓の id。Main が Effect(ZoomViewport / ResetViewport)で
+同じ窓を名指しする。
+-}
+viewportId : String
+viewportId =
+    "tl-viewport"
+
+
+{-| ズーム中だけ「×1.4 全体へ戻る」を出す。等倍のときは操作の案内だけ。
+-}
+viewZoomState : Model -> Html Msg
+viewZoomState model =
+    if model.zoom > 1.01 then
+        Html.button
+            [ HA.class "tl-zoom-home"
+            , HA.type_ "button"
+            , HE.onClick ZoomHome
+            ]
+            [ text ("×" ++ String.fromFloat (toFloat (round (model.zoom * 10)) / 10) ++ " 全体へ戻る") ]
+
+    else
+        span [ HA.class "tl-note" ] [ text "ピンチ / Ctrl+ホイールで拡大" ]
+
+
+{-| ピンチ(ブラウザには ctrlKey つきの wheel として届く) / Ctrl+ホイール。
+増分 deltaY をそのまま指数に写すので段が無く、なめらかに効く。
+Ctrl 無しのホイールは受けない(ページのスクロールのまま)。
+-}
+onZoomWheel : Html.Attribute Msg
+onZoomWheel =
+    HE.custom "wheel"
+        (D.field "ctrlKey" D.bool
+            |> D.andThen
+                (\ctrl ->
+                    if ctrl then
+                        D.map2
+                            (\point deltaY ->
+                                { message = ZoomBy point (2 ^ (-deltaY / 200))
+                                , preventDefault = True
+                                , stopPropagation = False
+                                }
+                            )
+                            pointDecoder
+                            (D.field "deltaY" D.float)
+
+                    else
+                        D.fail "ズームは ctrlKey つきの wheel だけ受ける"
+                )
+        )
 
 
 dragAttrs : Model -> List (Html.Attribute Msg)
@@ -748,8 +835,8 @@ viewTicks ruler =
         )
 
 
-viewTrack : Config -> Float -> TrackSpec -> List (Html Msg)
-viewTrack config ruler spec =
+viewTrack : Config -> Float -> Float -> TrackSpec -> List (Html Msg)
+viewTrack config ruler zoom spec =
     let
         trackSeconds =
             totalSecondsOf config spec
@@ -763,19 +850,20 @@ viewTrack config ruler spec =
     else
         case spec of
             PhaseTrack track ->
-                viewPhaseTrack config ruler trackSeconds track
+                viewPhaseTrack config ruler zoom trackSeconds track
 
             ClipTrack track ->
-                viewClipTrack config ruler trackSeconds track
+                viewClipTrack config ruler zoom trackSeconds track
 
 
 viewPhaseTrack :
     Config
     -> Float
     -> Float
+    -> Float
     -> { section : String, total : TotalSpec, phases : List PhaseSpec }
     -> List (Html Msg)
-viewPhaseTrack config ruler trackSeconds track =
+viewPhaseTrack config ruler zoom trackSeconds track =
     let
         -- 各区間の終わりの位置(割合)。最後(to Nothing)は 1.0 固定
         rawEnds =
@@ -812,10 +900,10 @@ viewPhaseTrack config ruler trackSeconds track =
                         , HA.style "width" (percent width)
                         , HA.title (Maybe.withDefault phase.label phase.description)
                         ]
-                        -- 名前が入り切らない狭い区間は隠す(切れた半端な字は誤読の元。
-                        -- ホバーの title で読める)。1 文字 ≈ 物差しの 1.7% の見積もりに、
-                        -- グリップを避ける左の余白ぶん +1 文字
-                        (if width * 100 >= 1.7 * toFloat (String.length phase.label + 1) then
+                        -- 頭の数文字が入る幅なら書く(CSS の text-overflow が … で切る)。
+                        -- それ以下は隠す — フェーズは隣が密着していて右へ
+                        -- はみ出す空きが無いので、ホバーの title に任せる
+                        (if width * 100 * zoom >= labelMinPercent then
                             [ span [ HA.class "tl-phase-label" ] [ text phase.label ] ]
 
                          else
@@ -882,9 +970,10 @@ viewClipTrack :
     Config
     -> Float
     -> Float
+    -> Float
     -> { section : String, total : TotalSpec, items : List ClipSpec }
     -> List (Html Msg)
-viewClipTrack config ruler beatSeconds track =
+viewClipTrack config ruler zoom beatSeconds track =
     -- ワンショットの起点はターンの頭のバーの中の位置ではなく「トリガーの瞬間」
     -- (カードの発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
     -- 横位置は描かず(描くと嘘になる)、全部左端 0 = トリガーとして長さだけ見せる
@@ -899,7 +988,7 @@ viewClipTrack config ruler beatSeconds track =
                                 []
 
                             Just span_ ->
-                                viewClipRow config ruler beatSeconds track.section clip span_
+                                viewClipRow config ruler zoom beatSeconds track.section clip span_
                     )
            )
 
@@ -908,11 +997,12 @@ viewClipRow :
     Config
     -> Float
     -> Float
+    -> Float
     -> String
     -> ClipSpec
     -> { seconds : Float, capped : Bool }
     -> List (Html Msg)
-viewClipRow config ruler beatSeconds section clip span_ =
+viewClipRow config ruler zoom beatSeconds section clip span_ =
     let
         widthOf sec =
             sec / ruler
@@ -943,21 +1033,21 @@ viewClipRow config ruler beatSeconds section clip span_ =
         clipWidth =
             widthOf span_.seconds
 
-        -- 名前はバーの中に書く(区間の名前は塗りの中、で全トラック統一)。
-        -- 入り切らない狭さの時は、バーの右の空きへはみ出して書く
-        -- (隠すと行が名無しになる。動画編集ソフトの短いクリップと同じ扱い)
-        nameFits =
-            clipWidth * 100 >= 1.7 * toFloat (String.length clip.label + 1)
+        -- 名前は 3 段: 入るなら全文 / 途中まで入るなら … で省略(CSS の
+        -- text-overflow) / … すら入らない狭さならバーの右の空きへはみ出す
+        -- (このタイムラインは枠の右が必ず空いているので置ける)
+        nameInside =
+            clipWidth * 100 * zoom >= labelMinPercent
 
         clipName =
-            if nameFits then
+            if nameInside then
                 [ span [ HA.class "tl-phase-label" ] [ text clip.label ] ]
 
             else
                 []
 
         nameOutside =
-            if nameFits then
+            if nameInside then
                 []
 
             else
@@ -1010,6 +1100,14 @@ viewClipRow config ruler beatSeconds section clip span_ =
             ++ [ viewGrip False handle ]
         )
     ]
+
+
+{-| 名前を塗りの中に出す最小幅(物差しに対する %)。「… を添えて頭の 3 文字」が
+読める幅の見積もり(1 文字 ≈ 1.7%)。
+-}
+labelMinPercent : Float
+labelMinPercent =
+    1.7 * 4
 
 
 {-| 押した位置に一番近いハンドルを掴む。同率は後ろが勝つ — 押し出しで

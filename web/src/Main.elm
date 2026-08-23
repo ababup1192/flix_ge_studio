@@ -1165,6 +1165,8 @@ type Msg
     | SketchCompareNoteEdited String
     | SketchCompareSubmitClicked
     | WakePolled Int
+      -- タイムラインのスクロール合わせ(Browser.Dom)が済んだ印。することは無い
+    | TimelineScrolled
     | PerformClicked
     | BakeCancelled
     | BakeZoomOpened
@@ -2030,6 +2032,9 @@ update msg model =
                         )
                         { model | sketchCompare = SketchCompare.submitting model.sketchCompare }
 
+        TimelineScrolled ->
+            ( model, Effect.none )
+
         WakePolled seq ->
             -- やめた後・別の焼きが始まった後の予約は捨てる
             if seq /= model.wakeSeq || not model.waking then
@@ -2456,6 +2461,18 @@ update msg model =
                                 , isInt = False
                                 }
                                 m1
+
+                        Timeline.Zoomed zoomed ->
+                            ( m1
+                            , Effect.ZoomViewport
+                                { id = "tl-viewport"
+                                , anchorFx = zoomed.anchorFx
+                                , ratio = zoomed.ratio
+                                }
+                            )
+
+                        Timeline.ZoomReset ->
+                            ( m1, Effect.ResetViewport { id = "tl-viewport" } )
 
                 Nothing ->
                     ( model, Effect.none )
@@ -15221,6 +15238,7 @@ main =
             , searchDebounced = SearchDebounced
             , framePeeked = FramePeeked
             , wakePolled = WakePolled
+            , scrolled = TimelineScrolled
             }
     in
     Browser.element
