@@ -930,6 +930,15 @@ sl-alert.notice::part(message) {
   color: var(--color-warn);
 }
 
+/* 「1 ビート」の線の取っ手。線と同じ紫で、beatSeconds(戦い全体のテンポ)を掴む */
+.tl-grip-beat {
+  border-left-color: var(--color-beat, #b48ae0);
+}
+
+.tl-grip-beat .tl-grip-dot {
+  background: var(--color-beat, #b48ae0);
+}
+
 /* 入り切らない狭いバーの名前は、バーの右の空きへはみ出して書く */
 .tl-label-out {
   position: absolute;
@@ -942,8 +951,8 @@ sl-alert.notice::part(message) {
   /* 左はグリップの丸(境目から 5px 食い込む)を避けて右へ逃がす */
   padding: 0 4px 0 12px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-ink-soft);
+  font-size: 12px;
+  color: var(--color-ink);
   white-space: nowrap;
   /* 入り切らない名前は … で切る(動画編集ソフトの流儀)。全文はホバーの title */
   overflow: hidden;

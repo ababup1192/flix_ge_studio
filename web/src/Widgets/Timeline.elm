@@ -974,22 +974,45 @@ viewClipTrack :
     -> { section : String, total : TotalSpec, items : List ClipSpec }
     -> List (Html Msg)
 viewClipTrack config ruler zoom beatSeconds track =
+    let
+        -- 「1 ビート」の線そのものを掴んで beatSeconds を動かす。
+        -- 逆算が成立するとき(宣言の to が multiply に 1 回)だけ掴める
+        beatHandle =
+            totalEndTarget track.total
+                |> Maybe.map
+                    (\target ->
+                        ( beatSeconds / ruler
+                        , TotalEnd { target = target }
+                        , "1 ビート " ++ secondsText beatSeconds
+                        )
+                    )
+    in
     -- ワンショットの起点はターンの頭のバーの中の位置ではなく「トリガーの瞬間」
     -- (カードの発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
     -- 横位置は描かず(描くと嘘になる)、全部左端 0 = トリガーとして長さだけ見せる
     div [ HA.class "tl-group-note" ]
         [ text (labelOf config track.section ++ " — トリガー(カードの発動・被弾)ごとに 1 回だけ再生。始まる時刻は実行時に決まるので、ここでは長さだけを編集する。枠は 1 ビート") ]
         :: (track.items
-                |> List.concatMap
-                    (\clip ->
+                |> List.indexedMap
+                    (\index clip ->
                         case clipSpan config { section = track.section, beatSeconds = beatSeconds } clip of
                             -- 値も default も無いクリップは行ごと出さない(fail-open)
                             Nothing ->
                                 []
 
                             Just span_ ->
-                                viewClipRow config ruler zoom beatSeconds track.section clip span_
+                                viewClipRow config
+                                    ruler
+                                    zoom
+                                    beatSeconds
+                                    track.section
+                                    -- 取っ手の絵は先頭の行にだけ出す(線は全行を貫いて
+                                    -- いるので十分)。掴みはどの行からでも効く
+                                    { drag = beatHandle, showGrip = index == 0 }
+                                    clip
+                                    span_
                     )
+                |> List.concat
            )
 
 
@@ -999,13 +1022,30 @@ viewClipRow :
     -> Float
     -> Float
     -> String
+    -> { drag : Maybe ( Float, Handle, String ), showGrip : Bool }
     -> ClipSpec
     -> { seconds : Float, capped : Bool }
     -> List (Html Msg)
-viewClipRow config ruler zoom beatSeconds section clip span_ =
+viewClipRow config ruler zoom beatSeconds section beat clip span_ =
     let
         widthOf sec =
             sec / ruler
+
+        beatHandles =
+            beat.drag |> Maybe.map List.singleton |> Maybe.withDefault []
+
+        beatGrip =
+            case ( beat.showGrip, beat.drag ) of
+                ( True, Just ( fx, _, _ ) ) ->
+                    [ div
+                        [ HA.class "tl-grip tl-grip-beat"
+                        , HA.style "left" (percent fx)
+                        ]
+                        [ div [ HA.class "tl-grip-dot" ] [] ]
+                    ]
+
+                _ ->
+                    []
 
         -- 秒に「ビートに対する割合」を併記する(下のフォームの数値と照合できる)。
         -- 上限で切られている間は割合を動かしても絵が変わらないので、代わりに(上限)と言う
@@ -1075,7 +1115,7 @@ viewClipRow config ruler zoom beatSeconds section clip span_ =
     in
     [ div
         [ HA.class "tl-track tl-track-clip"
-        , onPointerDown (pickNearest [ handle ])
+        , onPointerDown (pickNearest (handle :: beatHandles))
         ]
         -- 枠 = 1 ビート(ワンショットはこの中で終わる)。枠の外には何も描かない
         (div
@@ -1097,6 +1137,7 @@ viewClipRow config ruler zoom beatSeconds section clip span_ =
                 clipName
             :: rest
             ++ nameOutside
+            ++ beatGrip
             ++ [ viewGrip { alt = False, warn = span_.capped } handle ]
         )
     ]

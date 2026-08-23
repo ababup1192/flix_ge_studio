@@ -34,7 +34,7 @@ fxTimingWidget : Maybe D.Value
 fxTimingWidget =
     widgetOf """
       { "clips": {
-          "totalSeconds": { "multiply": ["beatSeconds"] },
+          "totalSeconds": { "multiply": ["beatSeconds"], "to": "beatSeconds" },
           "items": [
             { "label": "玉が対象へ飛ぶ", "length": "orbFlightRatio", "restLabel": "炸裂" },
             { "label": "踏み込み", "length": "lungeRatio", "capSeconds": "lungeMaxSeconds" } ] } }
@@ -188,6 +188,14 @@ suite =
                 -- fx 1.0 = 物差しの右端 1.4674s → ÷0.58 = 2.53
                 dragTo (Timeline.TotalEnd { target = "turnBeatScale" }) 1.0
                     |> Expect.equal ( [ "turnBeatScale" ], 2530 )
+
+        -- 「1 ビート」の線のドラッグ = beatSeconds の直書き
+        -- (multiply が beatSeconds 1 つなので、逆算は秒がそのまま値になる)
+        , test "1 ビートの線のドラッグ: 秒がそのまま beatSeconds になる" <|
+            \_ ->
+                -- fx 0.5 × 1.4674s = 0.7337s → step 既定 0.01 で 0.73
+                dragTo (Timeline.TotalEnd { target = "beatSeconds" }) 0.5
+                    |> Expect.equal ( [ "beatSeconds" ], 730 )
         , test "pushForward は 0..1 に収めてから前へ押し出す(表示専用)" <|
             \_ ->
                 Timeline.pushForward [ 0.26, 0.7, 0.2, 1.4 ]
