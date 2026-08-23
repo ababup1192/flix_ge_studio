@@ -916,17 +916,18 @@ sl-alert.notice::part(message) {
   background: color-mix(in oklab, #35b8a5 45%, transparent);
 }
 
-/* 上限秒で切られているバー。右端を伸ばしても絵が変わらない印。
-   二重線は塗りの内側に描く(右端そのものに置くとグリップの線と重なる) */
-.tl-capped {
-  background-image: linear-gradient(
-    to left,
-    transparent 2px,
-    var(--color-warn) 2px 4px,
-    transparent 4px 6px,
-    var(--color-warn) 6px 8px,
-    transparent 8px
-  );
+/* 上限秒で切られている間は取っ手ごと黄色 — 「この取っ手はいま右へ
+   動かしても効かない」を取っ手自身の色で言う(ラベルは "(上限)" と併記) */
+.tl-grip-warn {
+  border-left-color: var(--color-warn);
+}
+
+.tl-grip-warn .tl-grip-dot {
+  background: var(--color-warn);
+}
+
+.tl-grip-warn .tl-grip-label {
+  color: var(--color-warn);
 }
 
 /* 入り切らない狭いバーの名前は、バーの右の空きへはみ出して書く */
@@ -941,7 +942,7 @@ sl-alert.notice::part(message) {
   /* 左はグリップの丸(境目から 5px 食い込む)を避けて右へ逃がす */
   padding: 0 4px 0 12px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   color: var(--color-ink-soft);
   white-space: nowrap;
   /* 入り切らない名前は … で切る(動画編集ソフトの流儀)。全文はホバーの title */

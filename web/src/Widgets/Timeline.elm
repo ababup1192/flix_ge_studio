@@ -961,7 +961,7 @@ viewPhaseTrack config ruler zoom trackSeconds track =
             ]
             []
             :: segments
-            ++ List.indexedMap (\i handle -> viewGrip (modBy 2 i == 1) handle) handles
+            ++ List.indexedMap (\i handle -> viewGrip { alt = modBy 2 i == 1, warn = False } handle) handles
         )
     ]
 
@@ -1084,7 +1084,7 @@ viewClipRow config ruler zoom beatSeconds section clip span_ =
             ]
             []
             :: div
-                [ HA.classList [ ( "tl-clip", True ), ( "tl-capped", span_.capped ) ]
+                [ HA.class "tl-clip"
                 , HA.style "width" (percent clipWidth)
                 , HA.title
                     (if capTitle == "" then
@@ -1097,7 +1097,7 @@ viewClipRow config ruler zoom beatSeconds section clip span_ =
                 clipName
             :: rest
             ++ nameOutside
-            ++ [ viewGrip False handle ]
+            ++ [ viewGrip { alt = False, warn = span_.capped } handle ]
         )
     ]
 
@@ -1135,13 +1135,16 @@ pickNearest handles point =
 
 
 {-| グリップ 1 本。alt = 秒ラベルを上の段に逃がす(隣と互い違いにして重なりを断つ)。
+warn = 上限で切られている間、取っ手ごと黄色にする — 「この取っ手はいま右へ
+動かしても効かない」を取っ手自身の色で言う。
 -}
-viewGrip : Bool -> ( Float, Handle, String ) -> Html Msg
-viewGrip alt ( fx, handle, label ) =
+viewGrip : { alt : Bool, warn : Bool } -> ( Float, Handle, String ) -> Html Msg
+viewGrip opts ( fx, handle, label ) =
     div
         [ HA.classList
             [ ( "tl-grip", True )
-            , ( "tl-grip-alt", alt )
+            , ( "tl-grip-alt", opts.alt )
+            , ( "tl-grip-warn", opts.warn )
             , ( "tl-grip-total", isTotal handle )
             ]
         , HA.style "left" (percent fx)
