@@ -1045,17 +1045,18 @@ sl-alert.notice::part(message) {
   height: 34px;
 }
 
-.tl-echo-line1,
-.tl-echo-line2 {
+/* .tl-clip 共通の top/bottom(後方で定義)より強く効かせるため 2 クラスで書く */
+.tl-clip.tl-echo-line1,
+.tl-clip.tl-echo-line2 {
   bottom: auto;
   height: 16px;
 }
 
-.tl-echo-line1 {
+.tl-clip.tl-echo-line1 {
   top: 0;
 }
 
-.tl-echo-line2 {
+.tl-clip.tl-echo-line2 {
   top: 18px;
 }
 
