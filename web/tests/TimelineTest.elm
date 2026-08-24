@@ -119,7 +119,7 @@ storyboardWidget =
             { "label": "カードが発動", "items": ["orbFlightRatio"] },
             { "label": "攻撃が当たる", "items": ["lungeRatio"] } ],
           "items": [
-            { "label": "玉が対象へ飛ぶ", "length": "orbFlightRatio", "restLabel": "炸裂" },
+            { "label": "玉が対象へ飛ぶ", "length": "orbFlightRatio", "start": "orbFlightStartRatio", "restLabel": "炸裂" },
             { "label": "対象へのアタック", "length": "lungeRatio", "capSeconds": "lungeMaxSeconds" } ] } }
     """
 
@@ -130,6 +130,7 @@ sbConfig =
         | specs =
             Timeline.specsFrom
                 [ ( "turnCue", turnCueWidget ), ( "fxTiming", storyboardWidget ) ]
+        , values = Dict.insert "fxTiming.orbFlightStartRatio" 0.2 config.values
     }
 
 
@@ -233,8 +234,46 @@ suite =
         , test "絵コンテ: クリップのドラッグはビートのペインの物差しで読む" <|
             \_ ->
                 -- fx 0.4 × (0.58 × 1.15 = 0.667s) = 0.2668s → ÷0.58 = 0.46
-                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio" }) 0.4
+                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio", afterStart = Nothing }) 0.4
                     |> Expect.equal ( [ "fxTiming", "orbFlightRatio" ], 460 )
+
+        -- クリップの左端(開始の待ち)。位置がそのまま開始の割合になる
+        , test "絵コンテ: 左端のドラッグは開始の待ちを書く" <|
+            \_ ->
+                -- fx 0.2 × 0.667s = 0.1334s → ÷0.58 = 0.23
+                dragToIn sbConfig (Timeline.ClipStart { section = "fxTiming", target = "orbFlightStartRatio" }) 0.2
+                    |> Expect.equal ( [ "fxTiming", "orbFlightStartRatio" ], 230 )
+
+        -- 右端のグリップは(開始 + 長さ)の位置に立つので、書き戻すときに開始ぶんを引く
+        , test "絵コンテ: 右端のドラッグは開始の待ちを引いて長さへ戻す" <|
+            \_ ->
+                -- fx 0.4 × 0.667s = 0.2668s − 開始 0.2×0.58 = 0.116s → 0.1508s ÷ 0.58 = 0.26
+                dragToIn sbConfig
+                    (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio", afterStart = Just "orbFlightStartRatio" })
+                    0.4
+                    |> Expect.equal ( [ "fxTiming", "orbFlightRatio" ], 260 )
+
+        -- start 宣言はクリップに読める(無い物は Nothing = 左端 0 固定)
+        , test "clips 宣言の start はクリップに読める" <|
+            \_ ->
+                (case sbConfig.specs of
+                    [ _, Timeline.ClipTrack track ] ->
+                        track.items |> List.map .start
+
+                    _ ->
+                        []
+                )
+                    |> Expect.equal [ Just "orbFlightStartRatio", Nothing ]
+
+        -- 開始の待ち(秒)= start の割合 × ビート秒。宣言が無ければ 0
+        , test "clipStartSeconds は start の割合をビート秒へ写す" <|
+            \_ ->
+                Timeline.clipStartSeconds sbConfig
+                    { section = "fxTiming", beatSeconds = 0.58 }
+                    { label = "玉が対象へ飛ぶ", length = "orbFlightRatio", start = Just "orbFlightStartRatio", capSeconds = Nothing, restLabel = Just "炸裂", echo = False }
+                    |> (*) 1000
+                    |> round
+                    |> Expect.equal 116
         , test "絵コンテ: 境目のドラッグはターンの頭のペインの物差しで読む" <|
             \_ ->
                 -- fx 0.43 × (1.276 × 1.15 = 1.4674s) = 0.631s → ÷1.276 = 0.49(素の形と同じ数字)
@@ -257,7 +296,7 @@ suite =
                 -- 踏み込み: 0.45 × 0.58 = 0.261s だが上限 0.26s で切られる
                 Timeline.clipSpan config
                     { section = "fxTiming", beatSeconds = 0.58 }
-                    { label = "踏み込み", length = "lungeRatio", capSeconds = Just "lungeMaxSeconds", restLabel = Nothing, echo = False }
+                    { label = "踏み込み", length = "lungeRatio", start = Nothing, capSeconds = Just "lungeMaxSeconds", restLabel = Nothing, echo = False }
                     |> Maybe.map (\span -> ( round (span.seconds * 1000), span.capped ))
                     |> Expect.equal (Just ( 260, True ))
         , test "文書に無い欄は schema の default へ倒れる" <|

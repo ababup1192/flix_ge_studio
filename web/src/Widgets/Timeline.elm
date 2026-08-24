@@ -9,6 +9,7 @@ module Widgets.Timeline exposing
     , PhaseSpec
     , TrackSpec(..)
     , clipSpan
+    , clipStartSeconds
     , init
     , isDragging
     , pushForward
@@ -27,8 +28,9 @@ module Widgets.Timeline exposing
 
   - `{"timeline": {...}}` … フェーズの帯 1 本。境目を掴んで隣り合う出来事の
     位置(0〜1 の割合)を動かす。帯全体の右端で総尺も動かせる
-  - `{"clips": {...}}` … ワンショット演出のバー。起点はトリガー(左端 0 固定)で、
-    右端を掴んで長さ(1 ビートに対する割合)を動かす
+  - `{"clips": {...}}` … ワンショット演出のバー。右端を掴んで長さ
+    (1 ビートに対する割合)を動かす。start 宣言があるクリップは左端も掴めて、
+    トリガーから再生までの待ち(同じく割合)をスライドで動かせる
 
 元データはいつも文書の数値で、ここは「帯の上の操作 → 数値 1 つの書き換え」に
 写すだけ(SfxEditor と同じ立場)。保存・履歴・debounce は親の queueEdit 経路に
@@ -80,6 +82,8 @@ type alias PhaseSpec =
 
 
 {-| クリップ 1 本。length は 1 ビートに対する割合のフィールド名。
+start はトリガーから再生までの待ちのフィールド名(同じく割合。無ければ
+左端 0 固定で掴めない)。
 capSeconds は上限秒のフィールド名(実際の長さは短い方)。
 restLabel は「残りが別の動きになる」ときの名前。
 echo は「値 = 繰り返しの遅れ幅」の印(効果テキスト。実体はビートいっぱい
@@ -88,6 +92,7 @@ echo は「値 = 繰り返しの遅れ幅」の印(効果テキスト。実体�
 type alias ClipSpec =
     { label : String
     , length : String
+    , start : Maybe String
     , capSeconds : Maybe String
     , restLabel : Maybe String
     , echo : Bool
@@ -168,9 +173,10 @@ phaseDecoder =
 
 clipDecoder : D.Decoder ClipSpec
 clipDecoder =
-    D.map5 ClipSpec
+    D.map6 ClipSpec
         (D.field "label" D.string)
         (D.field "length" D.string)
+        (opt "start" D.string)
         (opt "capSeconds" D.string)
         (opt "restLabel" D.string)
         (D.oneOf [ D.field "echo" D.bool, D.succeed False ])
@@ -408,6 +414,9 @@ pressRulerFor config handle =
                     else
                         sb.turnSeconds * 1.15
 
+                ClipStart _ ->
+                    sb.beatSeconds * 1.15
+
                 ClipEnd _ ->
                     sb.beatSeconds * 1.15
 
@@ -462,6 +471,16 @@ clipSpan config track clip =
             )
 
 
+{-| クリップの開始までの待ち(秒)。start 宣言が無ければ 0 = トリガーの瞬間。
+-}
+clipStartSeconds : Config -> { section : String, beatSeconds : Float } -> ClipSpec -> Float
+clipStartSeconds config track clip =
+    clip.start
+        |> Maybe.andThen (\name -> valueOf config (track.section ++ "." ++ name))
+        |> Maybe.map (\ratio -> clamp 0 1 ratio * track.beatSeconds)
+        |> Maybe.withDefault 0
+
+
 
 -- 状態とドラッグ
 
@@ -497,10 +516,14 @@ type alias Drag =
 
 
 {-| 掴んだ物 = 書き戻し先の名指し。幾何は持たない。
+ClipEnd の afterStart は開始の待ちのフィールド名 — グリップは(開始 + 長さ)の
+位置に立つので、書き戻すときに開始ぶんを引いて長さへ戻す。
+ClipStart は左端(開始の待ち)。動かしても長さは変えない(スライド式)。
 -}
 type Handle
     = Boundary { section : String, target : String }
-    | ClipEnd { section : String, target : String }
+    | ClipStart { section : String, target : String }
+    | ClipEnd { section : String, target : String, afterStart : Maybe String }
     | TotalEnd { target : String }
 
 
@@ -592,11 +615,27 @@ editFor config drag point =
         Boundary at ->
             ratioEdit config at seconds
 
-        ClipEnd at ->
+        ClipStart at ->
             ratioEdit config at seconds
+
+        ClipEnd at ->
+            -- グリップの位置 = 開始 + 長さ。開始ぶんを引いてから割合へ戻す
+            ratioEdit config
+                { section = at.section, target = at.target }
+                (seconds - clipStartOffset config at)
 
         TotalEnd at ->
             totalEdit config at seconds
+
+
+{-| ClipEnd の書き戻しで引く、開始の待ち(秒)。start 宣言が無ければ 0。
+-}
+clipStartOffset : Config -> { section : String, target : String, afterStart : Maybe String } -> Float
+clipStartOffset config at =
+    at.afterStart
+        |> Maybe.andThen (\name -> valueOf config (at.section ++ "." ++ name))
+        |> Maybe.map (\ratio -> clamp 0 1 ratio * trackSecondsIn config at.section)
+        |> Maybe.withDefault 0
 
 
 {-| 境目・クリップ右端: 秒 → そのトラックの総尺に対する割合(0〜1)。
@@ -1024,19 +1063,27 @@ viewFlowRow config ruler openPane sb =
                                     |> List.map
                                         (\clip ->
                                             let
+                                                startFrac =
+                                                    clipStartSeconds config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
+                                                        / sb.beatSeconds
+
                                                 frac =
                                                     clipSpan config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
                                                         |> Maybe.map (\sp -> sp.seconds / sb.beatSeconds)
                                                         |> Maybe.withDefault 0
+
+                                                room =
+                                                    Basics.max 0 (1 - startFrac)
                                             in
                                             div
-                                                [ HA.style "width"
+                                                [ HA.style "margin-left" (percent startFrac)
+                                                , HA.style "width"
                                                     (percent
                                                         (if clip.echo then
-                                                            1
+                                                            room
 
                                                          else
-                                                            frac
+                                                            Basics.min frac room
                                                         )
                                                     )
                                                 ]
@@ -1259,7 +1306,14 @@ viewScenePaneLanes config zoom sb scene =
                         else
                             ( i
                             , spanOf clip
-                                |> Maybe.map (\sp -> sb.beatSeconds - sp.seconds)
+                                |> Maybe.map
+                                    (\sp ->
+                                        Basics.max 0
+                                            (sb.beatSeconds
+                                                - clipStartSeconds config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
+                                                - sp.seconds
+                                            )
+                                    )
                                 |> Maybe.withDefault 0
                             )
                     )
@@ -1309,26 +1363,67 @@ viewPaneLane config zoom sb opts clip =
                 fxOf seconds =
                     seconds / paneRuler
 
+                startSec =
+                    clipStartSeconds config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
+
+                -- 開始の待ちと長さの合計がビートを超えたら長さの側を縮める
+                -- (ゲーム側の読み出しと同じ決まり)
+                spanSec =
+                    Basics.min span_.seconds (Basics.max 0 (sb.beatSeconds - startSec))
+
+                startFx =
+                    fxOf startSec
+
                 clipFx =
-                    fxOf span_.seconds
+                    fxOf spanSec
+
+                endFx =
+                    startFx + clipFx
 
                 beatFx =
                     fxOf sb.beatSeconds
 
                 gripLabel =
                     if span_.capped then
-                        secondsText span_.seconds ++ " (上限)"
+                        secondsText spanSec ++ " (上限)"
 
                     else
                         valueOf config (sb.clipSection ++ "." ++ clip.length)
-                            |> Maybe.map (\r -> secondsText span_.seconds ++ " (" ++ String.fromInt (round (r * 100)) ++ "%)")
-                            |> Maybe.withDefault (secondsText span_.seconds)
+                            |> Maybe.map (\r -> secondsText spanSec ++ " (" ++ String.fromInt (round (r * 100)) ++ "%)")
+                            |> Maybe.withDefault (secondsText spanSec)
 
                 handle =
-                    ( clipFx
-                    , ClipEnd { section = sb.clipSection, target = clip.length }
+                    ( endFx
+                    , ClipEnd { section = sb.clipSection, target = clip.length, afterStart = clip.start }
                     , gripLabel
                     )
+
+                -- 左端(開始の待ち)。start 宣言があるクリップだけ掴める
+                startHandle =
+                    clip.start
+                        |> Maybe.map
+                            (\name ->
+                                [ ( startFx
+                                  , ClipStart { section = sb.clipSection, target = name }
+                                  , "開始 " ++ secondsText startSec
+                                  )
+                                ]
+                            )
+                        |> Maybe.withDefault []
+
+                -- 開始までの斜線(ウェイトの文法)。待ちが 0 の間は描かない
+                startWait =
+                    if startSec > 0 then
+                        [ div
+                            [ HA.class "tl-clip tl-wait"
+                            , HA.style "width" (percent startFx)
+                            , HA.title ("トリガーから " ++ secondsText startSec ++ " 待ってから始まる(左端のグリップで動かす)")
+                            ]
+                            []
+                        ]
+
+                    else
+                        []
 
                 nameInside w =
                     w * 100 * zoom >= labelMinPercent
@@ -1344,15 +1439,16 @@ viewPaneLane config zoom sb opts clip =
                     if clip.echo then
                         [ div
                             [ HA.class "tl-clip"
-                            , HA.style "width" (percent beatFx)
+                            , HA.style "left" (percent startFx)
+                            , HA.style "width" (percent (Basics.max 0 (beatFx - startFx)))
                             , HA.title (clip.label ++ "。1 行目はビートいっぱい表示される")
                             ]
-                            (nameOf beatFx clip.label)
+                            (nameOf (beatFx - startFx) clip.label)
                         , div
                             [ HA.class "tl-clip tl-derived"
-                            , HA.style "left" (percent clipFx)
-                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
-                            , HA.title ("2 行目 — " ++ secondsText span_.seconds ++ " 遅れて出る(行数は効果の数しだい)")
+                            , HA.style "left" (percent endFx)
+                            , HA.style "width" (percent (Basics.max 0 (beatFx - endFx)))
+                            , HA.title ("2 行目 — " ++ secondsText spanSec ++ " 遅れて出る(行数は効果の数しだい)")
                             ]
                             []
                         ]
@@ -1360,6 +1456,7 @@ viewPaneLane config zoom sb opts clip =
                     else
                         div
                             [ HA.class "tl-clip"
+                            , HA.style "left" (percent startFx)
                             , HA.style "width" (percent clipFx)
                             , HA.title
                                 (clip.capSeconds
@@ -1373,11 +1470,11 @@ viewPaneLane config zoom sb opts clip =
                                     Just label ->
                                         [ div
                                             [ HA.class "tl-clip tl-derived"
-                                            , HA.style "left" (percent clipFx)
-                                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
+                                            , HA.style "left" (percent endFx)
+                                            , HA.style "width" (percent (Basics.max 0 (beatFx - endFx)))
                                             , HA.title (label ++ " — " ++ clip.label ++ " の残りで自動で決まる")
                                             ]
-                                            (nameOf (beatFx - clipFx) label)
+                                            (nameOf (beatFx - endFx) label)
                                         ]
 
                                     Nothing ->
@@ -1391,7 +1488,7 @@ viewPaneLane config zoom sb opts clip =
                     else
                         [ span
                             [ HA.class "tl-phase-label tl-label-out"
-                            , HA.style "left" (percent clipFx)
+                            , HA.style "left" (percent endFx)
                             ]
                             [ text clip.label ]
                         ]
@@ -1400,8 +1497,8 @@ viewPaneLane config zoom sb opts clip =
                     if opts.idle && clip.restLabel == Nothing && not clip.echo then
                         [ div
                             [ HA.class "tl-idle"
-                            , HA.style "left" (percent clipFx)
-                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
+                            , HA.style "left" (percent endFx)
+                            , HA.style "width" (percent (Basics.max 0 (beatFx - endFx)))
                             , HA.title "演出はここで終わり。ビートの残りは何も動かない(ビートの長さはテンポ側が決める)"
                             ]
                             [ text "次のビートまで待ち" ]
@@ -1427,17 +1524,19 @@ viewPaneLane config zoom sb opts clip =
             in
             [ div
                 [ HA.class "tl-track tl-lane"
-                , onPointerDown (pickNearest (handle :: opts.beatHandle))
+                , onPointerDown (pickNearest (handle :: startHandle ++ opts.beatHandle))
                 ]
                 (div
                     [ HA.class "tl-frame"
                     , HA.style "width" (percent beatFx)
                     ]
                     []
-                    :: body
+                    :: startWait
+                    ++ body
                     ++ idle
                     ++ nameOutside
                     ++ beatGrip
+                    ++ (startHandle |> List.map (viewGrip { alt = True, warn = False }))
                     ++ [ viewGrip { alt = False, warn = span_.capped } handle ]
                 )
             ]
@@ -1668,7 +1767,7 @@ viewClipTrack config ruler zoom beatSeconds track =
     -- (カードの発動・被弾)。トリガーは戦況しだいで毎回違う時刻に起きるので、
     -- 横位置は描かず(描くと嘘になる)、全部左端 0 = トリガーとして長さだけ見せる
     div [ HA.class "tl-group-note" ]
-        [ text (labelOf config track.section ++ " — トリガー(カードの発動・被弾)ごとに 1 回だけ再生。始まる時刻は実行時に決まるので、ここでは長さだけを編集する。枠は 1 ビート") ]
+        [ text (labelOf config track.section ++ " — トリガー(カードの発動・被弾)ごとに 1 回だけ再生。トリガーが来る時刻は実行時に決まるので、ここで編集するのはトリガーからの待ち(左端)と長さ(右端)。枠は 1 ビート") ]
         :: (track.items
                 |> List.indexedMap
                     (\index clip ->
@@ -1724,22 +1823,54 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
                 _ ->
                     []
 
+        startSeconds =
+            clipStartSeconds config { section = section, beatSeconds = beatSeconds } clip
+
+        -- 開始の待ちと長さの合計がビートを超えたら長さの側を縮める
+        spanSeconds =
+            Basics.min span_.seconds (Basics.max 0 (beatSeconds - startSeconds))
+
         -- 秒に「ビートに対する割合」を併記する(下のフォームの数値と照合できる)。
         -- 上限で切られている間は割合を動かしても絵が変わらないので、代わりに(上限)と言う
         gripLabel =
             if span_.capped then
-                secondsText span_.seconds ++ " (上限)"
+                secondsText spanSeconds ++ " (上限)"
 
             else
                 valueOf config (section ++ "." ++ clip.length)
-                    |> Maybe.map (\r -> secondsText span_.seconds ++ " (" ++ String.fromInt (round (r * 100)) ++ "%)")
-                    |> Maybe.withDefault (secondsText span_.seconds)
+                    |> Maybe.map (\r -> secondsText spanSeconds ++ " (" ++ String.fromInt (round (r * 100)) ++ "%)")
+                    |> Maybe.withDefault (secondsText spanSeconds)
 
         handle =
-            ( widthOf span_.seconds
-            , ClipEnd { section = section, target = clip.length }
+            ( widthOf (startSeconds + spanSeconds)
+            , ClipEnd { section = section, target = clip.length, afterStart = clip.start }
             , gripLabel
             )
+
+        startHandle =
+            clip.start
+                |> Maybe.map
+                    (\name ->
+                        [ ( widthOf startSeconds
+                          , ClipStart { section = section, target = name }
+                          , "開始 " ++ secondsText startSeconds
+                          )
+                        ]
+                    )
+                |> Maybe.withDefault []
+
+        startWait =
+            if startSeconds > 0 then
+                [ div
+                    [ HA.class "tl-clip tl-wait"
+                    , HA.style "width" (percent (widthOf startSeconds))
+                    , HA.title ("トリガーから " ++ secondsText startSeconds ++ " 待ってから始まる(左端のグリップで動かす)")
+                    ]
+                    []
+                ]
+
+            else
+                []
 
         capTitle =
             clip.capSeconds
@@ -1748,7 +1879,10 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
                 |> Maybe.withDefault ""
 
         clipWidth =
-            widthOf span_.seconds
+            widthOf spanSeconds
+
+        clipEnd =
+            widthOf (startSeconds + spanSeconds)
 
         -- 名前は 3 段: 入るなら全文 / 途中まで入るなら … で省略(CSS の
         -- text-overflow) / … すら入らない狭さならバーの右の空きへはみ出す
@@ -1770,7 +1904,7 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
             else
                 [ span
                     [ HA.class "tl-phase-label tl-label-out"
-                    , HA.style "left" (percent clipWidth)
+                    , HA.style "left" (percent clipEnd)
                     ]
                     [ text clip.label ]
                 ]
@@ -1780,8 +1914,8 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
                 Just label ->
                     [ div
                         [ HA.class "tl-rest"
-                        , HA.style "left" (percent clipWidth)
-                        , HA.style "width" (percent (widthOf (Basics.max 0 (beatSeconds - span_.seconds))))
+                        , HA.style "left" (percent clipEnd)
+                        , HA.style "width" (percent (widthOf (Basics.max 0 (beatSeconds - startSeconds - spanSeconds))))
                         , HA.title label
                         ]
                         [ span [ HA.class "tl-phase-label" ] [ text label ] ]
@@ -1792,7 +1926,7 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
     in
     [ div
         [ HA.class "tl-track tl-track-clip"
-        , onPointerDown (pickNearest (handle :: beatHandles))
+        , onPointerDown (pickNearest (handle :: startHandle ++ beatHandles))
         ]
         -- 枠 = 1 ビート(ワンショットはこの中で終わる)。枠の外には何も描かない
         (div
@@ -1800,21 +1934,25 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
             , HA.style "width" (percent (widthOf beatSeconds))
             ]
             []
-            :: div
-                [ HA.class "tl-clip"
-                , HA.style "width" (percent clipWidth)
-                , HA.title
-                    (if capTitle == "" then
-                        clip.label
+            :: startWait
+            ++ (div
+                    [ HA.class "tl-clip"
+                    , HA.style "left" (percent (widthOf startSeconds))
+                    , HA.style "width" (percent clipWidth)
+                    , HA.title
+                        (if capTitle == "" then
+                            clip.label
 
-                     else
-                        clip.label ++ "。" ++ capTitle
-                    )
-                ]
-                clipName
-            :: rest
+                         else
+                            clip.label ++ "。" ++ capTitle
+                        )
+                    ]
+                    clipName
+                    :: rest
+               )
             ++ nameOutside
             ++ beatGrip
+            ++ (startHandle |> List.map (viewGrip { alt = True, warn = False }))
             ++ [ viewGrip { alt = False, warn = span_.capped } handle ]
         )
     ]
