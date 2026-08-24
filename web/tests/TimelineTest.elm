@@ -108,6 +108,40 @@ dragTo handle fx =
         |> outKey
 
 
+{-| scenes 宣言つき(絵コンテ)の fxTiming。
+-}
+storyboardWidget : Maybe D.Value
+storyboardWidget =
+    widgetOf """
+      { "clips": {
+          "totalSeconds": { "multiply": ["beatSeconds"], "to": "beatSeconds" },
+          "scenes": [
+            { "label": "カードが発動", "items": ["orbFlightRatio"] },
+            { "label": "攻撃が当たる", "items": ["lungeRatio"] } ],
+          "items": [
+            { "label": "玉が対象へ飛ぶ", "length": "orbFlightRatio", "restLabel": "炸裂" },
+            { "label": "対象へのアタック", "length": "lungeRatio", "capSeconds": "lungeMaxSeconds" } ] } }
+    """
+
+
+sbConfig : Timeline.Config
+sbConfig =
+    { config
+        | specs =
+            Timeline.specsFrom
+                [ ( "turnCue", turnCueWidget ), ( "fxTiming", storyboardWidget ) ]
+    }
+
+
+dragToIn : Timeline.Config -> Timeline.Handle -> Float -> ( List String, Int )
+dragToIn cfg handle fx =
+    Timeline.update cfg (Timeline.Pressed handle { fx = fx, fy = 0 }) Timeline.init
+        |> Tuple.first
+        |> Timeline.update cfg (Timeline.Moved { fx = fx, fy = 0 })
+        |> Tuple.second
+        |> outKey
+
+
 suite : Test
 suite =
     describe "Widgets.Timeline — 宣言の読みとドラッグの変換"
@@ -189,6 +223,25 @@ suite =
                 dragTo (Timeline.TotalEnd { target = "turnBeatScale" }) 1.0
                     |> Expect.equal ( [ "turnBeatScale" ], 2530 )
 
+        -- 絵コンテ(scenes 宣言つき): 物差しは ターンの頭 + ビート ×(場面 2 + ゴースト 1)
+        , test "絵コンテの物差し: (1.276 + 0.58×3) × 1.05" <|
+            \_ ->
+                round (Timeline.rulerSecondsOf sbConfig * 1000)
+                    |> Expect.equal 3167
+
+        -- 場面 1 つ目のクリップ: 面全体の位置から「ターンの頭 1.276s」を引いた
+        -- ローカル秒が割合になる
+        , test "絵コンテのドラッグは場面のオフセットを引いてから割合にする(場面 1)" <|
+            \_ ->
+                -- fx 0.5 × 3.1668 = 1.5834s − 1.276s = 0.3074s → ÷0.58 = 0.53
+                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio" }) 0.5
+                    |> Expect.equal ( [ "fxTiming", "orbFlightRatio" ], 530 )
+        , test "絵コンテのドラッグは場面のオフセットを引いてから割合にする(場面 2)" <|
+            \_ ->
+                -- fx 0.7 × 3.1668 = 2.2168s − (1.276 + 0.58)s = 0.3608s → ÷0.58 = 0.62
+                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "lungeRatio" }) 0.7
+                    |> Expect.equal ( [ "fxTiming", "lungeRatio" ], 620 )
+
         -- 「1 ビート」の線のドラッグ = beatSeconds の直書き
         -- (multiply が beatSeconds 1 つなので、逆算は秒がそのまま値になる)
         , test "1 ビートの線のドラッグ: 秒がそのまま beatSeconds になる" <|
@@ -205,7 +258,7 @@ suite =
                 -- 踏み込み: 0.45 × 0.58 = 0.261s だが上限 0.26s で切られる
                 Timeline.clipSpan config
                     { section = "fxTiming", beatSeconds = 0.58 }
-                    { label = "踏み込み", length = "lungeRatio", capSeconds = Just "lungeMaxSeconds", restLabel = Nothing }
+                    { label = "踏み込み", length = "lungeRatio", capSeconds = Just "lungeMaxSeconds", restLabel = Nothing, echo = False }
                     |> Maybe.map (\span -> ( round (span.seconds * 1000), span.capped ))
                     |> Expect.equal (Just ( 260, True ))
         , test "文書に無い欄は schema の default へ倒れる" <|

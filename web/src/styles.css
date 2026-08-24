@@ -868,12 +868,100 @@ sl-alert.notice::part(message) {
   pointer-events: none;
 }
 
+/* ---- 絵コンテ(scenes 宣言があるとき) ---- */
+
+/* 枠の横並び。上の余白は枠の見出しぶん */
+.tl-frames {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 30px;
+}
+
+/* 場面 1 つ = ビートの外枠 */
+.tl-scene {
+  position: relative;
+  flex: none;
+  border: 2px solid var(--color-edge);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--color-well) 55%, transparent);
+  padding: 0 0 8px;
+}
+
+.tl-scene-title {
+  position: absolute;
+  top: -24px;
+  left: 2px;
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.tl-scene-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: normal;
+  color: var(--color-ink-soft);
+}
+
+/* 繰り返しの示唆。薄れて消えていく = この先も続く */
+.tl-scene-ghost {
+  opacity: 0.35;
+  mask-image: linear-gradient(to right, black 30%, transparent 95%);
+  -webkit-mask-image: linear-gradient(to right, black 30%, transparent 95%);
+}
+
+/* 枠の中のレーン。座標は枠ローカル(幅 = その枠の秒数) */
+.tl-lane {
+  height: 22px;
+  margin: 15px 0 6px;
+}
+
+.tl-lane-phase {
+  height: 26px;
+  margin-top: 27px;
+}
+
+/* 自動で決まる物(炸裂・エコーの 2 行目・ゴースト)。掴めない見た目 */
+.tl-derived {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  color: var(--color-ink-soft);
+}
+
+/* ビートの残り(演出が終わった後の何も動かない時間) */
+.tl-idle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--color-edge) 22%, transparent);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--color-ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ドラッグ中は枠の中身すべての当たり判定を切る(move の target を面に固定) */
+.tl-drag .tl-frames,
+.tl-drag .tl-frames * {
+  pointer-events: none;
+}
+
 /* 例外: セグメント(帯)はホバーの title を出すため当たり判定を返す。
    座標は pointDecoder の segmentShift(offsetParent がトラックなら left を
    足す)が補正する。ドラッグ中(tl-drag)は切って move の基準を面に固定 */
 .tl-surface:not(.tl-drag) .tl-phase,
 .tl-surface:not(.tl-drag) .tl-clip,
-.tl-surface:not(.tl-drag) .tl-rest {
+.tl-surface:not(.tl-drag) .tl-rest,
+.tl-surface:not(.tl-drag) .tl-idle {
   pointer-events: auto;
 }
 
