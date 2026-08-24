@@ -229,18 +229,17 @@ suite =
                 round (Timeline.rulerSecondsOf sbConfig * 1000)
                     |> Expect.equal 3167
 
-        -- 場面 1 つ目のクリップ: 面全体の位置から「ターンの頭 1.276s」を引いた
-        -- ローカル秒が割合になる
-        , test "絵コンテのドラッグは場面のオフセットを引いてから割合にする(場面 1)" <|
+        -- 下段の編集モードは、そのペインの秒数 × 1.15 が面いっぱいの物差しになる
+        , test "絵コンテ: クリップのドラッグはビートのペインの物差しで読む" <|
             \_ ->
-                -- fx 0.5 × 3.1668 = 1.5834s − 1.276s = 0.3074s → ÷0.58 = 0.53
-                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio" }) 0.5
-                    |> Expect.equal ( [ "fxTiming", "orbFlightRatio" ], 530 )
-        , test "絵コンテのドラッグは場面のオフセットを引いてから割合にする(場面 2)" <|
+                -- fx 0.4 × (0.58 × 1.15 = 0.667s) = 0.2668s → ÷0.58 = 0.46
+                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "orbFlightRatio" }) 0.4
+                    |> Expect.equal ( [ "fxTiming", "orbFlightRatio" ], 460 )
+        , test "絵コンテ: 境目のドラッグはターンの頭のペインの物差しで読む" <|
             \_ ->
-                -- fx 0.7 × 3.1668 = 2.2168s − (1.276 + 0.58)s = 0.3608s → ÷0.58 = 0.62
-                dragToIn sbConfig (Timeline.ClipEnd { section = "fxTiming", target = "lungeRatio" }) 0.7
-                    |> Expect.equal ( [ "fxTiming", "lungeRatio" ], 620 )
+                -- fx 0.43 × (1.276 × 1.15 = 1.4674s) = 0.631s → ÷1.276 = 0.49(素の形と同じ数字)
+                dragToIn sbConfig (Timeline.Boundary { section = "turnCue", target = "countdownEnd" }) 0.43
+                    |> Expect.equal ( [ "turnCue", "countdownEnd" ], 490 )
 
         -- 「1 ビート」の線のドラッグ = beatSeconds の直書き
         -- (multiply が beatSeconds 1 つなので、逆算は秒がそのまま値になる)

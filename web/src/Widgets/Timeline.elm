@@ -385,41 +385,31 @@ resolveScenes track =
         resolved ++ [ { label = "", clips = leftovers } ]
 
 
-{-| ハンドルが属する場面の開始秒(絵コンテの左端からのオフセット)。
-Moved は面全体の割合しか知らないので、ローカルな秒へはこの分を引いて戻す。
-絵コンテでないときは全トラックが左端 0 なので常に 0。
+{-| 掴んだ瞬間に凍結する「面いっぱいの秒数」。絵コンテでは下段の編集モードが
+面を独り占めしていて、ハンドルの種類からどのペインの物か決まる —
+ターンの頭の物差しか、ビートの物差しか。どちらも右端を伸ばす余白 +15%。
+絵コンテでなければ従来どおり全体の物差し。
 -}
-offsetFor : Config -> Handle -> Float
-offsetFor config handle =
+pressRulerFor : Config -> Handle -> Float
+pressRulerFor config handle =
     case storyboardOf config of
         Nothing ->
-            0
+            rulerSecondsOf config
 
         Just sb ->
             case handle of
                 Boundary _ ->
-                    0
+                    sb.turnSeconds * 1.15
 
                 TotalEnd t ->
-                    -- ビートの右端(beatSeconds)は最初の場面の枠に居る
                     if Just t.target == totalEndTarget sb.clipTotal then
-                        sb.turnSeconds
+                        sb.beatSeconds * 1.15
 
                     else
-                        0
+                        sb.turnSeconds * 1.15
 
-                ClipEnd c ->
-                    sb.turnSeconds + toFloat (sceneIndexOfItem c.target sb.scenes) * sb.beatSeconds
-
-
-sceneIndexOfItem : String -> List { label : String, clips : List ClipSpec } -> Int
-sceneIndexOfItem name scenes =
-    scenes
-        |> List.indexedMap (\i scene -> ( i, scene.clips |> List.any (\c -> c.length == name) ))
-        |> List.filter Tuple.second
-        |> List.head
-        |> Maybe.map Tuple.first
-        |> Maybe.withDefault 0
+                ClipEnd _ ->
+                    sb.beatSeconds * 1.15
 
 
 {-| 表示用の位置ならし。各値を 0..1 に収めてから、前から max の連鎖で
@@ -482,7 +472,17 @@ type alias Model =
     -- 横方向の倍率(1 = 全体が収まる)。無段階 — ピンチ / Ctrl+ホイールの
     -- 増分をそのまま掛ける
     , zoom : Float
+
+    -- 絵コンテで下段に開いている場面(編集モード)。Nothing = 何も開いていない
+    , openPane : Maybe Pane
     }
+
+
+{-| 下段の編集モードで開ける物。上段の箱と 1 対 1。
+-}
+type Pane
+    = TurnPane
+    | ScenePane Int
 
 
 {-| 凍結するのは物差しだけ(TotalEnd を伸ばすと物差し自体が伸びて、掴んだ点が
@@ -512,6 +512,8 @@ type Msg
       -- Float は掛ける倍率(ホイールの増分から作るので無段階)
     | ZoomBy Point Float
     | ZoomHome
+      -- 上段の箱をクリック(Nothing = 閉じる ×)
+    | PaneSelected (Maybe Pane)
 
 
 type alias Point =
@@ -528,7 +530,7 @@ type Out
 
 init : Model
 init =
-    { drag = Nothing, zoom = 1 }
+    { drag = Nothing, zoom = 1, openPane = Nothing }
 
 
 isDragging : Model -> Bool
@@ -542,7 +544,7 @@ update config msg model =
         -- 押しただけでは書かない(うっかりクリックで境目が飛ばないように)。
         -- 書くのは動かし始めてから — SfxEditor の縁の掴みと同じ流儀
         Pressed handle _ ->
-            ( { model | drag = Just { handle = handle, rulerSeconds = rulerSecondsOf config } }
+            ( { model | drag = Just { handle = handle, rulerSeconds = pressRulerFor config handle } }
             , Silent
             )
 
@@ -573,6 +575,9 @@ update config msg model =
         ZoomHome ->
             ( { model | zoom = 1 }, ZoomReset )
 
+        PaneSelected pane ->
+            ( { model | openPane = pane }, Silent )
+
 
 {-| 掴んだ位置(物差しに対する割合)を、書き戻す値 1 つに写す。
 丸めた結果が今の値と同じなら Silent(step が自然なスロットルになる)。
@@ -581,8 +586,7 @@ editFor : Config -> Drag -> Point -> Out
 editFor config drag point =
     let
         seconds =
-            Basics.max 0
-                (clamp 0 1 point.fx * drag.rulerSeconds - offsetFor config drag.handle)
+            clamp 0 1 point.fx * drag.rulerSeconds
     in
     case drag.handle of
         Boundary at ->
@@ -864,7 +868,7 @@ view config model =
                     :: (case storyboardOf config of
                             -- 絵コンテ: 代表的な 1 ターンを 1 本の物差しに並べる
                             Just sb ->
-                                viewStoryboard config ruler model.zoom sb
+                                viewStoryboard config ruler model.zoom model sb
 
                             -- 素の形: トラックを縦に並べる(scenes 宣言の無い Doc)
                             Nothing ->
@@ -939,42 +943,190 @@ dragAttrs model =
         ]
 
 
-{-| 絵コンテ: 代表的な 1 ターン。ターンの頭 → 場面のビート列 → ゴースト、を
-横一列の枠(同じ物差し)で並べる。見た目の文法は 2 値だけ —
-実色 + グリップ = 掴める / 減光 = 自動で決まる・説明(掴めない)。
+{-| 絵コンテ(上下分割)。上段 = 箱だけの流れ図(常に表示・読む専用)。
+箱をクリックすると下段にその場面単体の編集モードが開く。
+見た目の文法は 2 値 — 実色 + グリップ = 掴める / 減光 = 自動で決まる・説明。
 -}
-viewStoryboard : Config -> Float -> Float -> Storyboard -> List (Html Msg)
-viewStoryboard config ruler zoom sb =
+viewStoryboard : Config -> Float -> Float -> Model -> Storyboard -> List (Html Msg)
+viewStoryboard config ruler zoom model sb =
+    viewFlowRow config ruler model.openPane sb
+        :: div [ HA.class "tl-split" ] []
+        :: (case model.openPane of
+                Nothing ->
+                    [ div [ HA.class "tl-pane-hint" ]
+                        [ text "上の箱をクリックすると、その場面の編集モードがここに開く" ]
+                    ]
+
+                Just pane ->
+                    viewPane config zoom pane sb
+           )
+
+
+{-| 上段: 箱だけの流れ図。幅は秒数に比例。掴める物は無い(選ぶだけ)。
+-}
+viewFlowRow : Config -> Float -> Maybe Pane -> Storyboard -> Html Msg
+viewFlowRow config ruler openPane sb =
     let
-        turnFrame =
+        box pane secs name badge sub mini =
+            div
+                [ HA.classList
+                    [ ( "tl-box", True )
+                    , ( "tl-box-selected", openPane == Just pane )
+                    ]
+                , HA.style "width" (percent (secs / ruler))
+                , HE.onClick (PaneSelected (Just pane))
+                ]
+                (div [ HA.class "tl-box-name" ]
+                    (text name
+                        :: (if badge then
+                                [ span
+                                    [ HA.class "tl-scene-badge"
+                                    , HA.title "このビートがいつ・何回来るかは戦況しだい(型の例)"
+                                    ]
+                                    [ text "例" ]
+                                ]
+
+                            else
+                                []
+                           )
+                    )
+                    :: div [ HA.class "tl-box-sub" ] [ text sub ]
+                    :: mini
+                )
+
+        turnBox =
             case sb.phase of
                 Just track ->
-                    [ viewTurnFrame config ruler zoom sb track ]
+                    [ box TurnPane
+                        sb.turnSeconds
+                        (labelOf config track.section)
+                        False
+                        (secondsText sb.turnSeconds ++ " ・ " ++ String.fromInt (List.length track.phases) ++ " 区間")
+                        [ div [ HA.class "tl-box-mini" ]
+                            [ div [ HA.style "width" "100%" ] [] ]
+                        ]
+                    ]
 
                 Nothing ->
                     []
 
-        sceneFrames =
+        sceneBoxes =
             sb.scenes
-                |> List.indexedMap (viewSceneFrame config ruler zoom sb)
+                |> List.indexedMap
+                    (\index scene ->
+                        box (ScenePane index)
+                            sb.beatSeconds
+                            (sceneNameOf config sb scene)
+                            True
+                            (secondsText sb.beatSeconds ++ " ・ 演出 " ++ String.fromInt (List.length scene.clips) ++ " 本")
+                            [ div [ HA.class "tl-box-mini" ]
+                                (scene.clips
+                                    |> List.map
+                                        (\clip ->
+                                            let
+                                                frac =
+                                                    clipSpan config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
+                                                        |> Maybe.map (\sp -> sp.seconds / sb.beatSeconds)
+                                                        |> Maybe.withDefault 0
+                                            in
+                                            div
+                                                [ HA.style "width"
+                                                    (percent
+                                                        (if clip.echo then
+                                                            1
+
+                                                         else
+                                                            frac
+                                                        )
+                                                    )
+                                                ]
+                                                []
+                                        )
+                                )
+                            ]
+                    )
+
+        ghostBox =
+            div
+                [ HA.class "tl-box tl-box-ghost"
+                , HA.style "width" (percent (sb.beatSeconds / ruler))
+                , HA.title "ビートは場のカードと攻撃の数だけ続く(順番も回数も戦況しだい)。終わったら次のターンの頭へ"
+                ]
+                [ div [ HA.class "tl-box-name" ] [ text "…ビートが続く" ] ]
     in
-    [ div [ HA.class "tl-frames" ]
-        (turnFrame ++ sceneFrames ++ [ viewGhostFrame ruler sb ])
-    ]
+    div [ HA.class "tl-flow" ] (turnBox ++ sceneBoxes ++ [ ghostBox ])
 
 
-{-| ターンの頭の枠。中身は今までのフェーズの帯と同じで、座標だけ
-枠ローカル(幅 = turnSeconds)になる。
+sceneNameOf : Config -> Storyboard -> { label : String, clips : List ClipSpec } -> String
+sceneNameOf config sb scene =
+    if scene.label == "" then
+        labelOf config sb.clipSection
+
+    else
+        scene.label
+
+
+{-| 下段: 選んだ場面単体の編集モード。面いっぱいがそのペインの物差し
+(ペインの秒数 × 1.15。右端を伸ばす余白ぶん)になる。
 -}
-viewTurnFrame :
+viewPane : Config -> Float -> Pane -> Storyboard -> List (Html Msg)
+viewPane config zoom pane sb =
+    let
+        header name badge =
+            div [ HA.class "tl-pane-head" ]
+                (span [ HA.class "tl-pane-title" ] [ text ("編集モード: " ++ name) ]
+                    :: (if badge then
+                            [ span [ HA.class "tl-scene-badge" ] [ text "例" ] ]
+
+                        else
+                            []
+                       )
+                    ++ [ span
+                            [ HA.class "tl-pane-close"
+                            , HE.onClick (PaneSelected Nothing)
+                            ]
+                            [ text "閉じる ×" ]
+                       ]
+                )
+    in
+    case pane of
+        TurnPane ->
+            case sb.phase of
+                Nothing ->
+                    []
+
+                Just track ->
+                    header (labelOf config track.section) False
+                        :: viewTicks (sb.turnSeconds * 1.15)
+                        :: viewTurnPaneLane config zoom sb track
+
+        ScenePane index ->
+            case sb.scenes |> List.drop index |> List.head of
+                Nothing ->
+                    []
+
+                Just scene ->
+                    header (sceneNameOf config sb scene) True
+                        :: viewTicks (sb.beatSeconds * 1.15)
+                        :: viewScenePaneLanes config zoom sb scene
+
+
+{-| ターンの頭のペイン。フェーズの帯 1 本(座標はペインの物差しに対する割合)。
+-}
+viewTurnPaneLane :
     Config
-    -> Float
     -> Float
     -> Storyboard
     -> { section : String, total : TotalSpec, phases : List PhaseSpec }
-    -> Html Msg
-viewTurnFrame config ruler zoom sb track =
+    -> List (Html Msg)
+viewTurnPaneLane config zoom sb track =
     let
+        paneRuler =
+            sb.turnSeconds * 1.15
+
+        fxOf seconds =
+            seconds / paneRuler
+
         rawEnds =
             track.phases
                 |> List.map
@@ -990,27 +1142,23 @@ viewTurnFrame config ruler zoom sb track =
         starts =
             0 :: ends
 
-        -- ラベルの実表示幅は「枠の物差しに対する % × 枠が画面に占める割合」
-        surfacePercent w =
-            w * (sb.turnSeconds / ruler) * 100 * zoom
-
         segments =
             List.map3
                 (\phase start end ->
                     let
                         width =
-                            Basics.max 0 (end - start)
+                            fxOf (Basics.max 0 (end - start) * sb.turnSeconds)
                     in
                     div
                         [ HA.classList
                             [ ( "tl-phase", True )
                             , ( "tl-wait", phase.wait )
                             ]
-                        , HA.style "left" (percent start)
+                        , HA.style "left" (percent (fxOf (start * sb.turnSeconds)))
                         , HA.style "width" (percent width)
                         , HA.title (Maybe.withDefault phase.label phase.description)
                         ]
-                        (if surfacePercent width >= labelMinPercent then
+                        (if width * 100 * zoom >= labelMinPercent then
                             [ span [ HA.class "tl-phase-label" ] [ text phase.label ] ]
 
                          else
@@ -1027,7 +1175,7 @@ viewTurnFrame config ruler zoom sb track =
                     phase.to
                         |> Maybe.map
                             (\name ->
-                                ( end
+                                ( fxOf (end * sb.turnSeconds)
                                 , Boundary { section = track.section, target = name }
                                 , secondsText (end * sb.turnSeconds)
                                 )
@@ -1041,7 +1189,7 @@ viewTurnFrame config ruler zoom sb track =
             totalEndTarget track.total
                 |> Maybe.map
                     (\target ->
-                        [ ( 1.0
+                        [ ( fxOf sb.turnSeconds
                           , TotalEnd { target = target }
                           , "全体 " ++ secondsText sb.turnSeconds
                           )
@@ -1052,56 +1200,55 @@ viewTurnFrame config ruler zoom sb track =
         handles =
             boundaryHandles ++ totalHandle
     in
-    div
-        [ HA.class "tl-scene"
-        , HA.style "width" (percent (sb.turnSeconds / ruler))
+    [ div
+        [ HA.class "tl-track tl-track-phase"
+        , onPointerDown (pickNearest handles)
         ]
-        [ div [ HA.class "tl-scene-title" ]
-            [ text (labelOf config track.section) ]
-        , div
-            [ HA.class "tl-track tl-lane tl-lane-phase"
-            , onPointerDown (pickNearest handles)
+        (div
+            [ HA.class "tl-frame"
+            , HA.style "width" (percent (fxOf sb.turnSeconds))
             ]
-            (segments
-                ++ List.indexedMap (\i handle -> viewGrip { alt = modBy 2 i == 1, warn = False } handle) handles
-            )
-        ]
+            []
+            :: segments
+            ++ List.indexedMap (\i handle -> viewGrip { alt = modBy 2 i == 1, warn = False } handle) handles
+        )
+    ]
 
 
-{-| 場面 1 つ(1 ビートの枠)。中のレーンは同時に走る演出で、縦の重なりが
-そのまま「同時進行」を語る。
+{-| 場面のペイン。同時に走る演出のレーンを縦に積む(縦の重なり = 同時進行)。
+枠 = 1 ビート。ビートの右端(紫)はどの場面のペインでも掴める — 共有の値なので、
+動かすと他の場面もターンの頭も一緒に伸び縮みする。
 -}
-viewSceneFrame :
+viewScenePaneLanes :
     Config
     -> Float
-    -> Float
     -> Storyboard
-    -> Int
     -> { label : String, clips : List ClipSpec }
-    -> Html Msg
-viewSceneFrame config ruler zoom sb index scene =
+    -> List (Html Msg)
+viewScenePaneLanes config zoom sb scene =
     let
+        paneRuler =
+            sb.beatSeconds * 1.15
+
+        beatFx =
+            sb.beatSeconds / paneRuler
+
+        beatHandle =
+            totalEndTarget sb.clipTotal
+                |> Maybe.map
+                    (\target ->
+                        [ ( beatFx
+                          , TotalEnd { target = target }
+                          , "1 ビート " ++ secondsText sb.beatSeconds
+                          )
+                        ]
+                    )
+                |> Maybe.withDefault []
+
         spanOf clip =
             clipSpan config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip
 
-        -- ビートの右端(紫) = beatSeconds。最初の場面の枠でだけ掴める
-        beatHandle =
-            if index == 0 then
-                totalEndTarget sb.clipTotal
-                    |> Maybe.map
-                        (\target ->
-                            ( 1.0
-                            , TotalEnd { target = target }
-                            , "1 ビート " ++ secondsText sb.beatSeconds
-                            )
-                        )
-                    |> Maybe.map List.singleton
-                    |> Maybe.withDefault []
-
-            else
-                []
-
-        -- 「次のビートまで待ち」のラベルは、余りが一番広いレーンに 1 か所だけ
+        -- 「次のビートまで待ち」は、余りが一番広いレーンに 1 か所だけ
         idleLane =
             scene.clips
                 |> List.indexedMap
@@ -1126,68 +1273,47 @@ viewSceneFrame config ruler zoom sb index scene =
                         else
                             Nothing
                     )
-
-        lanes =
-            scene.clips
-                |> List.indexedMap
-                    (\i clip ->
-                        viewSceneLane config
-                            ruler
-                            zoom
-                            sb
-                            { beatHandle = beatHandle
-                            , showBeatGrip = index == 0 && i == 0
-                            , idle = idleLane == Just i
-                            }
-                            clip
-                    )
-                |> List.concat
-
-        title =
-            if scene.label == "" then
-                labelOf config sb.clipSection
-
-            else
-                scene.label
     in
-    div
-        [ HA.class "tl-scene"
-        , HA.style "width" (percent (sb.beatSeconds / ruler))
-        ]
-        (div [ HA.class "tl-scene-title" ]
-            [ text title
-            , span
-                [ HA.class "tl-scene-badge"
-                , HA.title "このビートがいつ・何回来るかは戦況しだい(型の例)"
-                ]
-                [ text "例" ]
-            ]
-            :: lanes
-        )
+    scene.clips
+        |> List.indexedMap
+            (\i clip ->
+                viewPaneLane config
+                    zoom
+                    sb
+                    { beatHandle = beatHandle
+                    , showBeatGrip = i == 0
+                    , idle = idleLane == Just i
+                    }
+                    clip
+            )
+        |> List.concat
 
 
-{-| 場面の中のレーン 1 本。座標は枠ローカル(幅 = 1 ビート)。
--}
-viewSceneLane :
+viewPaneLane :
     Config
-    -> Float
     -> Float
     -> Storyboard
     -> { beatHandle : List ( Float, Handle, String ), showBeatGrip : Bool, idle : Bool }
     -> ClipSpec
     -> List (Html Msg)
-viewSceneLane config ruler zoom sb opts clip =
+viewPaneLane config zoom sb opts clip =
     case clipSpan config { section = sb.clipSection, beatSeconds = sb.beatSeconds } clip of
         Nothing ->
             []
 
         Just span_ ->
             let
-                localFx =
-                    span_.seconds / sb.beatSeconds
+                paneRuler =
+                    sb.beatSeconds * 1.15
 
-                surfacePercent w =
-                    w * (sb.beatSeconds / ruler) * 100 * zoom
+                fxOf seconds =
+                    seconds / paneRuler
+
+                clipFx =
+                    fxOf span_.seconds
+
+                beatFx =
+                    fxOf sb.beatSeconds
 
                 gripLabel =
                     if span_.capped then
@@ -1199,13 +1325,13 @@ viewSceneLane config ruler zoom sb opts clip =
                             |> Maybe.withDefault (secondsText span_.seconds)
 
                 handle =
-                    ( localFx
+                    ( clipFx
                     , ClipEnd { section = sb.clipSection, target = clip.length }
                     , gripLabel
                     )
 
                 nameInside w =
-                    surfacePercent w >= labelMinPercent
+                    w * 100 * zoom >= labelMinPercent
 
                 nameOf w label =
                     if nameInside w then
@@ -1216,17 +1342,16 @@ viewSceneLane config ruler zoom sb opts clip =
 
                 body =
                     if clip.echo then
-                        -- 実体はビートいっぱい + 2 回目以降のゴースト。掴むのは遅れ幅
                         [ div
                             [ HA.class "tl-clip"
-                            , HA.style "width" "100%"
+                            , HA.style "width" (percent beatFx)
                             , HA.title (clip.label ++ "。1 行目はビートいっぱい表示される")
                             ]
-                            (nameOf 1.0 clip.label)
+                            (nameOf beatFx clip.label)
                         , div
                             [ HA.class "tl-clip tl-derived"
-                            , HA.style "left" (percent localFx)
-                            , HA.style "width" (percent (Basics.max 0 (1 - localFx)))
+                            , HA.style "left" (percent clipFx)
+                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
                             , HA.title ("2 行目 — " ++ secondsText span_.seconds ++ " 遅れて出る(行数は効果の数しだい)")
                             ]
                             []
@@ -1234,8 +1359,8 @@ viewSceneLane config ruler zoom sb opts clip =
 
                     else
                         div
-                            [ HA.classList [ ( "tl-clip", True ) ]
-                            , HA.style "width" (percent localFx)
+                            [ HA.class "tl-clip"
+                            , HA.style "width" (percent clipFx)
                             , HA.title
                                 (clip.capSeconds
                                     |> Maybe.andThen (\name -> valueOf config (sb.clipSection ++ "." ++ name))
@@ -1243,16 +1368,16 @@ viewSceneLane config ruler zoom sb opts clip =
                                     |> Maybe.withDefault clip.label
                                 )
                             ]
-                            (nameOf localFx clip.label)
+                            (nameOf clipFx clip.label)
                             :: (case clip.restLabel of
                                     Just label ->
                                         [ div
                                             [ HA.class "tl-clip tl-derived"
-                                            , HA.style "left" (percent localFx)
-                                            , HA.style "width" (percent (Basics.max 0 (1 - localFx)))
+                                            , HA.style "left" (percent clipFx)
+                                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
                                             , HA.title (label ++ " — " ++ clip.label ++ " の残りで自動で決まる")
                                             ]
-                                            (nameOf (1 - localFx) label)
+                                            (nameOf (beatFx - clipFx) label)
                                         ]
 
                                     Nothing ->
@@ -1260,13 +1385,13 @@ viewSceneLane config ruler zoom sb opts clip =
                                )
 
                 nameOutside =
-                    if clip.echo || nameInside localFx || clip.restLabel /= Nothing then
+                    if clip.echo || nameInside clipFx || clip.restLabel /= Nothing then
                         []
 
                     else
                         [ span
                             [ HA.class "tl-phase-label tl-label-out"
-                            , HA.style "left" (percent localFx)
+                            , HA.style "left" (percent clipFx)
                             ]
                             [ text clip.label ]
                         ]
@@ -1275,8 +1400,8 @@ viewSceneLane config ruler zoom sb opts clip =
                     if opts.idle && clip.restLabel == Nothing && not clip.echo then
                         [ div
                             [ HA.class "tl-idle"
-                            , HA.style "left" (percent localFx)
-                            , HA.style "width" (percent (Basics.max 0 (1 - localFx)))
+                            , HA.style "left" (percent clipFx)
+                            , HA.style "width" (percent (Basics.max 0 (beatFx - clipFx)))
                             , HA.title "演出はここで終わり。ビートの残りは何も動かない(ビートの長さはテンポ側が決める)"
                             ]
                             [ text "次のビートまで待ち" ]
@@ -1289,7 +1414,7 @@ viewSceneLane config ruler zoom sb opts clip =
                     if opts.showBeatGrip then
                         [ div
                             [ HA.class "tl-grip tl-grip-beat"
-                            , HA.style "left" "100%"
+                            , HA.style "left" (percent beatFx)
                             ]
                             [ div [ HA.class "tl-grip-dot" ] []
                             , div [ HA.class "tl-grip-label" ]
@@ -1304,31 +1429,18 @@ viewSceneLane config ruler zoom sb opts clip =
                 [ HA.class "tl-track tl-lane"
                 , onPointerDown (pickNearest (handle :: opts.beatHandle))
                 ]
-                (body
+                (div
+                    [ HA.class "tl-frame"
+                    , HA.style "width" (percent beatFx)
+                    ]
+                    []
+                    :: body
                     ++ idle
                     ++ nameOutside
                     ++ beatGrip
                     ++ [ viewGrip { alt = False, warn = span_.capped } handle ]
                 )
             ]
-
-
-{-| ゴーストの枠。「ビートはこの先も続く(順番・回数は戦況しだい)」を
-薄れて消える絵で言う。掴めない。
--}
-viewGhostFrame : Float -> Storyboard -> Html Msg
-viewGhostFrame ruler sb =
-    div
-        [ HA.class "tl-scene tl-scene-ghost"
-        , HA.style "width" (percent (sb.beatSeconds / ruler))
-        , HA.title "ビートは場のカードと攻撃の数だけ続く(順番も回数も戦況しだい)。終わったら次のターンの頭へ"
-        ]
-        [ div [ HA.class "tl-scene-title" ] [ text "…ビートが続く" ]
-        , div [ HA.class "tl-track tl-lane" ]
-            [ div [ HA.class "tl-clip tl-derived", HA.style "width" "58%" ] [] ]
-        , div [ HA.class "tl-track tl-lane" ]
-            [ div [ HA.class "tl-clip tl-derived", HA.style "width" "43%" ] [] ]
-        ]
 
 
 {-| 1 ビートの線。全行を貫く縦の点線で、ワンショットの枠の右端はこの線に一致する
