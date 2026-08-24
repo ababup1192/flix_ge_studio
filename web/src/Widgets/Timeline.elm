@@ -1249,7 +1249,7 @@ viewTurnPaneLane config zoom sb track =
     in
     [ div
         [ HA.class "tl-track tl-track-phase"
-        , onPointerDown (pickNearest handles)
+        , onPointerDown (pickNearest zoom handles)
         ]
         (div
             [ HA.class "tl-frame"
@@ -1524,7 +1524,7 @@ viewPaneLane config zoom sb opts clip =
             in
             [ div
                 [ HA.class "tl-track tl-lane"
-                , onPointerDown (pickNearest (handle :: startHandle ++ opts.beatHandle))
+                , onPointerDown (pickNearest zoom (handle :: startHandle ++ opts.beatHandle))
                 ]
                 (div
                     [ HA.class "tl-frame"
@@ -1726,7 +1726,7 @@ viewPhaseTrack config ruler zoom trackSeconds track =
         [ text (labelOf config track.section) ]
     , div
         [ HA.class "tl-track tl-track-phase"
-        , onPointerDown (pickNearest handles)
+        , onPointerDown (pickNearest zoom handles)
         ]
         -- 枠は総尺の所で切る(枠の外 = 時間の外。何も描かない)。当たり判定は
         -- トラック全幅のままなので、fx の座標系は変わらない
@@ -1926,7 +1926,7 @@ viewClipRow config ruler zoom beatSeconds section beat clip span_ =
     in
     [ div
         [ HA.class "tl-track tl-track-clip"
-        , onPointerDown (pickNearest (handle :: startHandle ++ beatHandles))
+        , onPointerDown (pickNearest zoom (handle :: startHandle ++ beatHandles))
         ]
         -- 枠 = 1 ビート(ワンショットはこの中で終わる)。枠の外には何も描かない
         (div
@@ -1968,9 +1968,17 @@ labelMinPercent =
 
 {-| 押した位置に一番近いハンドルを掴む。同率は後ろが勝つ — 押し出しで
 0 幅に重なった境目は、後ろを動かせば広げ直せる。
+掴めるのはグリップの近く(掴み半径の中)だけ — バーの胴体や空きを押しても
+ドラッグは始まらない(グリップの無い場所は掴めない、を当たり判定でも守る)。
+半径はズーム倍率で割り、画面上の掴みやすさを一定に保つ。
 -}
-pickNearest : List ( Float, Handle, String ) -> Point -> Msg
-pickNearest handles point =
+pickNearest : Float -> List ( Float, Handle, String ) -> Point -> Msg
+pickNearest zoom handles point =
+    let
+        -- 面に対する割合。等倍で面の 2%(幅 800px なら約 16px)
+        tolerance =
+            0.02 / Basics.max 1 zoom
+    in
     handles
         |> List.foldl
             (\( fx, handle, _ ) best ->
@@ -1986,7 +1994,14 @@ pickNearest handles point =
                             best
             )
             Nothing
-        |> Maybe.map (\( _, handle ) -> Pressed handle point)
+        |> Maybe.andThen
+            (\( fx, handle ) ->
+                if abs (point.fx - fx) <= tolerance then
+                    Just (Pressed handle point)
+
+                else
+                    Nothing
+            )
         |> Maybe.withDefault Released
 
 
