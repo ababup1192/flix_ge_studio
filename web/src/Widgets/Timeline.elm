@@ -903,17 +903,20 @@ view config model =
                     :: onZoomWheel
                     :: dragAttrs model
                 )
-                (viewTicks ruler
-                    :: (case storyboardOf config of
-                            -- 絵コンテ: 代表的な 1 ターンを 1 本の物差しに並べる
-                            Just sb ->
-                                viewStoryboard config ruler model.zoom model sb
+                (case storyboardOf config of
+                    -- 絵コンテ: 代表的な 1 ターンを 1 本の物差しに並べる。
+                    -- 上段の描画は凍結した物差しを使わない — 凍結が要るのは
+                    -- 下段ペインの「ドラッグ位置 → 値」の変換だけで、上段まで
+                    -- 短い物差しで描くと箱が膨らんで面が溢れる
+                    Just sb ->
+                        viewTicks (rulerSecondsOf config)
+                            :: viewStoryboard config (rulerSecondsOf config) model.zoom model sb
 
-                            -- 素の形: トラックを縦に並べる(scenes 宣言の無い Doc)
-                            Nothing ->
-                                viewBeatLine config ruler
-                                    ++ (config.specs |> List.concatMap (viewTrack config ruler model.zoom))
-                       )
+                    -- 素の形: トラックを縦に並べる(scenes 宣言の無い Doc)
+                    Nothing ->
+                        viewTicks ruler
+                            :: viewBeatLine config ruler
+                            ++ (config.specs |> List.concatMap (viewTrack config ruler model.zoom))
                 )
             ]
         ]
