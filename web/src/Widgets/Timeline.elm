@@ -1438,22 +1438,25 @@ viewPaneLane config zoom sb opts clip =
                     else
                         []
 
+                -- エコーは行を上下に積む: 上段 = 1 行目(実色・ビートいっぱい)、
+                -- 下段 = 2 行目(減光・遅れて始まる)。重ねると減光が実色に飲まれて
+                -- 見えないため、段を分けて「1 行ずつ遅れる」を絵にする
                 body =
                     if clip.echo then
                         [ div
-                            [ HA.class "tl-clip"
+                            [ HA.class "tl-clip tl-echo-line1"
                             , HA.style "left" (percent startFx)
                             , HA.style "width" (percent (Basics.max 0 (beatFx - startFx)))
                             , HA.title (clip.label ++ "。1 行目はビートいっぱい表示される")
                             ]
-                            (nameOf (beatFx - startFx) clip.label)
+                            (nameOf (beatFx - startFx) (clip.label ++ " 1 行目"))
                         , div
-                            [ HA.class "tl-clip tl-derived"
+                            [ HA.class "tl-clip tl-derived tl-echo-line2"
                             , HA.style "left" (percent endFx)
                             , HA.style "width" (percent (Basics.max 0 (beatFx - endFx)))
                             , HA.title ("2 行目 — " ++ secondsText spanSec ++ " 遅れて出る(行数は効果の数しだい)")
                             ]
-                            []
+                            (nameOf (beatFx - endFx) ("2 行目（" ++ secondsText spanSec ++ " 遅れ）"))
                         ]
 
                     else
@@ -1526,7 +1529,13 @@ viewPaneLane config zoom sb opts clip =
                         []
             in
             [ div
-                [ HA.class "tl-track tl-lane"
+                [ HA.classList
+                    [ ( "tl-track", True )
+                    , ( "tl-lane", True )
+
+                    -- エコーは上下 2 段ぶんの背丈
+                    , ( "tl-lane-echo", clip.echo )
+                    ]
                 , onPointerDown (pickNearest zoom (handle :: startHandle ++ opts.beatHandle))
                 ]
                 (div
