@@ -184,6 +184,11 @@ mod Editor {
             case ("GET", "/files")     => withProject(selection, exchange, dir -> handleFiles(dir, exchange))
             case ("GET", "/changes")   => withProject(selection, exchange, dir -> handleChanges(dir, exchange))
             case ("GET", "/resources") => withProject(selection, exchange, dir -> handleResources(dir, exchange))
+            // 拡張プラグイン (studio-plugins/<id>/ の iframe HTML) の一覧。
+            case ("GET", "/plugins")   => withProject(selection, exchange, dir -> {
+                let (status, json) = Plugins.listJson(dir);
+                sendJson(status, json, exchange)
+            })
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
             case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, game, readBody(exchange), exchange))
             // ファイルそのものへの動詞 (新規 / 複製 / 名前を変える / 消す)。
@@ -378,6 +383,13 @@ mod Editor {
                 let (status, json) = Maintenance.clearFontCache();
                 sendJson(status, json, exchange)
             }
+            // 拡張プラグインの静的配信。エディタ画面の静的配信 (handleStatic) より先に
+            // 前方一致で拾う — 配信元がプロジェクト配下 (studio-plugins/) で別物のため。
+            // HEAD も受ける (存在確認の口。sendBytes / sendJson は HEAD 対応済み)。
+            case ("GET", _) if String.startsWith(prefix = "/plugin-ui/", path) =>
+                handlePluginUi(selection, path, exchange)
+            case ("HEAD", _) if String.startsWith(prefix = "/plugin-ui/", path) =>
+                handlePluginUi(selection, path, exchange)
             case ("GET", _)            => handleStatic(webRoot, path, exchange)
             case ("HEAD", _)           => handleStatic(webRoot, path, exchange)
             case _                     => sendJson(404, errorJson("unknown endpoint: ${methodName} ${path}"), exchange)
@@ -662,7 +674,7 @@ mod Editor {
 
     /// editor 直下の知らないキー(bakeCmd の綴り違い等)。
     def editorKeyWarnings(projectJson: Json): List[String] =
-        let known = Set#{"resources", "dashboards"};
+        let known = Set#{"resources", "dashboards", "plugins"};
         JsonCodec.expectObject(projectJson)
             |> Option.flatMap(obj -> Map.get("editor", obj))
             |> Option.flatMap(JsonCodec.expectObject)
@@ -670,7 +682,7 @@ mod Editor {
                 // "//" 始まりはアノテーション(文書の流儀と同じ)
                 |> List.filter(k -> not (String.startsWith(prefix = "//", k)))
                 |> List.filter(k -> not Set.memberOf(k, known))
-                |> List.map(k -> "editor に未知のキー『${k}』があります(使えるのは resources / dashboards)"))
+                |> List.map(k -> "editor に未知のキー『${k}』があります(使えるのは resources / dashboards / plugins)"))
             |> Option.getWithDefault(Nil)
 
     def resourceKeyWarnings(projectJson: Json): List[String] =
@@ -953,6 +965,32 @@ mod Editor {
                 sendJson(404, errorJson("not found: ${path}"), exchange)
         }
 
+    /// GET /plugin-ui/<id>/<path...> — 拡張プラグインの静的配信 (プロジェクト配下の
+    /// studio-plugins/)。門番と読み込みは Plugins.serveFile。
+    /// プロジェクト未選択・門番で弾いた・実ファイルが無い、はどれも同じ 404
+    /// (handleStatic と同じ理由 — ファイルの有無を外から探らせない)。
+    /// 全ファイル no-cache — ハッシュ付きファイル名でないプラグインの JS/CSS を
+    /// ブラウザにキャッシュされると「直したのに反映されない」罠になるため。
+    def handlePluginUi(selection: Projects.Selection, path: String, exchange: HttpExchange): Unit \ IO =
+        // 末尾スラッシュ無しの "/plugin-ui/<id>" は "<id>/" へ 301 —
+        // index.html を直接返すと中の相対参照 (./app.js 等) が解けないため。
+        if (Plugins.isRootWithoutSlash(path)) {
+            applyCors(exchange);
+            exchange.getResponseHeaders().set("Location", "${path}/");
+            exchange.sendResponseHeaders(301, -1i64);
+            exchange.close()
+        } else {
+            let served = Projects.currentLiveDir(selection)
+                |> Option.flatMap(dir -> Plugins.serveFile(dir, path));
+            match served {
+                case Some((relPath, bytes)) =>
+                    exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+                    sendBytes(contentTypeOf(relPath), bytes, exchange)
+                case None =>
+                    sendJson(404, errorJson("not found: ${path}"), exchange)
+            }
+        }
+
     /// URL パス → 配信ルート相対のファイルパス。"/" は index.html を指す。
     /// 空・`..` 入り・先頭を外しても "/" で始まる ("//host/…" 等) は None。
     /// ここは文字列だけの純粋な門番で、シンボリックリンク越えの最終確認は
@@ -976,7 +1014,15 @@ mod Editor {
         else if (String.endsWith(suffix = ".css", path))   "text/css; charset=utf-8"
         else if (String.endsWith(suffix = ".svg", path))   "image/svg+xml"
         else if (String.endsWith(suffix = ".png", path))   "image/png"
+        else if (String.endsWith(suffix = ".jpg", path))   "image/jpeg"
+        else if (String.endsWith(suffix = ".jpeg", path))  "image/jpeg"
+        else if (String.endsWith(suffix = ".gif", path))   "image/gif"
+        else if (String.endsWith(suffix = ".webp", path))  "image/webp"
         else if (String.endsWith(suffix = ".woff2", path)) "font/woff2"
+        // application/wasm でないと WebAssembly.instantiateStreaming が拒む
+        else if (String.endsWith(suffix = ".wasm", path))  "application/wasm"
+        else if (String.endsWith(suffix = ".mp3", path))   "audio/mpeg"
+        else if (String.endsWith(suffix = ".wav", path))   "audio/wav"
         else if (String.endsWith(suffix = ".json", path))  "application/json; charset=utf-8"
         else "application/octet-stream"
 

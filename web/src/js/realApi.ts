@@ -93,6 +93,10 @@ export function realApi(base: string): Api {
           return getJson(`${base}/files`);
         case "resources":
           return getJson(`${base}/resources`);
+        case "plugins":
+          // 拡張プラグイン(iframe で開く追加画面)の一覧。口が無い旧サーバの
+          // 404 は失敗の封筒になり、Elm 側が空リストへ倒す(fail-open)
+          return getJson(`${base}/plugins`);
         case "changes":
           return getJson(`${base}/changes`);
         case "runningGames":

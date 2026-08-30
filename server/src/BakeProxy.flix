@@ -121,24 +121,37 @@ mod BakeProxy {
                 case _ => false
             }
 
-    /// 「起こす手」は、その口(bakeUrl / performUrl)を宣言している資源の物を使う。
+    /// 「起こす手」は、その口(bakeUrl / performUrl)を宣言している資源か
+    /// 拡張プラグイン(editor.plugins[] の performUrl / performCmd)の物を使う。
     /// 画面から渡させない — 走らせてよい手はプロジェクト自身の宣言だけ。
     def bakeCmdOf(dir: String, url: String): Option[String] \ IO =
         match FileIndex.readInside(dir, "project.json") {
             case Err(_)   => None
             case Ok(text) => match DocJson.parse(text) {
                 case None       => None
-                case Some(json) => match ResourceDecl.fromProjectJson(json) {
-                    case Err(_)    => None
-                    case Ok(decls) =>
-                        decls#resources
-                            |> List.filterMap(decl ->
-                                if (decl#bakeUrl == Some(url)) decl#bakeCmd
-                                else if (decl#performUrl == Some(url)) decl#performCmd
-                                else None)
-                            |> List.head
-                }
+                case Some(json) => List.head(resourceCmds(json, url) ::: pluginCmds(json, url))
             }
+        }
+
+    /// editor.resources[] の中で url を宣言している物の手。読めない宣言は空 (fail-open)。
+    def resourceCmds(json: Util.Json.Json, url: String): List[String] =
+        match ResourceDecl.fromProjectJson(json) {
+            case Err(_)    => Nil
+            case Ok(decls) =>
+                decls#resources
+                    |> List.filterMap(decl ->
+                        if (decl#bakeUrl == Some(url)) decl#bakeCmd
+                        else if (decl#performUrl == Some(url)) decl#performCmd
+                        else None)
+        }
+
+    /// editor.plugins[] の中で url を宣言している物の手。読めない宣言は空 (fail-open)。
+    def pluginCmds(json: Util.Json.Json, url: String): List[String] =
+        match PluginDecl.fromProjectJson(json) {
+            case Err(_)    => Nil
+            case Ok(decls) =>
+                decls |> List.filterMap(decl ->
+                    if (decl#performUrl == Some(url)) decl#performCmd else None)
         }
 
     /// 宣言された手をプロジェクトの根で走らせる(シェル経由)。

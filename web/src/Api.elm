@@ -7,6 +7,8 @@ module Api exposing
     , Files
     , Health
     , HealthResult(..)
+    , PluginEntry
+    , PluginList
     , Preview
     , PreviewRect
     , PreviewResult(..)
@@ -29,6 +31,7 @@ module Api exposing
     , filesDecoder
     , healthResultDecoder
     , noSpriteColors
+    , pluginListDecoder
     , previewResultDecoder
     , projectKey
     , projectSwitchDecoder
@@ -282,6 +285,50 @@ resourcesDecoder =
         (withDefault [] (D.field "dashboards" (D.list dashboardDecoder)))
         (withDefault [] (D.field "sounds" (D.list D.string)))
         (withDefault [] (D.field "warnings" (D.list D.string)))
+
+
+{-| 拡張プラグイン(iframe で開く追加画面)の宣言 1 件。GET /plugins が返す。
+performUrl はゲーム側常駐サーバの口(iframe に URL クエリで引き継ぐ)、
+performCmd はその起こし方(中身はサーバが読む) — resources と同じ語彙。
+title はサーバが省いたら id で埋める(画面側の Maybe 分岐を減らす)。
+-}
+type alias PluginEntry =
+    { id : String
+    , title : String
+    , performUrl : Maybe String
+    , performCmd : Maybe String
+    }
+
+
+{-| GET /plugins の応答。warnings はサーバが弾いた宣言の人間可読文
+(index.html が無い・未知のキー等) — resources の warnings と同じ帯に出す。
+-}
+type alias PluginList =
+    { plugins : List PluginEntry
+    , warnings : List String
+    }
+
+
+{-| GET /plugins — 宣言 + 実在確認済みのプラグイン一覧。ok:false・キー欠け・
+形違いはどれも空リストに倒す(fail-open — プラグインが無いのと同じ顔になるだけ)。
+-}
+pluginListDecoder : D.Decoder PluginList
+pluginListDecoder =
+    D.map2 PluginList
+        (withDefault [] (D.field "plugins" (D.list pluginEntryDecoder)))
+        (withDefault [] (D.field "warnings" (D.list D.string)))
+
+
+pluginEntryDecoder : D.Decoder PluginEntry
+pluginEntryDecoder =
+    D.field "id" D.string
+        |> D.andThen
+            (\id ->
+                D.map3 (PluginEntry id)
+                    (withDefault id (D.field "title" D.string))
+                    (opt "performUrl" D.string)
+                    (opt "performCmd" D.string)
+            )
 
 
 dashboardDecoder : D.Decoder Dashboard

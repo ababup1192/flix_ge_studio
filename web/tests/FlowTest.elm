@@ -465,7 +465,7 @@ landingWith resources =
     start
         |> ensureKinds [ "health" ]
         |> respondOk 1 "health" healthBody
-        |> ensureKinds [ "files", "resources", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
+        |> ensureKinds [ "files", "resources", "plugins", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
         |> respondOk 2 "files" filesBody
         |> respondOk 3 "resources" resources
         |> ProgramTest.clickButton "アトリエ"
@@ -1381,7 +1381,7 @@ suite =
                 start
                     |> ensureKinds [ "health" ]
                     |> respondOk 1 "health" healthBody
-                    |> expectKinds [ "files", "resources", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
+                    |> expectKinds [ "files", "resources", "plugins", "referenceStatus", "journeyState", "annotationsList", "sketchList" ]
         , test "ホーム: 知らせ(changed)から見比べを開き、閉じると seen が飛んで提案を取り直す" <|
             \() ->
                 bootedWith resourcesBody
@@ -3219,7 +3219,7 @@ suite =
                             , ( "assets/level2.json", 1 )
                             ]
                         )
-                    |> ensureKinds [ "files", "resources" ]
+                    |> ensureKinds [ "files", "resources", "plugins" ]
                     |> respondOk 4 "files" filesBody
                     |> respondOk 5 "resources" resourcesBodyWithLevel2
                     |> ProgramTest.expectViewHas [ text "level2.json" ]
@@ -3230,7 +3230,7 @@ suite =
                     |> ProgramTest.ensureViewHas [ text "level.json" ]
                     -- changes の応答から assets/level.json が消える(ディスクから削除された)
                     |> respondOk 0 "changes" (changesBodyMany [ ( "hitbox.json", 1 ) ])
-                    |> ensureKinds [ "files", "resources" ]
+                    |> ensureKinds [ "files", "resources", "plugins" ]
                     |> respondOk 4 "files" filesBody
                     |> respondOk 5 "resources" (E.object [ ( "resources", E.list identity [] ) ])
                     |> ProgramTest.expectViewHasNot [ text "level.json" ]

@@ -103,6 +103,9 @@ type Tab
     = HomeTab
     | AtelierTab
     | GalleryTab
+      -- 拡張プラグイン(iframe で開く追加画面)。値はプラグイン id。
+      -- 入口は左レールの「プラグイン」節(上部ナビはプラグインが増えると伸びるため使わない)
+    | PluginTab String
 
 
 {-| プロジェクトピッカーの状態。候補一覧そのものはサーバ応答(Api.Projects)が正で、
@@ -556,6 +559,18 @@ type alias Model =
     , dashboards : List Api.Dashboard
     , dashboard : Maybe DashState
 
+    -- 拡張プラグイン宣言(/plugins)。iframe で開く追加画面の一覧。
+    -- 口が無い・読めないサーバでは空 = 左レールに節が出ないだけ(fail-open)
+    , pluginList : List Api.PluginEntry
+
+    -- 一度開いた拡張プラグインの id(開いた順)。iframe は Html.Keyed でここに
+    -- ある限り生かし続け、タブを離れても display:none で中の状態を残す
+    , openedPlugins : List String
+
+    -- /plugins が添える宣言と実ファイルのずれ(index.html 不在等)。
+    -- resourceWarnings と同じ帯に合流して左レールに出す
+    , pluginWarnings : List String
+
     -- /resources が添える宣言と実ファイルのずれ(壊れ JSON 等)。左レールに出す
     , resourceWarnings : List String
 
@@ -972,6 +987,9 @@ init _ =
         , groups = []
         , dashboards = []
         , dashboard = Nothing
+        , pluginList = []
+        , openedPlugins = []
+        , pluginWarnings = []
         , resourceWarnings = []
         , pendingJump = Nothing
         , current = Nothing
@@ -6198,10 +6216,12 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
                     in
-                    -- 既定の画面はホームなので、その中身も最初に取っておく
+                    -- 既定の画面はホームなので、その中身も最初に取っておく。
+                    -- 拡張プラグインの一覧も復帰の足で取る(selectProject 成功時と同じ。
+                    -- 応答は kind だけで着地するので id 無しの requestInfo でよい)
                     ( m2
                     , Effect.batch
-                        [ c1, c2, requestInfo "referenceStatus", requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ]
+                        [ c1, c2, requestInfo "plugins", requestInfo "referenceStatus", requestInfo "journeyState", requestInfo "annotationsList", requestInfo "sketchList" ]
                     )
 
                 Ok (Api.HealthErr _) ->
@@ -6872,6 +6892,11 @@ handleOkByKind env model =
                                     , groups = []
                                     , dashboards = []
                                     , dashboard = Nothing
+
+                                    -- プラグインも前のプロジェクトの物。iframe ごと畳む
+                                    , pluginList = []
+                                    , openedPlugins = []
+                                    , pluginWarnings = []
                                     , pendingJump = Nothing
                                     , current = Nothing
                                     , docText = ""
@@ -6939,6 +6964,11 @@ handleOkByKind env model =
                         ( m2, c2 ) =
                             request "resources" (E.object []) m1
 
+                        -- 拡張プラグイン(iframe)の一覧も切替の足で取る。
+                        -- 口が無い旧サーバの失敗は handleErr が空へ倒す(fail-open)
+                        ( m2p, pluginsFx ) =
+                            request "plugins" (E.object []) m2
+
                         -- ラフのカードから作成された直後だけ、ラフの写しをこのタイミングで書く
                         -- (PUT /file は選択が前提なので、これより早くは書けない)。
                         -- dir が違えば黙って捨てる — 別プロジェクトへ書き込まないため
@@ -6950,15 +6980,15 @@ handleOkByKind env model =
                                             ( mA, fx ) =
                                                 request "putFile"
                                                     (E.object [ ( "path", E.string pending.path ), ( "content", E.string pending.content ) ])
-                                                    { m2 | pendingSketchSave = Nothing }
+                                                    { m2p | pendingSketchSave = Nothing }
                                         in
                                         ( { mA | createdSketchReq = Just mA.reqCounter }, fx )
 
                                     else
-                                        ( { m2 | pendingSketchSave = Nothing }, Effect.none )
+                                        ( { m2p | pendingSketchSave = Nothing }, Effect.none )
 
                                 Nothing ->
-                                    ( m2, Effect.none )
+                                    ( m2p, Effect.none )
                     in
                     -- 着地はホームなので、その中身(提案とチケット)も切替の足で取る
                     -- engine に追いついているかはゲームごとに違うので、切替のたびに見直す
@@ -6966,6 +6996,7 @@ handleOkByKind env model =
                     , Effect.batch
                         [ c1
                         , c2
+                        , pluginsFx
                         , sketchFx
                         , requestInfo "journeyState"
                         , requestInfo "annotationsList"
@@ -7012,6 +7043,18 @@ handleOkByKind env model =
 
                 Err _ ->
                     ( { model | notice = Just "resources 応答が読めませんでした" }, Effect.none )
+
+        "plugins" ->
+            -- 形違いはデコーダが空へ倒す(fail-open — 左レールに節が出ないだけ)。
+            -- warnings(index.html 不在等)は resources の警告と同じ帯に合流する
+            let
+                res =
+                    D.decodeValue Api.pluginListDecoder env.body
+                        |> Result.withDefault { plugins = [], warnings = [] }
+            in
+            ( { model | pluginList = res.plugins, pluginWarnings = res.warnings }
+            , Effect.none
+            )
 
         "getFile" ->
             case D.decodeValue Api.fileContentDecoder env.body of
@@ -7994,6 +8037,10 @@ handleErrByKind env message model =
             -- 口が無い(古いサーバ)。ゲーム側の帯を出さないだけ
             ( model, Effect.none )
 
+        "plugins" ->
+            -- 口が無い(古いサーバ)・読めない。プラグイン節が出ないだけ(fail-open)
+            ( { model | pluginList = [], pluginWarnings = [] }, Effect.none )
+
         "getFile" ->
             if Just env.id == model.schemaReq then
                 -- スキーマが無いのは普通のこと(生テキスト編集は常に生きている)
@@ -8378,7 +8425,9 @@ syncFileListIfNeeded mtimes model =
             ( m2, resourcesFx ) =
                 request "resources" (E.object []) m1
         in
-        ( m2, Effect.batch [ filesFx, resourcesFx ] )
+        -- project.json の編集で plugins 宣言も増減しうるので一緒に取り直す
+        -- (応答は kind だけで着地するので id 無しの requestInfo でよい)
+        ( m2, Effect.batch [ filesFx, resourcesFx, requestInfo "plugins" ] )
 
 
 {-| 開いているファイルが見張り(changes)の一覧から消えた = ディスクから
@@ -8498,6 +8547,21 @@ gotoTab tab model =
                 )
             )
 
+        PluginTab id ->
+            -- 取り直す物は無い(中身は iframe が自分で取る)。一度開いた id を
+            -- 控えて、以後はタブを離れても display:none で iframe を生かし続ける
+            ( { model
+                | tab = PluginTab id
+                , openedPlugins =
+                    if List.member id model.openedPlugins then
+                        model.openedPlugins
+
+                    else
+                        model.openedPlugins ++ [ id ]
+              }
+            , Effect.none
+            )
+
 
 
 -- 画面
@@ -8554,6 +8618,11 @@ view model =
 
                         else
                             viewEditing model
+
+                    PluginTab _ ->
+                        -- 中身は下の viewPluginLayer(固定層)が映す。ここは外枠
+                        -- (topbar・検索など)だけを出す
+                        viewShell model (div [ HA.class "flex-1" ] [])
                 , if model.tab == AtelierTab then
                     div []
                         [ SceneView.view miniHandlers (miniState model)
@@ -8562,6 +8631,11 @@ view model =
 
                   else
                     text ""
+
+                -- 拡張プラグインの iframe 層。タブの外に常に置き、Html.Keyed で
+                -- 生かし続ける(タブの中に置くと、タブ移動のたび iframe が作り直され
+                -- 中の状態が消える)
+                , viewPluginLayer model
                 ]
 
 
@@ -8891,6 +8965,92 @@ viewNavTabs tab =
         , item AtelierTab "アトリエ"
         , item GalleryTab "ギャラリー"
         ]
+
+
+
+-- 拡張プラグイン(iframe で開く追加画面)
+
+
+{-| 拡張プラグインの iframe を入れる固定層。一度開いた iframe は Html.Keyed で
+持ち続け、タブを離れている間は display:none で隠すだけ — 中の JS の状態
+(入力途中のフォーム等)がタブ移動で消えないため。topbar(h-9 = 36px)の下に重ね、
+プラグインのタブの間だけ見せる。z は控えめ(検索・ダイアログの z-50/60 が上に乗れる)。
+-}
+viewPluginLayer : Model -> Html Msg
+viewPluginLayer model =
+    let
+        activeId =
+            case model.tab of
+                PluginTab id ->
+                    Just id
+
+                _ ->
+                    Nothing
+    in
+    if List.isEmpty model.openedPlugins then
+        text ""
+
+    else
+        Html.Keyed.node "div"
+            [ HA.class "plugin-layer fixed inset-x-0 bottom-0 z-10 bg-app"
+            , HA.style "top" "36px"
+            , HA.style "display"
+                (if activeId == Nothing then
+                    "none"
+
+                 else
+                    "block"
+                )
+            ]
+            (model.openedPlugins
+                |> List.map (\id -> ( id, viewPluginFrame model (activeId == Just id) id ))
+            )
+
+
+{-| プラグイン 1 枚の iframe。src には serverBase を必ず前置する(vite dev では
+Studio 本体と editor_server が別オリジンなので、相対パスは 404 になる)。
+コンテキスト(performUrl・テーマ・プロジェクト)は URL クエリで渡す — Phase 1 の
+唯一のブリッジで、プラグイン側は new URLSearchParams(location.search) で読む。
+sandbox は隔離ではなく事故防止(top navigation・ポップアップの抑止)。
+-}
+viewPluginFrame : Model -> Bool -> String -> Html Msg
+viewPluginFrame model active id =
+    let
+        entry =
+            model.pluginList
+                |> List.filter (\p -> p.id == id)
+                |> List.head
+
+        query =
+            [ entry
+                |> Maybe.andThen .performUrl
+                |> Maybe.map (\u -> ( "performUrl", u ))
+
+            -- Studio はダークテーマ 1 本(main.ts が sl-theme-dark を取り込む)
+            , Just ( "theme", "dark" )
+            , Just ( "project", model.root )
+            ]
+                |> List.filterMap identity
+                |> List.map (\( k, v ) -> k ++ "=" ++ Url.percentEncode v)
+                |> String.join "&"
+    in
+    Html.iframe
+        [ HA.src (model.serverBase ++ "/plugin-ui/" ++ id ++ "/index.html?" ++ query)
+        , HA.attribute "sandbox" "allow-scripts allow-same-origin allow-forms allow-downloads"
+        , HA.class "plugin-frame h-full w-full border-0"
+
+        -- title 属性だとホバーのツールチップがプラグインの画面に被って出るので、
+        -- 読み上げ用の aria-label だけにする
+        , HA.attribute "aria-label" (entry |> Maybe.map .title |> Maybe.withDefault id)
+        , HA.style "display"
+            (if active then
+                "block"
+
+             else
+                "none"
+            )
+        ]
+        []
 
 
 {-| ミニプレイヤー — 「ゲームの今」でなく「編集の今」を映す右下の枠
@@ -11242,6 +11402,15 @@ viewFilePane model =
                         (viewDashboardRow (model.dashboard |> Maybe.map (\d -> d.decl.id)))
                         model.dashboards
 
+        -- 拡張プラグイン節(宣言がある時だけ)。ダッシュボード節と同じ流儀
+        pluginRows =
+            if List.isEmpty model.pluginList then
+                []
+
+            else
+                viewGroupHeading "プラグイン"
+                    :: List.map (viewPluginRow model.tab) model.pluginList
+
         groupRows =
             model.groups
                 |> List.concatMap
@@ -11266,7 +11435,7 @@ viewFilePane model =
                 []
 
         rows =
-            dashRows ++ groupRows ++ otherRows
+            dashRows ++ pluginRows ++ groupRows ++ otherRows
 
         -- 一覧の下の控えめなトグル。宣言も宣言外も両方ある時だけ意味を持つ
         filesToggle =
@@ -11293,7 +11462,7 @@ viewFilePane model =
         , HA.style "width" (String.fromInt model.leftPaneW ++ "px")
         ]
         (div [ HA.class "root px-3 pb-2 font-mono text-[10px] leading-relaxed break-all text-ink-faint" ] [ text model.root ]
-            :: viewResourceWarnings model.resourceWarnings
+            :: viewResourceWarnings (model.resourceWarnings ++ model.pluginWarnings)
             ++ (if List.isEmpty rows then
                     [ div [ HA.class "root px-3 pb-2 text-[11px] text-ink-faint" ] [ text "編集できる JSON が見つかりません" ] ]
 
@@ -11537,6 +11706,23 @@ viewDashboardRow openId dash =
         , HE.onClick (DashboardClicked dash.id)
         ]
         [ text (Maybe.withDefault dash.id dash.title) ]
+
+
+{-| 拡張プラグインの行。押すとタブごと切り替わる(iframe 全面)。
+dirty ゲート(pendingNav)には乗せない — dashboard と同じ理屈で、編集中の下書きは
+そのまま残り、アトリエへ戻れば続きから編集できる。
+-}
+viewPluginRow : Tab -> Api.PluginEntry -> Html Msg
+viewPluginRow tab plugin =
+    button
+        [ HA.classList
+            [ ( "plugin-row block w-full shrink-0 cursor-pointer truncate px-3 py-1 text-left text-xs", True )
+            , ( "selected bg-accent/15 text-ink", tab == PluginTab plugin.id )
+            , ( "text-ink-soft hover:bg-white/5 hover:text-ink", tab /= PluginTab plugin.id )
+            ]
+        , HE.onClick (TabClicked (PluginTab plugin.id))
+        ]
+        [ text plugin.title ]
 
 
 
