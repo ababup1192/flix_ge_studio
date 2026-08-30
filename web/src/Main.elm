@@ -13335,6 +13335,12 @@ viewControl model path control =
         SchemaForm.KeyListControl keys ->
             viewKeyList model path keys
 
+        SchemaForm.ListRecordControl lr ->
+            viewListRecord model path lr
+
+        SchemaForm.ListEnumControl le ->
+            viewListEnum path le
+
         SchemaForm.WeightsControl w ->
             viewWeights model path w
 
@@ -13898,6 +13904,136 @@ viewListTextRow model path items index value =
             ]
             [ text "✕" ]
         ]
+
+
+{-| レコードの列(カードの効果など)。1 要素 = 1 枠で縦に並べ、枠の中は
+普通のフォーム行(サブの欄は path に添字を継いだ普段の書き戻し)。
+追加・削除・入れ替えだけは「新しい列を丸ごと書く」1 本の編集に落ちる
+(listtext と同じ流儀)。
+-}
+viewListRecord :
+    Model
+    -> List Seg
+    -> { fields : List ( String, Schema.Field ), items : List { value : D.Value, itemRows : List SchemaForm.Row } }
+    -> Html Msg
+viewListRecord model path lr =
+    let
+        values =
+            lr.items |> List.map .value
+
+        write items =
+            FieldEdited { op = SetOp, path = path, value = E.list identity items, isInt = False }
+
+        removeAt index =
+            values
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( i, _ ) -> i /= index)
+                |> List.map Tuple.second
+
+        itemButton label title_ enabled msg =
+            button
+                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                , HA.title title_
+                , HA.disabled (not enabled)
+                , HE.onClick msg
+                ]
+                [ text label ]
+
+        viewItem index item =
+            let
+                itemPath =
+                    path ++ [ IdxSeg index ]
+            in
+            div [ HA.class "listrecord-item mb-1.5 rounded border border-edge bg-raised/40 p-1.5" ]
+                (div [ HA.class "mb-1 flex items-center gap-1" ]
+                    [ span [ HA.class "flex-1 font-mono text-[10px] text-ink-faint" ]
+                        [ text (String.fromInt (index + 1)) ]
+                    , itemButton "↑" "1 つ上へ" (index > 0) (write (SchemaForm.moveItem index -1 values))
+                    , itemButton "↓" "1 つ下へ" (index < List.length values - 1) (write (SchemaForm.moveItem index 1 values))
+                    , button
+                        [ HA.class "listrecord-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                        , HA.title "この要素を削除"
+                        , HE.onClick (write (removeAt index))
+                        ]
+                        [ text "✕" ]
+                    ]
+                    :: (item.itemRows
+                            |> List.filter (rowIsEnabled model itemPath)
+                            |> List.map (viewRow model itemPath)
+                       )
+                )
+    in
+    div [ HA.class "control-listrecord w-full rounded border border-edge bg-well/40 p-1.5" ]
+        ((if List.isEmpty lr.items then
+            [ div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "(まだ 1 つも無い)" ] ]
+
+          else
+            lr.items |> List.indexedMap viewItem
+         )
+            ++ [ button
+                    [ HA.class "listrecord-add btn btn-ghost btn-mini mt-0.5"
+                    , HE.onClick (write (values ++ [ SchemaForm.newItem lr.fields ]))
+                    ]
+                    [ text "＋ 要素を追加" ]
+               ]
+        )
+
+
+{-| enum の列(カードの属性など)。1 行 1 セレクトで縦に並べる。値の差し替えは
+その行への set 1 本、追加・削除・入れ替えは「新しい列を丸ごと書く」1 本
+(listtext と同じ流儀)。
+-}
+viewListEnum : List Seg -> { choices : List String, items : List String } -> Html Msg
+viewListEnum path le =
+    let
+        write items =
+            FieldEdited { op = SetOp, path = path, value = E.list E.string items, isInt = False }
+
+        removeAt index =
+            le.items
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( i, _ ) -> i /= index)
+                |> List.map Tuple.second
+
+        moveButton label title_ enabled msg =
+            button
+                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                , HA.title title_
+                , HA.disabled (not enabled)
+                , HE.onClick msg
+                ]
+                [ text label ]
+
+        viewItem index value =
+            div [ HA.class "listenum-row mb-1 flex items-center gap-1" ]
+                [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
+                    [ text (String.fromInt (index + 1)) ]
+                , div [ HA.class "min-w-0 flex-1" ]
+                    [ viewSelect (path ++ [ IdxSeg index ]) le.choices (Just value) ]
+                , moveButton "↑" "1 つ上へ" (index > 0) (write (SchemaForm.moveItem index -1 le.items))
+                , moveButton "↓" "1 つ下へ" (index < List.length le.items - 1) (write (SchemaForm.moveItem index 1 le.items))
+                , button
+                    [ HA.class "listenum-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                    , HA.title "この行を削除"
+                    , HE.onClick (write (removeAt index))
+                    ]
+                    [ text "✕" ]
+                ]
+    in
+    div [ HA.class "control-listenum w-full rounded border border-edge bg-well/40 p-1.5" ]
+        ((if List.isEmpty le.items then
+            [ div [ HA.class "mb-1 text-[11px] text-ink-faint" ] [ text "(まだ 1 つも無い)" ] ]
+
+          else
+            le.items |> List.indexedMap viewItem
+         )
+            ++ [ button
+                    [ HA.class "listenum-add btn btn-ghost btn-mini mt-0.5"
+                    , HE.onClick (write (le.items ++ (le.choices |> List.take 1)))
+                    ]
+                    [ text "＋ 行を追加" ]
+               ]
+        )
 
 
 {-| 文字列の列の行操作(↑↓)の小ボタン。どの操作も「新しい列を丸ごと書く」

@@ -1,4 +1,4 @@
-module SchemaForm exposing (Context, Control(..), Kind, ListEdit(..), OneOf, Row, applyListEdit, oneOf, rows)
+module SchemaForm exposing (Context, Control(..), Kind, ListEdit(..), OneOf, Row, applyListEdit, moveItem, newItem, oneOf, rows)
 
 {-| スキーマのセクション+選択エントリの値 → フォーム行モデル。
 
@@ -10,7 +10,7 @@ module SchemaForm exposing (Context, Control(..), Kind, ListEdit(..), OneOf, Row
 
 import Json.Decode as D
 import Json.Encode as E
-import Schema exposing (Field, FieldType(..), Section)
+import Schema exposing (Field, FieldType(..), Section, SectionKind(..))
 import Sources
 import Widgets.Weights as Weights
 
@@ -76,6 +76,16 @@ type Control
       -- キー割り当ての列(type {"list":{"enum":[…]}} + widget "key")。
       -- 1 行 1 キーで並べ、行を押すとキーの聞き取りに入る
     | KeyListControl { choices : List String, keys : List String }
+      -- enum の列(widget 無しの type {"list":{"enum":[…]}} — カードの属性など)。
+      -- 1 行 1 セレクトで並べる
+    | ListEnumControl { choices : List String, items : List String }
+      -- レコードの列(type {"list":{"record":{…}}} — カードの効果など)。
+      -- 1 要素 = 1 枠で、中の欄は普通のフォーム行(rows)として出す。
+      -- rows は組む時に作っておく — 描画側は Context を持たないため
+    | ListRecordControl
+        { fields : List ( String, Field )
+        , items : List { value : D.Value, itemRows : List Row }
+        }
       -- 対応の形でない値({hsv} の色等)は壊さず見せるだけ(v1 は変換を持たない)
     | ReadOnlyControl String
       -- 未対応 type(list / record / custom)や対応外の値の形の生 JSON 1 行
@@ -346,7 +356,34 @@ control ctx entry name field =
                         KeyListControl { choices = choices, keys = [] }
 
             else
-                rawJson (currentOr D.value)
+                -- 素の enum の列は 1 行 1 セレクト。文字列の列でない形は壊さず
+                -- 生 JSON へ倒す(丸ごと書き戻しが刺さらない)
+                case currentOr D.value of
+                    Just raw ->
+                        case D.decodeValue (D.list D.string) raw of
+                            Ok items ->
+                                ListEnumControl { choices = choices, items = items }
+
+                            Err _ ->
+                                rawJson (Just raw)
+
+                    Nothing ->
+                        ListEnumControl { choices = choices, items = [] }
+
+        TList (TRecord itemFields) ->
+            -- 各要素を 1 個の record と見なしてフォーム行を組む。要素の形が
+            -- 配列でない時は壊さず生 JSON へ倒す(丸ごと書き戻しが刺さらない)
+            case currentOr D.value of
+                Just raw ->
+                    case D.decodeValue (D.list D.value) raw of
+                        Ok items ->
+                            listRecord ctx itemFields items
+
+                        Err _ ->
+                            rawJson (Just raw)
+
+                Nothing ->
+                    listRecord ctx itemFields []
 
         TCustom "weights" ->
             case ( Weights.configFrom field.widget, currentOr D.value ) of
@@ -367,6 +404,68 @@ control ctx entry name field =
 
         _ ->
             rawJson (currentOr D.value)
+
+
+{-| レコードの列のコントロール。要素の中の欄は record セクションと同じ組み方 —
+enabledWhen(兄弟の値で欄を出し分ける)もそのまま効く。
+-}
+listRecord : Context -> List ( String, Field ) -> List D.Value -> Control
+listRecord ctx itemFields items =
+    let
+        synthetic =
+            { kind = RecordKind
+            , label = Nothing
+            , help = Nothing
+            , group = Nothing
+            , widget = Nothing
+            , oneOf = False
+            , fields = itemFields
+            }
+    in
+    ListRecordControl
+        { fields = itemFields
+        , items =
+            items
+                |> List.map (\item -> { value = item, itemRows = rows ctx synthetic item })
+        }
+
+
+{-| 「＋ 追加」で入れる 1 要素。default を書いた欄だけで組む — 書いていない欄は
+文書に入れない(既定値で続ける約束はコード側にある)。
+-}
+newItem : List ( String, Field ) -> D.Value
+newItem fields =
+    fields
+        |> List.filterMap (\( name, field ) -> field.default |> Maybe.map (Tuple.pair name))
+        |> E.object
+
+
+{-| 要素の入れ替え(dir = -1 で上へ・+1 で下へ)。範囲の外は何もしない。 -}
+moveItem : Int -> Int -> List a -> List a
+moveItem index dir items =
+    let
+        other =
+            index + dir
+
+        at i =
+            items |> List.drop i |> List.head
+    in
+    if index < 0 || other < 0 || index >= List.length items || other >= List.length items then
+        items
+
+    else
+        items
+            |> List.indexedMap
+                (\i v ->
+                    if i == index then
+                        at other |> Maybe.withDefault v
+
+                    else if i == other then
+                        at index |> Maybe.withDefault v
+
+                    else
+                        v
+                )
 
 
 {-| 文字列の列(ListTextControl)への 1 操作。書き戻しはフィールドへの set 1 本で
