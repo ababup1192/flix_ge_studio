@@ -172,7 +172,17 @@ function handleLocal(kind: string, payload: any): unknown | undefined {
     if (!(box instanceof HTMLTextAreaElement)) return {};
     const range = rangeAt(p.text, p.path);
     if (range === null) return {};
+    // 既に同じ所が選ばれているなら何もしない — 下のフォーカス返しが再入の
+    // focus イベントを生むので、これが無いと focus ↔ 選択の往復が止まらない
+    if (box.selectionStart === range.from && box.selectionEnd === range.to) return {};
+    // WebKit(WKWebView) は setSelectionRange がフォーカスを奪う(Chromium は
+    // 奪わない)。奪われたままだと打っている欄にキーが届かなくなるので、
+    // 直前のフォーカスへ返す
+    const prev = document.activeElement;
     box.setSelectionRange(range.from, range.to);
+    if (prev instanceof HTMLElement && prev !== box && document.activeElement !== prev) {
+      prev.focus({ preventScroll: true });
+    }
     // 選んだ所が見えるように寄せる(行の高さは実測せず、前の改行数から割り出す)
     const line = p.text.slice(0, range.from).split("\n").length - 1;
     const lineHeight = box.scrollHeight / Math.max(1, p.text.split("\n").length);
