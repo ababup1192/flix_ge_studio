@@ -8576,7 +8576,7 @@ view model =
         NoServer ->
             div [ HA.class "center-screen flex h-screen flex-col items-center justify-center gap-3 text-ink-soft" ]
                 [ text "Studio の中の処理に繋がりません。アプリを開き直してください。"
-                , button [ HA.class "btn", HE.onClick RetryClicked ] [ text "再試行" ]
+                , button [ HA.class "d-btn d-btn-xs", HE.onClick RetryClicked ] [ text "再試行" ]
                 ]
 
         Picker ->
@@ -8708,7 +8708,7 @@ viewPlayButton : Model -> Html Msg
 viewPlayButton model =
     if projectGameRunning model then
         button
-            [ HA.class "btn btn-mini inline-flex shrink-0 items-center gap-1"
+            [ HA.class "d-btn d-btn-xs d-btn-mini inline-flex shrink-0 items-center gap-1"
             , HA.title "走っているゲームを止める"
             , HE.onClick MiniStopClicked
             ]
@@ -8717,11 +8717,11 @@ viewPlayButton model =
     else
         case model.atelier.launch of
             Atelier.LaunchStarting _ ->
-                button [ HA.class "btn btn-mini shrink-0", HA.disabled True ] [ text "起動しています…" ]
+                button [ HA.class "d-btn d-btn-xs d-btn-mini shrink-0", HA.disabled True ] [ text "起動しています…" ]
 
             _ ->
                 button
-                    [ HA.class "btn btn-mini inline-flex shrink-0 items-center gap-1"
+                    [ HA.class "d-btn d-btn-xs d-btn-mini inline-flex shrink-0 items-center gap-1"
                     , HA.title "ゲームのウィンドウを開いて、遊びながら調整する"
                     , HE.onClick MiniStartClicked
                     ]
@@ -8788,7 +8788,7 @@ viewFailureBadge model =
     case model.lastFailure of
         Just _ ->
             button
-                [ HA.class "btn btn-ghost btn-mini shrink-0 text-danger"
+                [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-danger"
                 , HA.title "最後にしくじった仕事のログを見る"
                 , HE.onClick FailureLogOpened
                 ]
@@ -8819,7 +8819,7 @@ viewFailureDialog model =
                     , onToggle = FailureLogClosed
                     }
                 , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-                    [ button [ HA.class "btn", HE.onClick FailureLogClosed ] [ text "閉じる" ] ]
+                    [ button [ HA.class "d-btn d-btn-xs", HE.onClick FailureLogClosed ] [ text "閉じる" ] ]
                 ]
 
         _ ->
@@ -8839,7 +8839,7 @@ viewReferenceBadge model =
             else
                 button
                     [ HA.classList
-                        [ ( "reference-badge btn btn-ghost btn-mini shrink-0", True )
+                        [ ( "reference-badge d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0", True )
                         , ( "text-amber-300", status.broken > 0 )
                         , ( "text-ok", status.broken == 0 )
                         ]
@@ -8864,7 +8864,7 @@ viewReferenceBadge model =
 viewSearchButton : Html Msg
 viewSearchButton =
     button
-        [ HA.class "search-open btn btn-ghost btn-mini inline-flex shrink-0 items-center gap-1"
+        [ HA.class "search-open d-btn d-btn-xs d-btn-ghost d-btn-mini inline-flex shrink-0 items-center gap-1"
         , HA.title "検索 ⌘⇧F"
         , HE.onClick SearchToggled
         ]
@@ -8878,7 +8878,7 @@ viewSketchCompareButton : Model -> Html Msg
 viewSketchCompareButton model =
     if SketchCompare.hasSketches model.sketchCompare then
         button
-            [ HA.class "sketch-compare-open btn btn-ghost btn-mini shrink-0"
+            [ HA.class "sketch-compare-open d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
             , HA.title "生成された絵とラフを見比べる"
             , HE.onClick SketchCompareOpened
             ]
@@ -9108,7 +9108,7 @@ viewHome model =
         , Html.map TicketsMsg (Tickets.view { serverBase = model.serverBase } model.tickets)
         , div [ HA.class "mt-auto flex flex-wrap items-center justify-center gap-5 pt-10" ]
             [ button
-                [ HA.class "all-scenes-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                [ HA.class "all-scenes-link d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                 , HA.title "描き出した場面の絵を一覧で見ます(上部ナビのギャラリーと同じ)"
                 , HE.onClick (TabClicked GalleryTab)
                 ]
@@ -9116,7 +9116,7 @@ viewHome model =
 
             -- ターミナル無しでログを見る口(起動後のログは実況行から消えるため)
             , button
-                [ HA.class "game-log-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                [ HA.class "game-log-link d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                 , HA.title "ゲームの起動コマンドと実行中の出力を見ます(ターミナル不要)"
                 , HE.onClick GameLogViewOpened
                 ]
@@ -9124,13 +9124,13 @@ viewHome model =
 
             -- こまったときの掃除。静かな一言に留める(健康なときは目に入らなくてよい)
             , button
-                [ HA.class "clean-locks-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                [ HA.class "clean-locks-link d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                 , HA.title "ビルドが固まる・始まらないときに。中断が残した lock ファイルを消します"
                 , HE.onClick CleanLocksClicked
                 ]
                 [ text "ビルドの詰まりを掃除" ]
             , button
-                [ HA.class "clear-font-cache-link cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                [ HA.class "clear-font-cache-link d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                 , HA.title "字が乱れるときに。フォントのキャッシュを捨てます(次の起動は作り直しで少し遅くなります)"
                 , HE.onClick ClearFontCacheClicked
                 ]
@@ -9177,7 +9177,7 @@ viewDrawingLine model =
     if model.changesBaking && model.changesAvailable then
         div [ HA.class "drawing-line mx-auto mt-3 w-full max-w-lg px-4" ]
             [ div [ HA.class "flex items-center gap-2 text-[11px] text-ink-faint" ]
-                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text "全場面の絵を描き直しています…"
                 ]
             ]
@@ -9198,11 +9198,11 @@ viewChangesModal model =
         Just ChangesLoading ->
             changesDialog
                 [ div [ HA.class "flex items-center gap-2 text-xs text-ink-soft" ]
-                    [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                    [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                     , text "知らせを読み込んでいます…"
                     ]
                 ]
-                [ button [ HA.class "btn", HE.onClick ChangesModalClosed ] [ text "閉じる" ] ]
+                [ button [ HA.class "d-btn d-btn-xs", HE.onClick ChangesModalClosed ] [ text "閉じる" ] ]
 
         Just (ChangesReady info) ->
             case info.remaining of
@@ -9216,7 +9216,7 @@ viewChangesModal model =
                     in
                     changesDialog
                         [ div [ HA.class "mb-3 flex items-center gap-2" ]
-                            [ span [ HA.class "badge bg-accent/20 text-accent" ]
+                            [ span [ HA.class "d-badge d-badge-xs d-badge-soft d-badge-primary" ]
                                 [ text (String.fromInt position ++ " / " ++ String.fromInt info.total) ]
                             , span [ HA.class "min-w-0 flex-1 truncate font-mono text-[11px] text-ink-soft", HA.title current.name ]
                                 [ text current.name ]
@@ -9233,10 +9233,10 @@ viewChangesModal model =
                             ]
                         ]
                         [ if List.isEmpty rest then
-                            button [ HA.class "btn btn-primary", HE.onClick ChangesModalClosed ] [ text "閉じる" ]
+                            button [ HA.class "d-btn d-btn-primary d-btn-xs", HE.onClick ChangesModalClosed ] [ text "閉じる" ]
 
                           else
-                            button [ HA.class "btn btn-primary", HE.onClick ChangesNextClicked ] [ text "次へ" ]
+                            button [ HA.class "d-btn d-btn-primary d-btn-xs", HE.onClick ChangesNextClicked ] [ text "次へ" ]
                         ]
 
 
@@ -9293,8 +9293,8 @@ viewGameLogModal model =
                                 )
                         )
                 , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-                    [ button [ HA.class "btn", HE.onClick GameLogViewRefreshClicked ] [ text "更新" ]
-                    , button [ HA.class "btn", HE.onClick GameLogViewClosed ] [ text "閉じる" ]
+                    [ button [ HA.class "d-btn d-btn-xs", HE.onClick GameLogViewRefreshClicked ] [ text "更新" ]
+                    , button [ HA.class "d-btn d-btn-xs", HE.onClick GameLogViewClosed ] [ text "閉じる" ]
                     ]
                 ]
 
@@ -9341,14 +9341,14 @@ viewPicker canReturn newGame picker =
 
         card entry =
             button
-                [ HA.class "picker-card mb-1.5 block w-full cursor-pointer rounded border border-edge bg-panel px-3 py-2 text-left hover:border-accent/60 hover:bg-raised"
+                [ HA.class "picker-card d-card mb-1.5 block w-full cursor-pointer rounded-[var(--radius-field)] border border-edge bg-panel px-3 py-2 text-left hover:border-accent/60 hover:bg-raised"
                 , HE.onClick (ProjectClicked entry.dir)
                 ]
                 [ div [ HA.class "flex items-center gap-1.5" ]
                     [ span [ HA.class "text-xs text-ink" ] [ text (entry.title ++ busyLabel entry.dir) ]
                     , if isRunning picker.runningCwds entry.dir then
                         span
-                            [ HA.class "running-badge shrink-0 rounded-sm bg-emerald-500/25 px-1.5 py-px text-[10px] font-medium text-emerald-300 ring-1 ring-emerald-400/50"
+                            [ HA.class "running-badge d-badge d-badge-xs d-badge-soft d-badge-success shrink-0"
                             , HA.title "このプロジェクトのゲームが今起動中です"
                             ]
                             [ text "● 起動中" ]
@@ -9373,7 +9373,7 @@ viewPicker canReturn newGame picker =
                     , if canReturn then
                         -- 編集中から開いた時だけ。押しても何も再読み込みしない
                         button
-                            [ HA.class "back-to-editing cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                            [ HA.class "back-to-editing d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                             , HE.onClick BackToEditingClicked
                             ]
                             [ text "← いまのゲームに戻る" ]
@@ -9387,7 +9387,7 @@ viewPicker canReturn newGame picker =
               , viewWorkspaceRow picker.workspace
               , div [ HA.class "picker-open-row mb-2 flex gap-2" ]
                     [ button
-                        [ HA.class "btn inline-flex items-center gap-1.5"
+                        [ HA.class "d-btn d-btn-xs gap-1.5"
                         , HE.onClick PickFolderClicked
                         ]
                         [ folderIconSvg, text "フォルダを選んで開く…" ]
@@ -9396,14 +9396,14 @@ viewPicker canReturn newGame picker =
               -- OS のダイアログを開けない環境 (ブラウザ開発) 用の逃げ道
               , div [ HA.class "picker-open-row mb-5 flex gap-2" ]
                     [ input
-                        [ HA.class "field flex-1"
+                        [ HA.class "d-input d-input-sm flex-1"
                         , HA.type_ "text"
                         , HA.placeholder "またはパスを直接入力"
                         , HA.value picker.input
                         , HE.onInput PickerInput
                         ]
                         []
-                    , button [ HA.class "btn", HE.onClick OpenPathClicked ] [ text "開く" ]
+                    , button [ HA.class "d-btn d-btn-xs", HE.onClick OpenPathClicked ] [ text "開く" ]
                     ]
 
               -- まっさらから(ひな形を写して新しいゲームを生む)
@@ -9411,10 +9411,9 @@ viewPicker canReturn newGame picker =
               ]
             , case picker.error of
                 Just message ->
-                    [ Html.node "sl-alert"
-                        [ HA.class "picker-error notice my-2"
-                        , HA.attribute "variant" "danger"
-                        , HA.attribute "open" ""
+                    [ div
+                        [ HA.class "picker-error d-alert d-alert-error my-2 px-2.5 py-1.5 text-xs"
+                        , HA.attribute "role" "alert"
                         ]
                         [ text message ]
                     ]
@@ -9438,11 +9437,11 @@ viewWorkspaceRow : Maybe String -> Html Msg
 viewWorkspaceRow workspace =
     case workspace of
         Nothing ->
-            div [ HA.class "workspace-setup mb-4 rounded border border-accent/40 bg-panel px-3 py-2.5" ]
+            div [ HA.class "workspace-setup d-card mb-4 rounded border border-accent/40 bg-panel px-3 py-2.5" ]
                 [ div [ HA.class "text-xs text-ink" ] [ text "はじめに、ゲームを集めるワークスペース(作業フォルダ)を決めましょう" ]
                 , div [ HA.class "mt-0.5 text-[11px] text-ink-faint" ] [ text "新しいゲームはここに作られ、Studio はここからゲームを探します" ]
                 , button
-                    [ HA.class "btn mt-2 inline-flex items-center gap-1.5"
+                    [ HA.class "d-btn d-btn-xs mt-2 gap-1.5 self-start"
                     , HE.onClick WorkspacePickClicked
                     ]
                     [ folderIconSvg, text "ワークスペースを選ぶ / 作る…" ]
@@ -9454,7 +9453,7 @@ viewWorkspaceRow workspace =
                 , span [] [ text "ワークスペース:" ]
                 , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] [ text dir ]
                 , button
-                    [ HA.class "cursor-pointer text-[11px] text-ink-faint underline hover:text-ink-soft"
+                    [ HA.class "d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint underline hover:text-ink"
                     , HE.onClick WorkspacePickClicked
                     ]
                     [ text "変更…" ]
@@ -10273,7 +10272,7 @@ viewBakePanel model =
         [ case performUrlOf model of
             Just _ ->
                 button
-                    [ HA.class "perform-run btn btn-mini"
+                    [ HA.class "perform-run d-btn d-btn-xs d-btn-mini"
                     , HA.disabled (baking || waking || model.performReq /= Nothing)
                     , HA.title "実機(ゲームのウィンドウ)で、選んでいるカットから演じさせます"
                     , HE.onClick PerformClicked
@@ -10283,7 +10282,7 @@ viewBakePanel model =
             Nothing ->
                 text ""
         , button
-            [ HA.class "bake-run btn btn-ghost btn-mini"
+            [ HA.class "bake-run d-btn d-btn-xs d-btn-ghost d-btn-mini"
             , HA.disabled (baking || waking || unchanged)
             , HA.title
                 (if bakingElsewhere then
@@ -10307,7 +10306,7 @@ viewBakePanel model =
             ]
         , if waking || baking then
             button
-                [ HA.class "bake-cancel btn btn-ghost btn-mini"
+                [ HA.class "bake-cancel d-btn d-btn-xs d-btn-ghost d-btn-mini"
                 , HA.title
                     (if bakingElsewhere then
                         "別のスクリプトの描き出し(裏で進んでいる分)をやめます"
@@ -10323,7 +10322,7 @@ viewBakePanel model =
             text ""
         , if waking then
             span [ HA.class "bake-waking flex items-center gap-1.5 text-[11px] text-ink-soft" ]
-                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text
                     ((case model.pendingAction of
                         PerformAfterWake _ ->
@@ -10339,13 +10338,13 @@ viewBakePanel model =
 
           else if bakingHere then
             span [ HA.class "flex items-center gap-1.5 text-[11px] text-ink-soft" ]
-                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text ("描き出しています… " ++ String.fromInt model.bakeSeconds ++ "s")
                 ]
 
           else if bakingElsewhere then
             span [ HA.class "bake-elsewhere flex items-center gap-1.5 text-[11px] text-ink-soft" ]
-                [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                 , text "別のスクリプトを描き出しています…"
                 ]
 
@@ -10458,7 +10457,7 @@ viewShotPreview model shot =
         , span [ HA.class "absolute top-1 left-1 rounded-sm bg-black/60 px-1.5 py-px text-[10px] text-ink" ]
             [ text ("カット " ++ String.fromInt shot.cut ++ " の瞬間") ]
         , button
-            [ HA.class "frame-zoom btn btn-mini absolute top-1 right-1"
+            [ HA.class "frame-zoom d-btn d-btn-xs d-btn-mini absolute top-1 right-1"
             , HA.title "大きく見る(Esc で閉じる)"
             , HE.onClick (BakeZoomShot (mediaUrl model shot.png))
             ]
@@ -10534,7 +10533,7 @@ viewFilmPreview model result gif =
                 text ""
             ]
         , button
-            [ HA.class "bake-zoom btn btn-mini absolute top-1 right-1"
+            [ HA.class "bake-zoom d-btn d-btn-xs d-btn-mini absolute top-1 right-1"
             , HA.title "大きく見る(← → でフレーム送り・Space で再生 / 止める・Esc で閉じる)"
             , HE.onClick BakeZoomOpened
             ]
@@ -10557,7 +10556,7 @@ viewFilmControls : Model -> Int -> Int -> Html Msg
 viewFilmControls model at last =
     div [ HA.class "filmstrip mb-2 flex items-center gap-1.5" ]
         [ button
-            [ HA.class "zoom-play btn btn-ghost btn-mini shrink-0", HE.onClick BakePlayToggled ]
+            [ HA.class "zoom-play d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0", HE.onClick BakePlayToggled ]
             [ text
                 (if model.bakePlaying then
                     "⏸ 止める"
@@ -10566,25 +10565,27 @@ viewFilmControls model at last =
                     "▶ 動かす"
                 )
             ]
-        , button
-            [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
-            , HE.onClick (BakeFrameChanged (String.fromInt (max 0 (at - 1))))
+        , div [ HA.class "film-seg d-join min-w-0 flex-1 items-center" ]
+            [ button
+                [ HA.class "film-step d-btn d-btn-xs d-join-item shrink-0"
+                , HE.onClick (BakeFrameChanged (String.fromInt (max 0 (at - 1))))
+                ]
+                [ text "◀" ]
+            , input
+                [ HA.class "film-slider d-range d-range-xs mx-2 min-w-0 flex-1"
+                , HA.type_ "range"
+                , HA.min "0"
+                , HA.max (String.fromInt last)
+                , HA.value (String.fromInt at)
+                , HE.onInput BakeFrameChanged
+                ]
+                []
+            , button
+                [ HA.class "film-step d-btn d-btn-xs d-join-item shrink-0"
+                , HE.onClick (BakeFrameChanged (String.fromInt (min last (at + 1))))
+                ]
+                [ text "▶" ]
             ]
-            [ text "◀" ]
-        , input
-            [ HA.class "film-slider min-w-0 flex-1"
-            , HA.type_ "range"
-            , HA.min "0"
-            , HA.max (String.fromInt last)
-            , HA.value (String.fromInt at)
-            , HE.onInput BakeFrameChanged
-            ]
-            []
-        , button
-            [ HA.class "film-step btn btn-ghost btn-mini shrink-0"
-            , HE.onClick (BakeFrameChanged (String.fromInt (min last (at + 1))))
-            ]
-            [ text "▶" ]
         , span [ HA.class "shrink-0 font-mono text-[10px] text-ink-faint" ]
             [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
         ]
@@ -10718,7 +10719,7 @@ viewBakeZoom model =
                     , HE.stopPropagationOn "click" (D.succeed ( BakeTick, True ))
                     ]
                     [ button
-                        [ HA.class "zoom-play btn btn-mini shrink-0", HE.onClick BakePlayToggled ]
+                        [ HA.class "zoom-play d-btn d-btn-xs d-btn-mini shrink-0", HE.onClick BakePlayToggled ]
                         [ text
                             (if model.bakePlaying then
                                 "⏸ 止める"
@@ -10728,12 +10729,12 @@ viewBakeZoom model =
                             )
                         ]
                     , button
-                        [ HA.class "btn btn-ghost btn-mini shrink-0"
+                        [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                         , HE.onClick (BakeFrameChanged (String.fromInt (max 0 (at - 1))))
                         ]
                         [ text "◀" ]
                     , input
-                        [ HA.class "min-w-0 flex-1"
+                        [ HA.class "d-range d-range-xs min-w-0 flex-1"
                         , HA.type_ "range"
                         , HA.min "0"
                         , HA.max (String.fromInt last)
@@ -10742,13 +10743,13 @@ viewBakeZoom model =
                         ]
                         []
                     , button
-                        [ HA.class "btn btn-ghost btn-mini shrink-0"
+                        [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                         , HE.onClick (BakeFrameChanged (String.fromInt (min last (at + 1))))
                         ]
                         [ text "▶" ]
                     , span [ HA.class "shrink-0 font-mono text-[11px] text-ink" ]
                         [ text (String.fromInt at ++ " / " ++ String.fromInt last) ]
-                    , button [ HA.class "btn btn-mini shrink-0", HE.onClick BakeZoomClosed ] [ text "閉じる" ]
+                    , button [ HA.class "d-btn d-btn-xs d-btn-mini shrink-0", HE.onClick BakeZoomClosed ] [ text "閉じる" ]
                     ]
                 ]
 
@@ -10891,7 +10892,7 @@ viewSoundPlayer model name =
                             ++ "(▶ はこの範囲だけ鳴らします)"
                         )
                     , button
-                        [ HA.class "wave-clear btn btn-ghost btn-mini", HE.onClick WaveCleared ]
+                        [ HA.class "wave-clear d-btn d-btn-xs d-btn-ghost d-btn-mini", HE.onClick WaveCleared ]
                         [ text "選択を解く" ]
                     ]
 
@@ -10910,19 +10911,19 @@ viewSoundControls model name =
     div [ HA.class "flex flex-wrap items-center gap-1.5" ]
         [ if model.playingSound == Just name then
             button
-                [ HA.class "sound-stop btn btn-mini", HE.onClick SoundStopClicked ]
+                [ HA.class "sound-stop d-btn d-btn-xs d-btn-mini", HE.onClick SoundStopClicked ]
                 [ text "■ 止める" ]
 
           else
             button
-                [ HA.class "sound-play btn btn-mini"
+                [ HA.class "sound-play d-btn d-btn-xs d-btn-mini"
                 , HA.title "描き出してある WAV をそのまま鳴らす(全体の音量つまみは掛かりません)"
                 , HE.onClick (SoundPlayClicked name)
                 ]
                 [ text ("▶ " ++ name) ]
         , button
             [ HA.classList
-                [ ( "sound-loop btn btn-ghost btn-mini", True )
+                [ ( "sound-loop d-btn d-btn-xs d-btn-ghost d-btn-mini", True )
                 , ( "text-accent", model.soundLooping )
                 ]
             , HA.title "選んだ範囲(無ければ全体)を繰り返す"
@@ -11032,18 +11033,18 @@ viewTopbar model =
     viewTopbarRow model
         [ case model.notice of
             Just message ->
-                -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔
-                div [ HA.class "pointer-events-none fixed right-3 bottom-10 z-50" ]
-                    [ Html.node "sl-alert"
-                        [ HA.class "notice"
-                        , HA.attribute "variant"
+                -- 右下(問題バーの上)に出す — 右上は右ペインのフォームに被って邪魔。
+                -- right/bottom は d-toast の既定 1rem を従来の位置(問題バーの上)へ寄せる
+                div [ HA.class "d-toast d-toast-end d-toast-bottom pointer-events-none right-3 bottom-10 z-50" ]
+                    [ div
+                        [ HA.class
                             (if String.startsWith "保存しました" message || String.startsWith "改名しました" message then
-                                "success"
+                                "notice d-alert d-alert-success px-2.5 py-1.5 text-xs"
 
                              else
-                                "danger"
+                                "notice d-alert d-alert-error px-2.5 py-1.5 text-xs"
                             )
-                        , HA.attribute "open" ""
+                        , HA.attribute "role" "alert"
                         ]
                         [ text message ]
                     ]
@@ -11067,7 +11068,7 @@ viewEditToolbar model =
             viewModeSeg model
         , case currentGroup model of
             Just group ->
-                span [ HA.class "group-badge badge shrink-0 bg-accent/15 text-accent" ]
+                span [ HA.class "group-badge d-badge d-badge-xs d-badge-soft d-badge-primary shrink-0" ]
                     [ text (Maybe.withDefault group.id group.title) ]
 
             Nothing ->
@@ -11118,7 +11119,7 @@ viewEditToolbar model =
             text ""
         , if model.dirty then
             span [ HA.class "dirty flex shrink-0 items-center gap-1.5 text-[11px] text-ink-soft" ]
-                [ span [ HA.class "inline-block h-1.5 w-1.5 rounded-full bg-accent" ] []
+                [ span [ HA.class "d-status d-status-sm bg-accent" ] []
                 , text "未保存"
                 ]
 
@@ -11128,7 +11129,7 @@ viewEditToolbar model =
         , span [ HA.class "spacer flex-1" ] []
         , button
             [ HA.classList
-                [ ( "live-toggle btn", True )
+                [ ( "live-toggle d-btn d-btn-xs", True )
                 , ( "bg-accent text-white hover:bg-accent", model.liveSave )
                 ]
             , HA.title "ON の間、編集を自動保存して走るゲームに即反映する"
@@ -11143,7 +11144,7 @@ viewEditToolbar model =
                 )
             ]
         , button
-            [ HA.class "btn btn-primary"
+            [ HA.class "d-btn d-btn-xs d-btn-primary"
             , HE.onClick SaveClicked
             , HA.disabled (not model.dirty || model.current == Nothing || model.savingText /= Nothing)
             ]
@@ -11173,7 +11174,7 @@ viewUndoCount model =
 
     else
         button
-            [ HA.class "undo-count btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+            [ HA.class "undo-count d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
             , HA.title "元に戻す(⌘Z / Ctrl+Z)"
             , HE.onClick UndoPressed
             ]
@@ -11186,7 +11187,7 @@ viewJsonToggle : Model -> Html Msg
 viewJsonToggle model =
     button
         [ HA.classList
-            [ ( "json-toggle btn shrink-0", True )
+            [ ( "json-toggle d-btn d-btn-xs shrink-0", True )
             , ( "bg-accent text-white hover:bg-accent", model.jsonPaneOpen )
             ]
         , HA.title "右の JSON を出す / 畳む(⌘J / Ctrl+J)"
@@ -11207,14 +11208,14 @@ viewModeSeg model =
         modeButton mode labelText =
             button
                 [ HA.classList
-                    [ ( "mode-btn btn rounded-none border-0", True )
-                    , ( "bg-accent text-white hover:bg-accent", current == mode )
+                    [ ( "mode-btn d-btn d-btn-xs d-join-item", True )
+                    , ( "d-btn-primary", current == mode )
                     ]
                 , HE.onClick (ModeChosen mode)
                 ]
                 [ text labelText ]
     in
-    span [ HA.class "mode-seg inline-flex shrink-0 divide-x divide-edge overflow-hidden rounded-sm border border-edge" ]
+    span [ HA.class "mode-seg d-join shrink-0" ]
         [ modeButton VisualMode "ビジュアル"
         , modeButton SplitMode "分割"
         , modeButton CodeMode "コード"
@@ -11473,7 +11474,7 @@ viewFilePane model =
             ++ -- 手でファイルを作る道。すべてのファイル表示の中だけに置く
                -- (宣言がまだ無いプロジェクトでは素の一覧に出す — 最初の 1 個への道を塞がない)
                (if showAll || List.isEmpty model.groups then
-                    [ button [ HA.class "new-resource btn mx-3 mt-3", HE.onClick WizardOpened ] [ text "+ 新しいファイル" ] ]
+                    [ button [ HA.class "new-resource d-btn d-btn-xs mx-3 mt-3", HE.onClick WizardOpened ] [ text "+ 新しいファイル" ] ]
 
                 else
                     []
@@ -11538,7 +11539,7 @@ viewGroupHeadingFor group =
             [ text (Maybe.withDefault group.id group.title) ]
         , if String.contains "*" group.pattern then
             button
-                [ HA.class "group-new btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                [ HA.class "group-new d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
                 , HA.title ("「" ++ Maybe.withDefault group.id group.title ++ "」に新しいファイルを作る")
                 , HE.onClick (FileNewClicked group)
                 ]
@@ -11627,7 +11628,7 @@ ifSame renaming path =
 viewFileRenameBox : { path : String, text : String } -> Html Msg
 viewFileRenameBox renaming =
     input
-        [ HA.class "file-rename field my-0.5 min-w-0 flex-1"
+        [ HA.class "file-rename d-input d-input-sm my-0.5 min-w-0 flex-1"
         , HA.id fileRenameBoxId
         , HA.type_ "text"
         , HA.value renaming.text
@@ -11761,7 +11762,7 @@ viewDashboard model dash =
               else
                 text ""
             , span [ HA.class "spacer flex-1" ] []
-            , button [ HA.class "dash-close btn", HE.onClick DashboardClosed ] [ text "閉じる" ]
+            , button [ HA.class "dash-close d-btn d-btn-xs", HE.onClick DashboardClosed ] [ text "閉じる" ]
             ]
             :: List.map
                 (\note -> div [ HA.class "dash-note border-b border-edge px-3 py-1 text-[11px] text-danger" ] [ text note ])
@@ -11874,10 +11875,10 @@ viewDashDetail model detail =
                             [ text (Maybe.withDefault d.entry.id d.title) ]
                         , div [ HA.class "mt-1 flex items-center gap-2" ]
                             [ span [ HA.class "entry-id font-mono text-[11px] text-ink-faint" ] [ text d.entry.id ]
-                            , span [ HA.class "badge" ] [ text d.entry.resource ]
+                            , span [ HA.class "d-badge d-badge-xs" ] [ text d.entry.resource ]
                             ]
                         , button
-                            [ HA.class "dash-open btn btn-mini mt-2"
+                            [ HA.class "dash-open d-btn d-btn-xs d-btn-mini mt-2"
                             , HE.onClick
                                 (DashJumped
                                     { path = d.entry.path
@@ -11959,13 +11960,12 @@ viewMeter shown ratio =
 
 viewBar : Float -> Html Msg
 viewBar ratio =
-    div [ HA.class "meter min-w-0 flex-1" ]
-        [ div
-            [ HA.class "meter-fill"
-            , HA.style "width" (String.fromFloat (clamp 0 100 (ratio * 100)) ++ "%")
-            ]
-            []
+    Html.progress
+        [ HA.class "meter d-progress d-progress-accent h-2 min-w-0 flex-1"
+        , HA.attribute "value" (String.fromFloat (clamp 0 100 (ratio * 100)))
+        , HA.attribute "max" "100"
         ]
+        []
 
 
 weightText : Float -> String
@@ -12001,7 +12001,7 @@ viewPeek model ref =
                             (div [ HA.class "min-w-0 flex-1" ]
                                 (div [ HA.class "peek-head mb-1 flex items-center gap-2" ]
                                     [ span [ HA.class "font-mono text-xs font-semibold text-accent" ] [ text ref.id ]
-                                    , span [ HA.class "badge" ] [ text ref.target ]
+                                    , span [ HA.class "d-badge d-badge-xs" ] [ text ref.target ]
                                     ]
                                     :: (peek.lines
                                             |> List.map
@@ -12063,7 +12063,7 @@ viewPortrait model size path =
             box "portrait-failed" [ HA.title (path ++ ": " ++ reason) ] [ text "×" ]
 
         Just PortraitLoading ->
-            box "portrait-loading" [] []
+            box "portrait-loading d-skeleton rounded" [] []
 
         Nothing ->
             box "portrait-blank" [] []
@@ -12123,8 +12123,8 @@ viewCrossRenameDialog plan =
                    ]
             )
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-            [ button [ HA.class "btn", HE.onClick CrossRenameCancelled ] [ text "やめる" ]
-            , button [ HA.class "btn btn-primary", HE.onClick CrossRenameConfirmed ] [ text "改名して保存" ]
+            [ button [ HA.class "d-btn d-btn-xs", HE.onClick CrossRenameCancelled ] [ text "やめる" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-primary", HE.onClick CrossRenameConfirmed ] [ text "改名して保存" ]
             ]
         ]
 
@@ -12535,7 +12535,7 @@ viewSideHead : String -> String -> Html Msg
 viewSideHead name badgeText =
     div [ HA.class "side-head mb-2.5 flex items-center gap-2" ]
         [ span [ HA.class "entry-id font-mono text-xs font-semibold text-ink" ] [ text name ]
-        , span [ HA.class "badge" ] [ text badgeText ]
+        , span [ HA.class "d-badge d-badge-xs" ] [ text badgeText ]
         ]
 
 
@@ -12970,7 +12970,7 @@ viewRenameHeader model key name =
             div [ HA.class "rename-row mb-2.5" ]
                 [ input
                     [ HA.classList
-                        [ ( "rename-input field w-full font-mono", True )
+                        [ ( "rename-input d-input d-input-sm w-full font-mono", True )
                         , ( "invalid border-danger", r.error /= Nothing )
                         ]
                     , HA.type_ "text"
@@ -12992,7 +12992,7 @@ viewRenameHeader model key name =
             div [ HA.class "rename-row mb-2.5 flex items-center gap-2" ]
                 [ span [ HA.class "entry-id font-mono text-xs font-semibold text-ink" ] [ text name ]
                 , button
-                    [ HA.class "rename btn btn-mini"
+                    [ HA.class "rename d-btn d-btn-xs d-btn-mini"
                     , HE.onClick (RenameStarted { sectionKey = key, oldId = name })
                     ]
                     [ text "改名" ]
@@ -13059,7 +13059,7 @@ viewMapInspector model =
                             , case index of
                                 Just _ ->
                                     button
-                                        [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                                        [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-danger"
                                         , HA.title "この行を削除"
                                         , HE.onClick (MapMsg MapEditor.RemovePressed)
                                         ]
@@ -13162,7 +13162,7 @@ viewKindPicker basePath picked =
     div [ HA.class "form-row kind-picker mb-2" ]
         [ div [ HA.class "form-label mb-0.5 text-[11px] leading-tight text-ink-soft" ] [ text "種類" ]
         , Html.select
-            [ HA.class "kind-select field w-full"
+            [ HA.class "kind-select d-select d-select-sm w-full"
             , HE.onInput (CutKindChosen basePath picked.chosen)
             ]
             (picked.kinds
@@ -13383,7 +13383,7 @@ viewControl model path control =
                     { path = path, kind = TextDraft, original = docValue }
             in
             input
-                [ HA.class "field w-full"
+                [ HA.class "d-input d-input-sm w-full"
                 , HA.type_ "text"
                 , HA.value (draftTextFor model.activeDraft path docValue)
                 , HE.onFocus (DraftStarted seed)
@@ -13403,7 +13403,7 @@ viewControl model path control =
             in
             -- Enter は改行に使うので確定キーにしない(blur 確定・Esc 破棄だけ)
             textarea
-                [ HA.class "field multiline h-auto min-h-16 w-full resize-y py-1 leading-relaxed"
+                [ HA.class "d-textarea d-textarea-sm multiline h-auto min-h-16 w-full resize-y py-1 leading-relaxed"
                 , HA.spellcheck False
                 , HA.value (draftTextFor model.activeDraft path docValue)
                 , HE.onFocus (DraftStarted seed)
@@ -13425,7 +13425,7 @@ viewControl model path control =
             -- 内部スクロール)・行数ぶんの高さ(大きすぎる物は内部スクロール)。
             -- Enter は行追加に使うので確定キーにしない(blur 確定・Esc 破棄)
             textarea
-                [ HA.class "field grid-box h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-[1.35] whitespace-pre"
+                [ HA.class "d-textarea d-textarea-sm grid-box h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-[1.35] whitespace-pre"
                 , HA.attribute "wrap" "off"
                 , HA.rows (clamp 8 24 grid.lineCount)
                 , HA.spellcheck False
@@ -13454,7 +13454,7 @@ viewControl model path control =
                         Nothing ->
                             div [ HA.class "portrait-box portrait-blank", HA.style "width" "48px", HA.style "height" "48px" ] []
                     , input
-                        [ HA.class "field min-w-0 flex-1"
+                        [ HA.class "d-input d-input-sm min-w-0 flex-1"
                         , HA.type_ "text"
                         , HA.placeholder "ui.json のパス"
                         , HA.value (draftTextFor model.activeDraft path docValue)
@@ -13476,7 +13476,8 @@ viewControl model path control =
 
         SchemaForm.BoolControl value ->
             input
-                [ HA.type_ "checkbox"
+                [ HA.class "d-checkbox d-checkbox-xs d-checkbox-primary"
+                , HA.type_ "checkbox"
                 , HA.checked (value == Just True)
                 , HE.onCheck (\b -> FieldEdited { op = SetOp, path = path, value = E.bool b, isInt = False })
                 ]
@@ -13484,15 +13485,14 @@ viewControl model path control =
 
         SchemaForm.EnumControl e ->
             if e.segmented then
-                div [ HA.class "segmented inline-flex flex-wrap gap-0.5 rounded-md border border-edge bg-well p-0.5" ]
+                div [ HA.class "segmented d-join inline-flex flex-wrap" ]
                     (e.choices
                         |> List.map
                             (\choice ->
                                 button
                                     [ HA.classList
-                                        [ ( "cursor-pointer rounded px-2 py-0.5 text-[11px] leading-4", True )
-                                        , ( "on bg-raised text-ink", e.selected == Just choice )
-                                        , ( "text-ink-soft hover:text-ink", e.selected /= Just choice )
+                                        [ ( "d-btn d-btn-xs d-join-item", True )
+                                        , ( "on d-btn-active", e.selected == Just choice )
                                         ]
                                     , HE.onClick (FieldEdited { op = SetOp, path = path, value = E.string choice, isInt = False })
                                     ]
@@ -13565,7 +13565,7 @@ viewControl model path control =
             div []
                 (textarea
                     [ HA.classList
-                        [ ( "raw-json field h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap", True )
+                        [ ( "raw-json d-textarea h-auto w-full resize-y overflow-auto py-1 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap", True )
                         , ( "invalid border-danger", invalid )
                         ]
                     , HA.rows (clamp 3 16 lineCount)
@@ -13594,7 +13594,7 @@ viewTilePickButton model path shown =
     in
     if isTile && roomOf model /= Nothing then
         [ button
-            [ HA.class "tile-pick btn btn-ghost btn-mini mt-0.5"
+            [ HA.class "tile-pick d-btn d-btn-xs d-btn-ghost d-btn-mini mt-0.5"
             , HA.title "描き出した部屋の絵から、セルをクリックして選ぶ"
             , HE.onClick (TilePickerOpened path)
             ]
@@ -13631,7 +13631,7 @@ viewTilePicker model =
                         [ span [ HA.class "font-mono" ] [ text picker.room ]
                         , span [ HA.class "text-ink-faint" ] [ text "クリックしたセルを書き込みます" ]
                         , span [ HA.class "flex-1" ] []
-                        , button [ HA.class "btn btn-ghost btn-mini", HE.onClick TilePickerClosed ] [ text "✕" ]
+                        , button [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini", HE.onClick TilePickerClosed ] [ text "✕" ]
                         ]
                     , case columns of
                         Just cols ->
@@ -13733,7 +13733,7 @@ viewDraftBox activeDraft opts =
         [ HA.type_ "text"
         , HA.attribute "inputmode" "decimal"
         , HA.classList
-            [ ( "field " ++ opts.classes, True )
+            [ ( "d-input d-input-sm " ++ opts.classes, True )
             , ( "invalid border-danger", invalid )
             ]
         , HA.value shown
@@ -13856,7 +13856,7 @@ viewTexture activeDraft path t =
     in
     div [ HA.class "control-texture w-full" ]
         [ input
-            [ HA.class "texture-input field w-full font-mono"
+            [ HA.class "texture-input d-input d-input-sm w-full font-mono"
             , HA.type_ "text"
             , HA.list listId
             , HA.placeholder "テクスチャ名"
@@ -13994,7 +13994,7 @@ viewWeightRow model path w ( key, value ) =
             , withArrows = False
             }
         , button
-            [ HA.class "weight-remove btn btn-ghost btn-mini text-ink-faint hover:text-danger"
+            [ HA.class "weight-remove d-btn d-btn-xs d-btn-ghost d-btn-mini text-ink-faint hover:text-danger"
             , HA.title (key ++ " の行を削除(残りへ再配分)")
             , HE.onClick (EditsQueued removeEdits)
             ]
@@ -14011,7 +14011,7 @@ viewWeightsAdd model path =
             div [ HA.class "weights-add mt-1" ]
                 [ input
                     [ HA.classList
-                        [ ( "weights-add-input field w-full font-mono", True )
+                        [ ( "weights-add-input d-input d-input-sm w-full font-mono", True )
                         , ( "invalid border-danger", w.error /= Nothing )
                         ]
                     , HA.type_ "text"
@@ -14031,7 +14031,7 @@ viewWeightsAdd model path =
 
         Nothing ->
             button
-                [ HA.class "weights-add-open btn btn-ghost btn-mini mt-0.5"
+                [ HA.class "weights-add-open d-btn d-btn-xs d-btn-ghost d-btn-mini mt-0.5"
                 , HE.onClick (WeightsAddOpened path)
                 ]
                 [ text "＋ 行を追加" ]
@@ -14051,7 +14051,7 @@ viewListText model path items =
             items |> List.indexedMap (viewListTextRow model path items)
          )
             ++ [ button
-                    [ HA.class "listtext-add btn btn-ghost btn-mini mt-0.5"
+                    [ HA.class "listtext-add d-btn d-btn-xs d-btn-ghost d-btn-mini mt-0.5"
                     , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit SchemaForm.AddLine items)))
                     ]
                     [ text "＋ 行を追加" ]
@@ -14072,7 +14072,7 @@ viewListTextRow model path items index value =
         [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
             [ text (String.fromInt (index + 1)) ]
         , input
-            [ HA.class "field min-w-0 flex-1"
+            [ HA.class "d-input d-input-sm min-w-0 flex-1"
             , HA.type_ "text"
             , HA.value (draftTextFor model.activeDraft seed.path value)
             , HE.onFocus (DraftStarted seed)
@@ -14084,7 +14084,7 @@ viewListTextRow model path items index value =
         , listEditButton path items "↑" "1 つ上へ" (index > 0) (SchemaForm.MoveLine index -1)
         , listEditButton path items "↓" "1 つ下へ" (index < List.length items - 1) (SchemaForm.MoveLine index 1)
         , button
-            [ HA.class "listtext-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+            [ HA.class "listtext-remove d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-danger"
             , HA.title "この行を削除"
             , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit (SchemaForm.RemoveLine index) items)))
             ]
@@ -14118,7 +14118,7 @@ viewListRecord model path lr =
 
         itemButton label title_ enabled msg =
             button
-                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
                 , HA.title title_
                 , HA.disabled (not enabled)
                 , HE.onClick msg
@@ -14137,7 +14137,7 @@ viewListRecord model path lr =
                     , itemButton "↑" "1 つ上へ" (index > 0) (write (SchemaForm.moveItem index -1 values))
                     , itemButton "↓" "1 つ下へ" (index < List.length values - 1) (write (SchemaForm.moveItem index 1 values))
                     , button
-                        [ HA.class "listrecord-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                        [ HA.class "listrecord-remove d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-danger"
                         , HA.title "この要素を削除"
                         , HE.onClick (write (removeAt index))
                         ]
@@ -14157,7 +14157,7 @@ viewListRecord model path lr =
             lr.items |> List.indexedMap viewItem
          )
             ++ [ button
-                    [ HA.class "listrecord-add btn btn-ghost btn-mini mt-0.5"
+                    [ HA.class "listrecord-add d-btn d-btn-xs d-btn-ghost d-btn-mini mt-0.5"
                     , HE.onClick (write (values ++ [ SchemaForm.newItem lr.fields ]))
                     ]
                     [ text "＋ 要素を追加" ]
@@ -14183,7 +14183,7 @@ viewListEnum path le =
 
         moveButton label title_ enabled msg =
             button
-                [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+                [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
                 , HA.title title_
                 , HA.disabled (not enabled)
                 , HE.onClick msg
@@ -14199,7 +14199,7 @@ viewListEnum path le =
                 , moveButton "↑" "1 つ上へ" (index > 0) (write (SchemaForm.moveItem index -1 le.items))
                 , moveButton "↓" "1 つ下へ" (index < List.length le.items - 1) (write (SchemaForm.moveItem index 1 le.items))
                 , button
-                    [ HA.class "listenum-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                    [ HA.class "listenum-remove d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-danger"
                     , HA.title "この行を削除"
                     , HE.onClick (write (removeAt index))
                     ]
@@ -14214,7 +14214,7 @@ viewListEnum path le =
             le.items |> List.indexedMap viewItem
          )
             ++ [ button
-                    [ HA.class "listenum-add btn btn-ghost btn-mini mt-0.5"
+                    [ HA.class "listenum-add d-btn d-btn-xs d-btn-ghost d-btn-mini mt-0.5"
                     , HE.onClick (write (le.items ++ (le.choices |> List.take 1)))
                     ]
                     [ text "＋ 行を追加" ]
@@ -14228,7 +14228,7 @@ viewListEnum path le =
 listEditButton : List Seg -> List String -> String -> String -> Bool -> SchemaForm.ListEdit -> Html Msg
 listEditButton path items label title_ enabled edit =
     button
-        [ HA.class "btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+        [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
         , HA.title title_
         , HA.disabled (not enabled)
         , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit edit items)))
@@ -14278,7 +14278,7 @@ viewKeyList model path keylist =
                     -- 聞き取り中も「＋」は隠さず disabled で残す — 隠すと footer の
                     -- DOM が動いて、閉じる再描画が開きかけの select まで巻き添えにする
                     [ button
-                        [ HA.class "keylist-add btn btn-ghost btn-mini"
+                        [ HA.class "keylist-add d-btn d-btn-xs d-btn-ghost d-btn-mini"
                         , HA.disabled capturingNew
                         , HE.onClick (startAt Nothing)
                         ]
@@ -14307,15 +14307,15 @@ viewKeyRow capturing path keylist startAt index key =
             [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
                 [ text (String.fromInt (index + 1)) ]
             , button
-                [ HA.class "keylist-key field flex-1 cursor-pointer text-left font-mono hover:border-accent"
+                [ HA.class "keylist-key d-input d-input-sm flex-1 cursor-pointer text-left font-mono hover:border-accent"
                 , HA.title "押して割り当て直す"
                 , HE.onClick (startAt (Just index))
                 ]
-                [ text key ]
+                [ Html.kbd [ HA.class "d-kbd d-kbd-xs" ] [ text key ] ]
             , listEditButton path keylist.keys "↑" "1 つ上へ(上の行ほど強い)" (index > 0) (SchemaForm.MoveLine index -1)
             , listEditButton path keylist.keys "↓" "1 つ下へ" (index < List.length keylist.keys - 1) (SchemaForm.MoveLine index 1)
             , button
-                [ HA.class "keylist-remove btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-danger"
+                [ HA.class "keylist-remove d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-danger"
                 , HA.title "この割り当てを消す"
                 , HE.onClick (FieldEdited (listTextPayload path (SchemaForm.applyListEdit (SchemaForm.RemoveLine index) keylist.keys)))
                 ]
@@ -14328,10 +14328,10 @@ viewKeyListening index =
     div [ HA.class "keylist-row mb-1 flex items-center gap-1" ]
         [ span [ HA.class "w-4 shrink-0 text-right font-mono text-[10px] text-ink-faint" ]
             [ text (String.fromInt (index + 1)) ]
-        , div [ HA.class "keylist-listening field flex flex-1 animate-pulse items-center border-accent font-mono text-accent" ]
+        , div [ HA.class "keylist-listening d-input d-input-sm flex flex-1 animate-pulse items-center border-accent font-mono text-accent" ]
             [ text "キーを押す…" ]
         , button
-            [ HA.class "keylist-cancel btn btn-ghost btn-mini shrink-0 text-ink-faint hover:text-ink"
+            [ HA.class "keylist-cancel d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 text-ink-faint hover:text-ink"
             , HA.title "聞き取りをやめる"
             , HE.onClick KeyCaptureCancelled
             ]
@@ -14359,7 +14359,7 @@ viewKeyFallback path keylist =
                 )
     in
     select
-        [ HA.class "keylist-fallback field w-auto text-ink-faint"
+        [ HA.class "keylist-fallback d-select d-select-sm w-auto text-ink-faint"
         , onChange
 
         -- 足した後も「(一覧から)」に戻す — この select は入口であって値の置き場ではない
@@ -14442,7 +14442,7 @@ viewSelect path choices selected =
     -- 選んだ見た目を保ったまま change を取りこぼす形があり、色と挙動がずれる
     -- (ライブ保存の往復で doc が 1 手遅れるときに顕在化する)。
     select
-        [ HA.class "field w-full"
+        [ HA.class "d-select d-select-sm w-full"
         , onChange
         , HA.property "value" (E.string (Maybe.withDefault "" selected))
         ]
@@ -14474,7 +14474,7 @@ viewWizard model w =
                     , viewWizardSteps w.step
                     , span [ HA.class "spacer flex-1" ] []
                     , button
-                        [ HA.class "btn", HE.onClick WizardClosed, HA.disabled (w.write /= WizNotStarted) ]
+                        [ HA.class "d-btn d-btn-xs", HE.onClick WizardClosed, HA.disabled (w.write /= WizNotStarted) ]
                         [ text "やめて戻る" ]
                     ]
               ]
@@ -14535,15 +14535,15 @@ viewWizardBasics : Wizard.Draft -> List (Html Msg)
 viewWizardBasics draft =
     [ viewWizardRow "名前 (id・半角英数)" <|
         input
-            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "半角英数の名前", HA.value draft.id, HE.onInput WizardIdChanged ]
+            [ HA.class "d-input d-input-sm w-full", HA.type_ "text", HA.placeholder "半角英数の名前", HA.value draft.id, HE.onInput WizardIdChanged ]
             []
     , viewWizardRow "タイトル (日本語可・任意)" <|
         input
-            [ HA.class "field w-full", HA.type_ "text", HA.placeholder "画面に出る名前", HA.value draft.title, HE.onInput WizardTitleChanged ]
+            [ HA.class "d-input d-input-sm w-full", HA.type_ "text", HA.placeholder "画面に出る名前", HA.value draft.title, HE.onInput WizardTitleChanged ]
             []
     , viewWizardRow "置き場所" <|
         input
-            [ HA.class "field w-full font-mono", HA.type_ "text", HA.value (Wizard.dataPathOf draft), HE.onInput WizardPathChanged ]
+            [ HA.class "d-input d-input-sm w-full font-mono", HA.type_ "text", HA.value (Wizard.dataPathOf draft), HE.onInput WizardPathChanged ]
             []
     , viewWizardRow "形" <|
         div [ HA.class "shape-cards flex gap-2" ]
@@ -14596,18 +14596,18 @@ viewWizardFields draft =
     in
     [ div [ HA.class "form-label mb-1 text-[11px] text-ink-soft" ] [ text "フィールド定義(上から order 順にフォームへ並びます)" ] ]
         ++ List.indexedMap (viewWizardFieldRow total) draft.fields
-        ++ [ button [ HA.class "add-field btn mt-2", HE.onClick WizardFieldAdded ] [ text "+ フィールド追加" ] ]
+        ++ [ button [ HA.class "add-field d-btn d-btn-xs mt-2", HE.onClick WizardFieldAdded ] [ text "+ フィールド追加" ] ]
 
 
 viewWizardFieldRow : Int -> Int -> Wizard.FieldDraft -> Html Msg
 viewWizardFieldRow total i f =
     div [ HA.class "wizard-field my-1.5 flex items-center gap-1.5" ]
         [ span [ HA.class "move flex gap-0.5" ]
-            [ button [ HA.class "btn btn-mini", HE.onClick (WizardFieldMoved i -1), HA.disabled (i == 0) ] [ text "↑" ]
-            , button [ HA.class "btn btn-mini", HE.onClick (WizardFieldMoved i 1), HA.disabled (i == total - 1) ] [ text "↓" ]
+            [ button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick (WizardFieldMoved i -1), HA.disabled (i == 0) ] [ text "↑" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick (WizardFieldMoved i 1), HA.disabled (i == total - 1) ] [ text "↓" ]
             ]
         , input
-            [ HA.class "f-name field w-[150px] shrink-0"
+            [ HA.class "f-name d-input d-input-sm w-[150px] shrink-0"
             , HA.type_ "text"
             , HA.placeholder "フィールド名"
             , HA.value f.name
@@ -14617,7 +14617,7 @@ viewWizardFieldRow total i f =
         , viewTypeSelect i f
         , viewFieldExtra i f
         , input
-            [ HA.class "f-label field w-[150px] shrink-0"
+            [ HA.class "f-label d-input d-input-sm w-[150px] shrink-0"
             , HA.type_ "text"
             , HA.placeholder "表示名(日本語)"
             , HA.value f.label
@@ -14626,21 +14626,22 @@ viewWizardFieldRow total i f =
             []
         , label [ HA.class "f-required flex items-center gap-1 text-[11px] whitespace-nowrap text-ink-soft" ]
             [ input
-                [ HA.type_ "checkbox"
+                [ HA.class "d-checkbox d-checkbox-xs d-checkbox-primary"
+                , HA.type_ "checkbox"
                 , HA.checked f.required
                 , HE.onCheck (\b -> WizardFieldChanged i { f | required = b })
                 ]
                 []
             , text "必須"
             ]
-        , button [ HA.class "btn", HE.onClick (WizardFieldRemoved i) ] [ text "削除" ]
+        , button [ HA.class "d-btn d-btn-xs", HE.onClick (WizardFieldRemoved i) ] [ text "削除" ]
         ]
 
 
 viewTypeSelect : Int -> Wizard.FieldDraft -> Html Msg
 viewTypeSelect i f =
     select
-        [ HA.class "field w-24 shrink-0"
+        [ HA.class "d-select d-select-sm w-24 shrink-0"
         , HE.on "change"
             (HE.targetValue
                 |> D.andThen
@@ -14674,7 +14675,7 @@ viewFieldExtra i f =
         (case f.type_ of
             Wizard.CEnum ->
                 [ input
-                    [ HA.class "field min-w-0 flex-1"
+                    [ HA.class "d-input d-input-sm min-w-0 flex-1"
                     , HA.type_ "text"
                     , HA.placeholder "値をカンマ区切りで並べます"
                     , HA.value f.enumValues
@@ -14685,7 +14686,7 @@ viewFieldExtra i f =
 
             Wizard.CRef ->
                 [ input
-                    [ HA.class "field min-w-0 flex-1"
+                    [ HA.class "d-input d-input-sm min-w-0 flex-1"
                     , HA.type_ "text"
                     , HA.placeholder "参照先のセクション名"
                     , HA.value f.refTarget
@@ -14708,7 +14709,7 @@ viewFieldExtra i f =
 viewMinMax : Int -> Wizard.FieldDraft -> List (Html Msg)
 viewMinMax i f =
     [ input
-        [ HA.class "f-minmax field w-[90px] shrink-0"
+        [ HA.class "f-minmax d-input d-input-sm w-[90px] shrink-0"
         , HA.type_ "text"
         , HA.placeholder "min(任意)"
         , HA.value f.minText
@@ -14716,7 +14717,7 @@ viewMinMax i f =
         ]
         []
     , input
-        [ HA.class "f-minmax field w-[90px] shrink-0"
+        [ HA.class "f-minmax d-input d-input-sm w-[90px] shrink-0"
         , HA.type_ "text"
         , HA.placeholder "max(任意)"
         , HA.value f.maxText
@@ -14733,10 +14734,9 @@ viewWizardConfirm model w =
             wizardErrors model w.draft
     in
     if not (List.isEmpty errors) then
-        [ Html.node "sl-alert"
-            [ HA.class "wizard-errors notice my-3 block max-w-xl"
-            , HA.attribute "variant" "warning"
-            , HA.attribute "open" ""
+        [ div
+            [ HA.class "wizard-errors notice d-alert d-alert-warning my-3 block max-w-xl px-2.5 py-1.5 text-xs"
+            , HA.attribute "role" "alert"
             ]
             (div [] [ text "直すところがあります(直すと生成プレビューが出ます):" ]
                 :: List.map (\e -> div [] [ text ("・" ++ e) ]) errors
@@ -14768,10 +14768,10 @@ viewWizardNav model w =
             w.write /= WizNotStarted
 
         back step =
-            button [ HA.class "btn", HE.onClick (WizardStepChosen step), HA.disabled busy ] [ text "← 戻る" ]
+            button [ HA.class "d-btn d-btn-xs", HE.onClick (WizardStepChosen step), HA.disabled busy ] [ text "← 戻る" ]
 
         next step =
-            button [ HA.class "btn", HE.onClick (WizardStepChosen step) ] [ text "次へ →" ]
+            button [ HA.class "d-btn d-btn-xs", HE.onClick (WizardStepChosen step) ] [ text "次へ →" ]
     in
     [ div [ HA.class "wizard-nav mt-5 flex items-center gap-2" ]
         (List.concat
@@ -14785,7 +14785,7 @@ viewWizardNav model w =
                 WizConfirm ->
                     [ back WizFields
                     , button
-                        [ HA.class "create btn btn-primary"
+                        [ HA.class "create d-btn d-btn-xs d-btn-primary"
                         , HE.onClick WizardCreateClicked
                         , HA.disabled (busy || not (List.isEmpty (wizardErrors model w.draft)))
                         ]
@@ -14876,7 +14876,7 @@ viewProblems problems open =
                     [ text "✓ 問題なし" ]
 
                  else
-                    [ span [ HA.class "badge bg-warn/15 font-semibold text-warn" ] [ text (String.fromInt count) ]
+                    [ span [ HA.class "d-badge d-badge-xs d-badge-soft d-badge-warning font-semibold" ] [ text (String.fromInt count) ]
                     , text "件の問題"
                     ]
                 )
@@ -14904,7 +14904,7 @@ viewProblems problems open =
 
 
 {-| dirty のまま移動しようとしたときの 2 択。保存競合ダイアログと同じ作法
-(sl-dialog+btn/btn-primary)で、答えるまで移動を進めない。
+(sl-dialog+d-btn/d-btn-primary)で、答えるまで移動を進めない。
 -}
 viewDiscardDialog : Html Msg
 viewDiscardDialog =
@@ -14916,10 +14916,10 @@ viewDiscardDialog =
         [ div [ HA.class "text-xs leading-relaxed text-ink-soft" ]
             [ text "このファイルの編集はまだ保存していません。移動すると編集は失われます。" ]
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-            [ button [ HA.class "btn", HE.onClick NavStayed ] [ text "やめる" ]
+            [ button [ HA.class "d-btn d-btn-xs", HE.onClick NavStayed ] [ text "やめる" ]
 
             -- 編集を捨てる危険操作なので primary でなく danger
-            , button [ HA.class "btn btn-danger", HE.onClick NavDiscarded ] [ text "破棄して開く" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-error", HE.onClick NavDiscarded ] [ text "破棄して開く" ]
             ]
         ]
 
@@ -14934,10 +14934,10 @@ viewConflictDialog =
         [ div [ HA.class "text-xs leading-relaxed text-ink-soft" ]
             [ text "このファイルは別の場所で変更されています。再読み込みしてください(自分の編集で構わず上書きもできます)。" ]
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-            [ button [ HA.class "btn", HE.onClick ReloadChosen ] [ text "再読込(自分の編集を捨てる)" ]
+            [ button [ HA.class "d-btn d-btn-xs", HE.onClick ReloadChosen ] [ text "再読込(自分の編集を捨てる)" ]
 
             -- 相手の変更を潰す危険操作なので primary でなく danger
-            , button [ HA.class "btn btn-danger", HE.onClick OverwriteChosen ] [ text "構わず上書き" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-error", HE.onClick OverwriteChosen ] [ text "構わず上書き" ]
             ]
         ]
 
@@ -14957,7 +14957,7 @@ viewAddDialog dialog =
             [ text "新しいエントリの id を入れてください。値はスキーマの既定値で入ります。" ]
         , input
             [ HA.classList
-                [ ( "add-id field mt-2 w-full font-mono", True )
+                [ ( "add-id d-input d-input-sm mt-2 w-full font-mono", True )
                 , ( "invalid border-danger", dialog.error /= Nothing )
                 ]
             , HA.type_ "text"
@@ -14974,8 +14974,8 @@ viewAddDialog dialog =
             Nothing ->
                 div [ HA.class "mt-1 text-[11px] text-ink-faint" ] [ text "Enter で追加・Esc でやめる" ]
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-            [ button [ HA.class "btn", HE.onClick AddCancelled ] [ text "やめる" ]
-            , button [ HA.class "btn btn-primary", HE.onClick AddConfirmed ] [ text "追加する" ]
+            [ button [ HA.class "d-btn d-btn-xs", HE.onClick AddCancelled ] [ text "やめる" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-primary", HE.onClick AddConfirmed ] [ text "追加する" ]
             ]
         ]
 
@@ -15016,10 +15016,10 @@ viewDeleteDialog confirm =
                     )
             )
         , div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-            [ button [ HA.class "btn", HE.onClick DeleteCancelled ] [ text "やめる" ]
+            [ button [ HA.class "d-btn d-btn-xs", HE.onClick DeleteCancelled ] [ text "やめる" ]
 
             -- 参照を宙に浮かせる危険操作なので primary でなく danger
-            , button [ HA.class "btn btn-danger", HE.onClick DeleteConfirmed ] [ text "削除する" ]
+            , button [ HA.class "d-btn d-btn-xs d-btn-error", HE.onClick DeleteConfirmed ] [ text "削除する" ]
             ]
         ]
 

@@ -118,8 +118,9 @@ view handlers anchor items =
         , HE.custom "contextmenu"
             (D.succeed { message = handlers.onClose, stopPropagation = True, preventDefault = True })
         ]
-        [ div
-            [ HA.class "context-menu min-w-[200px] rounded border border-edge bg-panel py-1 shadow-[0_4px_16px_rgb(0_0_0/0.45)]"
+        [ -- 見た目は daisyUI の menu(d-menu-xs)。位置決めと開閉はこちらの仕事のまま
+          Html.ul
+            [ HA.class "context-menu d-menu d-menu-xs min-w-[200px] rounded border border-edge bg-panel py-1 shadow-[0_4px_16px_rgb(0_0_0/0.45)]"
             , HA.style "position" "fixed"
             , HA.style "left" (String.fromFloat spot.left ++ "px")
             , HA.style "top" (String.fromFloat spot.top ++ "px")
@@ -132,17 +133,19 @@ viewItem : Item msg -> Html msg
 viewItem entry =
     case entry of
         Command command ->
-            button
-                [ HA.classList
-                    [ ( "context-item block w-full cursor-pointer px-3 py-1 text-left text-xs", True )
-                    , ( "text-danger hover:bg-danger/15", command.danger )
-                    , ( "text-ink-soft hover:bg-white/5 hover:text-ink", not command.danger )
-                    ]
+            Html.li []
+                [ button
+                    [ HA.classList
+                        [ ( "context-item w-full cursor-pointer rounded-sm text-left text-xs", True )
+                        , ( "text-danger hover:bg-danger/15", command.danger )
+                        , ( "text-ink-soft hover:bg-white/5 hover:text-ink", not command.danger )
+                        ]
 
-                -- 受け皿の「外側クリックで閉じる」に食わせない(ボタンの仕事が先)
-                , HE.stopPropagationOn "click" (D.succeed ( command.msg, True ))
+                    -- 受け皿の「外側クリックで閉じる」に食わせない(ボタンの仕事が先)
+                    , HE.stopPropagationOn "click" (D.succeed ( command.msg, True ))
+                    ]
+                    [ text command.label ]
                 ]
-                [ text command.label ]
 
         Separator ->
-            div [ HA.class "context-separator my-1 border-t border-edge" ] []
+            Html.li [ HA.class "context-separator pointer-events-none my-1 border-t border-edge" ] []

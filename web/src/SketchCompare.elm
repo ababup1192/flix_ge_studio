@@ -460,7 +460,7 @@ viewHead handlers =
         [ span [ HA.class "text-xs font-semibold text-ink" ] [ text "ラフと見比べ" ]
         , span [ HA.class "text-[11px] text-ink-faint" ] [ text "生成された絵とラフを 1 枚ずつ選んで見比べます" ]
         , span [ HA.class "flex-1" ] []
-        , button [ HA.class "sketch-compare-close btn btn-mini", HE.onClick handlers.onClose ] [ text "閉じる(Esc)" ]
+        , button [ HA.class "sketch-compare-close d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onClose ] [ text "閉じる(Esc)" ]
         ]
 
 
@@ -533,7 +533,7 @@ viewSketchRow handlers model sketch =
                                 (\version ->
                                     button
                                         [ HA.classList
-                                            [ ( "sketch-compare-version btn btn-mini", True )
+                                            [ ( "sketch-compare-version d-btn d-btn-xs d-btn-mini", True )
                                             , ( "bg-accent text-white hover:bg-accent", model.version == Just version )
                                             ]
                                         , HE.onClick (handlers.onVersion version)
@@ -569,7 +569,7 @@ viewModes handlers model =
         tab mode label =
             button
                 [ HA.classList
-                    [ ( "sketch-compare-mode btn btn-mini", True )
+                    [ ( "sketch-compare-mode d-btn d-btn-xs d-btn-mini", True )
                     , ( "bg-accent text-white hover:bg-accent", model.mode == mode )
                     ]
                 , HE.onClick (handlers.onMode mode)
@@ -582,7 +582,7 @@ viewModes handlers model =
         , case model.mode of
             Overlay ->
                 input
-                    [ HA.class "sketch-compare-opacity ml-2 w-40"
+                    [ HA.class "sketch-compare-opacity d-range d-range-xs ml-2 w-40"
                     , HA.type_ "range"
                     , HA.min "0"
                     , HA.max "1"
@@ -720,14 +720,14 @@ viewNote handlers model =
     div [ HA.class "sketch-compare-note flex flex-wrap items-center gap-2 rounded border border-edge bg-panel p-2" ]
         [ span [ HA.class "text-[10px] text-ink-faint" ] [ text (pickLabel model) ]
         , input
-            [ HA.class "sketch-compare-note-input min-w-0 flex-1 rounded border border-edge bg-transparent px-2 py-1 text-xs text-ink"
+            [ HA.class "sketch-compare-note-input d-input d-input-sm min-w-0 flex-1"
             , HA.placeholder "見た目で気になった事を書く(例: 空が明るすぎる)"
             , HA.value model.note
             , HE.onInput handlers.onNote
             ]
             []
         , button
-            [ HA.class "sketch-compare-submit btn btn-primary text-xs"
+            [ HA.class "sketch-compare-submit d-btn d-btn-xs d-btn-primary text-xs"
             , HA.disabled (not (canSubmit model))
             , HA.title "指したセルとひとことを、遊んでいて切った物と同じやること一覧へ並べます"
             , HE.onClick handlers.onSubmit

@@ -3,6 +3,49 @@
 /* Elm のクラスは文字列リテラル。検出漏れを防ぐため .elm を明示する */
 @source "./**/*.elm";
 
+/* daisyUI 5: 既定テーマは全部切り、下の studio テーマ 1 本だけ使う。
+   prefix d- で既存の .btn / .badge 等と衝突しない */
+@plugin "daisyui" {
+  themes: false;
+  prefix: "d-";
+}
+
+/* studio テーマ: daisyUI の dark 系の顔(藍の primary・紺の面・大きめの角丸・立体感)。
+   --color-accent だけは既存トークンと同値に固定 — 省略や別色にすると daisyUI 側の
+   変数が既存の bg-accent(125 箇所)へ波及して全画面の青が変わるため */
+@plugin "daisyui/theme" {
+  name: "studio";
+  default: true;
+  prefersdark: true;
+  color-scheme: "dark";
+  --color-base-100: #1d232a; /* 紺がかった主面(daisyUI dark の系譜) */
+  --color-base-200: #191e24;
+  --color-base-300: #15191e;
+  --color-base-content: #eef2f6;
+  --color-primary: #615fff; /* 藍 — battle-sim プラグインの実行ボタンと同じ雰囲気 */
+  --color-primary-content: #ffffff;
+  --color-secondary: #ff5c8a;
+  --color-secondary-content: #ffffff;
+  --color-accent: #0d99ff; /* 既存 bg-accent の保護(値を変えない) */
+  --color-accent-content: #ffffff;
+  --color-neutral: #2a323c;
+  --color-neutral-content: #eef2f6;
+  --color-info: #00b5ff;
+  --color-info-content: #ffffff;
+  --color-success: #00c47f;
+  --color-success-content: #0c1626;
+  --color-warning: #ffbe00;
+  --color-warning-content: #0c1626;
+  --color-error: #ff6266;
+  --color-error-content: #0c1626;
+  --radius-field: 0.5rem;
+  --radius-box: 1rem;
+  --radius-selector: 9999px;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
 /* デザイントークン: 色・字・角丸はここだけで決める(個々の要素に生 hex を書かない)。
    Figma 風の高密度ダーク UI:
      背景 3 段(app 地 < panel < raised) + 入力の床(well)
@@ -55,7 +98,7 @@
     scrollbar-color: var(--color-raised) transparent;
   }
 
-  /* Shoelace(sl-range / sl-dialog / sl-alert)をこちらのトークンへ寄せる(ここ 1 箇所) */
+  /* Shoelace(sl-range / sl-dialog)をこちらのトークンへ寄せる(ここ 1 箇所) */
   .sl-theme-dark {
     --sl-font-sans: var(--font-sans);
     --sl-panel-background-color: var(--color-panel);
@@ -72,46 +115,49 @@
   }
 }
 
+/* d-btn-xs よりさらに詰めた最小ボタン(行内の増減・×閉じる等)。
+   daisyUI の .d-btn は utilities レイヤーにいるため、@layer components に置くと
+   カスケードレイヤーの順序で必ず負ける — レイヤー外(どのレイヤーより強い)に置く */
+.d-btn-mini {
+  height: 1.25rem;
+  font-size: 10px;
+  padding-inline: 0.375rem;
+}
+
+/* 入力の高密度補正: daisyUI の sm は 2rem(32px)で、従来の .field(h-6 = 24px)より
+   背が高い。高さは --d-size の倍率(--size-field 0.25rem × 6 = 1.5rem = 24px)だけ
+   差し替える — height を直接書くと h-5/h-7 等の utility 上書きが効かなくなるため。
+   これも .d-btn-mini と同じ理由でレイヤー外に置く */
+.d-input-sm {
+  --d-in-size-mul: 6;
+}
+
+.d-select-sm {
+  --d-sl-size-mul: 6;
+}
+
+/* 入力のフォーカスは控えめに: daisyUI の白い outline と共通フォーカスリングが
+   重なって太い二重リングになるため、ここで 1 本に畳む —
+   枠線を primary に替え、ごく薄いリングを 1px だけ(視認性は保つ) */
+.d-input:focus,
+.d-input:focus-within,
+.d-select:focus,
+.d-select:focus-within,
+.d-textarea:focus,
+.d-textarea:focus-within {
+  border-color: var(--color-primary);
+  outline: 1px solid color-mix(in oklab, var(--color-primary) 45%, transparent);
+  outline-offset: 0;
+  box-shadow: none;
+}
+
 /* 繰り返し部品だけ component 化(1 回きりの見た目は Elm 側の utility で書く) */
 @layer components {
-  .btn {
-    @apply inline-flex h-6 shrink-0 cursor-pointer items-center justify-center gap-1 rounded border border-edge bg-white/5 px-2.5 text-[11px] leading-none text-ink select-none hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-white/5;
-  }
-
-  .btn-primary {
-    @apply border-transparent bg-accent text-white hover:bg-accent/85 disabled:hover:bg-accent;
-  }
-
-  /* 危険操作(削除の確定・編集の破棄)。primary と並んだ時に取り違えない色 */
-  .btn-danger {
-    @apply border-transparent bg-danger text-app hover:bg-danger/85 disabled:hover:bg-danger;
-  }
-
-  /* tertiary: 枠も地も持たないテキスト系(複製・削除・小さな行操作) */
-  .btn-ghost {
-    @apply border-transparent bg-transparent text-ink-soft hover:bg-white/5 hover:text-ink disabled:hover:bg-transparent;
-  }
-
-  .btn-mini {
-    @apply h-5 px-1.5 text-[10px];
-  }
-
-  .field {
-    @apply h-6 min-w-0 rounded border border-edge bg-well px-2 text-xs text-ink placeholder:text-ink-faint;
-  }
-
-  .badge {
-    @apply inline-flex items-center rounded-full bg-white/10 px-1.5 text-[10px] leading-4 whitespace-nowrap text-ink-soft;
-  }
 
   /* 肖像(エンジン焼き PNG の切り出し)。空・読み込み中・失敗も同じ枠で示す */
   .portrait-box {
     @apply shrink-0 overflow-hidden rounded border border-edge bg-well;
     image-rendering: pixelated;
-  }
-
-  .portrait-loading {
-    @apply animate-pulse bg-raised;
   }
 
   .portrait-failed {
@@ -137,22 +183,8 @@
     image-rendering: pixelated;
   }
 
-  /* 進捗ミニパネルの動くしるし。prefers-reduced-motion では回さず静かな輪で示す */
-  .progress-spinner {
-    @apply inline-block h-3 w-3 rounded-full border-2 border-accent/30 border-t-accent;
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .progress-spinner {
-      animation: progress-spin 0.9s linear infinite;
-    }
-  }
-
-  @keyframes progress-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
+  /* 進捗の動くしるしは daisyUI の d-loading d-loading-spinner に任せる
+     (prefers-reduced-motion でも daisyUI 側がゆっくり回す版へ切り替える) */
 
   /* アトリエの採用オーバーレイ。段送り(採用しました → 反映の報せ)は
      ふわりと出す。prefers-reduced-motion では遷移なしで即時に出す */
@@ -216,15 +248,6 @@
       0 0,
       5px 5px;
   }
-
-  /* メーターバー(体力・速さ・% の読み取り表示) */
-  .meter {
-    @apply h-2 overflow-hidden rounded-full bg-well;
-  }
-
-  .meter-fill {
-    @apply h-full rounded-full bg-accent;
-  }
 }
 
 /* ---- ここから下は意図して残す素 CSS ---------------------------------------- */
@@ -272,12 +295,6 @@ sl-dialog::part(title) {
 sl-dialog.conflict::part(title),
 sl-dialog.delete-entry::part(title) {
   color: var(--color-danger);
-}
-
-/* 通知(sl-alert)は 1 行の小さな帯に詰める */
-sl-alert.notice::part(message) {
-  padding: 6px 10px;
-  font-size: 12px;
 }
 
 /* ---- 盤面プレビューの対話レイヤ(選択枠・掴み所・ドラッグ追従) ----
@@ -1262,4 +1279,10 @@ sl-alert.notice::part(message) {
 
 .sketch-handle-mark.is-dragging {
   opacity: 1;
+}
+
+/* daisyUI base は :root に base-100 を敷く。オーバースクロール時に見える
+   キャンバス色まで従来どおり app 地に保つ(レイヤー外 = daisyUI base より強い) */
+:root {
+  background-color: var(--color-app);
 }

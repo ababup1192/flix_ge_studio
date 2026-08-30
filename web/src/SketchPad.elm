@@ -1977,14 +1977,14 @@ viewWindow window body =
                 , case window.onClose of
                     Just close ->
                         button
-                            [ HA.class "sketch-window-close btn btn-mini"
+                            [ HA.class "sketch-window-close d-btn d-btn-xs d-btn-mini"
                             , HA.title "閉じる(Esc)"
                             , HE.onClick close
                             ]
                             [ text "✕ 閉じる" ]
 
                     Nothing ->
-                        button [ HA.class "sketch-window-close btn btn-mini", HA.disabled True ]
+                        button [ HA.class "sketch-window-close d-btn d-btn-xs d-btn-mini", HA.disabled True ]
                             [ text "✕ 閉じる" ]
                 ]
              , div [ HA.class "min-h-0 flex-1 overflow-auto p-3" ] body
@@ -2030,10 +2030,10 @@ viewPresets model =
                     button
                         [ HA.class
                             (if model.preset == preset.id then
-                                "sketch-preset cursor-pointer rounded-full border border-accent bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
+                                "sketch-preset d-btn d-btn-xs d-btn-primary rounded-full"
 
                              else
-                                "sketch-preset cursor-pointer rounded-full border border-edge px-2.5 py-0.5 text-[11px] text-ink-soft hover:border-ink-faint"
+                                "sketch-preset d-btn d-btn-xs rounded-full"
                             )
                         , HE.onClick (PresetPicked preset.id)
                         ]
@@ -2096,7 +2096,7 @@ viewChipEditor model =
         Just entry ->
             [ div [ HA.class "sketch-chip-editor mb-2 flex flex-wrap items-center gap-1.5 rounded border border-edge bg-black/20 p-2" ]
                 [ Html.input
-                    [ HA.class "field h-7 w-24 text-xs"
+                    [ HA.class "d-input d-input-sm h-7 w-24 text-xs"
                     , HA.value entry.name
                     , HA.placeholder "名前"
                     , HE.onInput ChipNameEdited
@@ -2110,19 +2110,19 @@ viewChipEditor model =
                     ]
                     []
                 , Html.input
-                    [ HA.class "field h-7 min-w-40 flex-1 text-xs"
+                    [ HA.class "d-input d-input-sm h-7 min-w-40 flex-1 text-xs"
                     , HA.value entry.desc
                     , HA.placeholder "ひとこと(AI への補足。例: 崩れかけた石壁)"
                     , HE.onInput ChipDescEdited
                     ]
                     []
                 , button
-                    [ HA.class "sketch-chip-delete btn h-7 px-2 text-[11px]"
+                    [ HA.class "sketch-chip-delete d-btn d-btn-xs h-7 px-2 text-[11px]"
                     , HA.title "このラベルと、塗ったセルをすべて消します"
                     , HE.onClick ChipDeleted
                     ]
                     [ text "削除" ]
-                , button [ HA.class "btn h-7 px-2 text-[11px]", HE.onClick ChipEditClosed ] [ text "閉じる" ]
+                , button [ HA.class "d-btn d-btn-xs h-7 px-2 text-[11px]", HE.onClick ChipEditClosed ] [ text "閉じる" ]
                 ]
             ]
 
@@ -2461,21 +2461,21 @@ viewLayerPanel model =
             )
         , div [ HA.class "mt-1.5 flex items-center gap-1" ]
             [ button
-                [ HA.class "sketch-layer-add btn btn-mini"
+                [ HA.class "sketch-layer-add d-btn d-btn-xs d-btn-mini"
                 , HA.title "レイヤーを 1 枚足す(一番手前に置きます)"
                 , HA.disabled (count >= maxLayers)
                 , HE.onClick LayerAdded
                 ]
                 [ text "＋ 追加" ]
             , button
-                [ HA.class "sketch-layer-delete btn btn-ghost btn-mini"
+                [ HA.class "sketch-layer-delete d-btn d-btn-xs d-btn-ghost d-btn-mini"
                 , HA.title "選んでいるレイヤーを消す"
                 , HA.disabled (count <= 1)
                 , HE.onClick LayerDeleted
                 ]
                 [ text "削除" ]
             , button
-                [ HA.class "sketch-layer-up btn btn-ghost btn-mini"
+                [ HA.class "sketch-layer-up d-btn d-btn-xs d-btn-ghost d-btn-mini"
                 , HA.title "1 つ手前へ"
                 , HA.attribute "aria-label" "1 つ手前へ"
                 , HA.disabled (model.layerIndex >= count - 1)
@@ -2483,7 +2483,7 @@ viewLayerPanel model =
                 ]
                 [ text "↑" ]
             , button
-                [ HA.class "sketch-layer-down btn btn-ghost btn-mini"
+                [ HA.class "sketch-layer-down d-btn d-btn-xs d-btn-ghost d-btn-mini"
                 , HA.title "1 つ奥へ"
                 , HA.attribute "aria-label" "1 つ奥へ"
                 , HA.disabled (model.layerIndex <= 0)
@@ -2541,7 +2541,7 @@ viewLayerRow model index sheet =
             ]
             [ eyeGlyph sheet.visible ]
         , Html.input
-            [ HA.class "sketch-layer-name field h-5 min-w-0 flex-1 px-1 text-[11px]"
+            [ HA.class "sketch-layer-name d-input d-input-sm h-5 min-w-0 flex-1 px-1 text-[11px]"
             , HA.value sheet.name
             , HA.placeholder "名前"
             , HE.onInput (LayerRenamed index)
@@ -2620,7 +2620,7 @@ viewGridBlock model =
                     , HA.min "10"
                     , HA.max "32"
                     , HA.value (String.fromInt model.cellPx)
-                    , HA.class "sketch-cell-size w-24 cursor-pointer"
+                    , HA.class "sketch-cell-size d-range d-range-xs w-24 cursor-pointer"
                     , HE.onInput CellSizeEdited
                     ]
                     []
@@ -2670,7 +2670,7 @@ viewSizeInput : String -> String -> (String -> Msg) -> Html Msg
 viewSizeInput marker draft toMsg =
     Html.input
         [ HA.type_ "number"
-        , HA.class (marker ++ " field h-5 w-11 px-1 text-center text-[10px]")
+        , HA.class (marker ++ " d-input d-input-sm h-5 w-11 px-1 text-center text-[10px]")
         , HA.min (String.fromInt (min minSize.w minSize.h))
         , HA.max (String.fromInt (max maxSize.w maxSize.h))
         , HA.value draft
@@ -2839,7 +2839,7 @@ viewNote model =
     div [ HA.class "mt-2" ]
         [ div [ HA.class "text-[10px] text-ink-faint" ] [ text "ラフに対する補足" ]
         , Html.textarea
-            [ HA.class "field mt-1 h-auto min-h-[2.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+            [ HA.class "d-textarea d-textarea-sm mt-1 h-auto min-h-[2.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
             , HA.rows 2
             , HA.value model.note
             , HE.onInput NoteEdited
@@ -2856,9 +2856,9 @@ viewCloseConfirm =
     div [ HA.class "sketch-close-confirm flex flex-wrap items-center gap-2" ]
         [ span [ HA.class "text-[11px] text-ink" ]
             [ text "保存していない変更があります。閉じますか？" ]
-        , button [ HA.class "sketch-close-yes btn btn-danger", HE.onClick ToggleOpen ]
+        , button [ HA.class "sketch-close-yes d-btn d-btn-xs d-btn-error", HE.onClick ToggleOpen ]
             [ text "閉じる" ]
-        , button [ HA.class "sketch-close-no btn btn-ghost", HE.onClick CloseCancelled ]
+        , button [ HA.class "sketch-close-no d-btn d-btn-xs d-btn-ghost", HE.onClick CloseCancelled ]
             [ text "やめる" ]
         ]
 
@@ -2867,14 +2867,14 @@ viewSaveRow : Model -> Html Msg
 viewSaveRow model =
     div [ HA.class "mt-2 flex flex-wrap items-center gap-1.5" ]
         [ Html.input
-            [ HA.class "field h-7 w-40 text-xs"
+            [ HA.class "d-input d-input-sm h-7 w-40 text-xs"
             , HA.placeholder "保存名(例: stage2)"
             , HA.value model.name
             , HE.onInput NameEdited
             ]
             []
         , button
-            [ HA.class "btn h-7 px-2.5 text-[11px]"
+            [ HA.class "d-btn d-btn-xs h-7 px-2.5 text-[11px]"
             , HA.disabled
                 (case model.save of
                     SaveFlying _ ->

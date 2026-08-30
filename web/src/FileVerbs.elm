@@ -144,14 +144,14 @@ view handlers existing dialog =
             Delete d ->
                 [ div [ HA.class "text-xs leading-relaxed text-ink-soft" ]
                     [ text ("\"" ++ d.path ++ "\" を消します。元には戻せません。") ]
-                , footer handlers "消す" "btn btn-danger" False
+                , footer handlers "消す" "d-btn d-btn-xs d-btn-error" False
                 ]
 
             _ ->
                 [ div [ HA.class "mb-2 text-[11px] leading-relaxed text-ink-soft" ]
                     [ text (guide dialog.kind) ]
                 , input
-                    [ HA.class "verb-name field w-full"
+                    [ HA.class "verb-name d-input d-input-sm w-full"
                     , HA.type_ "text"
                     , HA.placeholder "名前(拡張子は要りません)"
                     , HA.value dialog.text
@@ -169,7 +169,7 @@ view handlers existing dialog =
 
                     _ ->
                         text ""
-                , footer handlers (confirmLabel dialog.kind) "btn btn-primary" (blocked /= Nothing)
+                , footer handlers (confirmLabel dialog.kind) "d-btn d-btn-xs d-btn-primary" (blocked /= Nothing)
                 ]
         )
 
@@ -177,7 +177,7 @@ view handlers existing dialog =
 footer : Handlers msg -> String -> String -> Bool -> Html msg
 footer handlers confirm confirmClass disabled =
     div [ HA.attribute "slot" "footer", HA.class "flex justify-end gap-2" ]
-        [ button [ HA.class "btn", HE.onClick handlers.onCancelled ] [ text "やめる" ]
+        [ button [ HA.class "d-btn d-btn-xs", HE.onClick handlers.onCancelled ] [ text "やめる" ]
         , button
             [ HA.class confirmClass
             , HA.disabled disabled

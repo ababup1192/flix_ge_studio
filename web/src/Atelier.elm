@@ -1831,7 +1831,7 @@ view src model =
 viewSectionTop : String -> Html Msg
 viewSectionTop place =
     div [ HA.class "atelier-section-top flex items-center gap-2" ]
-        [ button [ HA.class "btn btn-mini", HE.onClick OpenLanding ] [ text "← アトリエ" ]
+        [ button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick OpenLanding ] [ text "← アトリエ" ]
         , span [ HA.class "text-[11px] text-ink-faint" ] [ text place ]
         ]
 
@@ -1908,7 +1908,7 @@ landingCard info =
             , span [ HA.class "text-sm font-semibold text-ink" ] [ text info.title ]
             , case info.chip of
                 Just label ->
-                    span [ HA.class "badge shrink-0 bg-accent/20 text-accent" ] [ text label ]
+                    span [ HA.class "d-badge d-badge-xs d-badge-soft d-badge-primary shrink-0" ] [ text label ]
 
                 Nothing ->
                     text ""
@@ -2027,21 +2027,21 @@ viewExtendPromptBox model =
             [ div [ HA.class "atelier-extend-draft mt-4 rounded-lg border border-edge bg-black/20 p-4" ]
                 [ div [ HA.class "text-xs font-semibold text-ink" ] [ text draft.title ]
                 , Html.textarea
-                    [ HA.class "atelier-extend-prompt mt-2 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                    [ HA.class "atelier-extend-prompt d-textarea mt-2 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
                     , HA.readonly True
                     , HA.value (sketchedPrompt model draft.prompt)
                     ]
                     []
                 , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "あなたの言葉" ]
                 , Html.textarea
-                    [ HA.class "field mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                    [ HA.class "d-textarea d-textarea-sm mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
                     , HA.rows 2
                     , HA.value model.extendWords
                     , HE.onInput ExtendWordsEdited
                     ]
                     []
                 , div [ HA.class "mt-2" ]
-                    [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyExtendPromptClicked ]
+                    [ button [ HA.class "d-btn d-btn-xs d-btn-primary w-full", HE.onClick CopyExtendPromptClicked ]
                         [ text
                             (if model.extendCopied then
                                 "✓ コピーしました"
@@ -2119,7 +2119,7 @@ viewArchivedRow model entry =
             [ text (baseName entry.file) ]
         , case entry.entityId of
             Just entity ->
-                span [ HA.class "badge shrink-0" ] [ text entity ]
+                span [ HA.class "d-badge d-badge-xs shrink-0" ] [ text entity ]
 
             Nothing ->
                 text ""
@@ -2132,7 +2132,7 @@ viewArchivedRow model entry =
                 span [ HA.class "flex-1" ] []
         , span [ HA.class "shrink-0 text-[10px] text-ink-faint" ] [ text (mtimeLabel entry.mtime) ]
         , button
-            [ HA.class "btn btn-mini shrink-0"
+            [ HA.class "d-btn d-btn-xs d-btn-mini shrink-0"
             , HA.disabled (model.restorePending /= Nothing)
             , HE.onClick (RestoreClicked entry.file)
             ]
@@ -2208,7 +2208,7 @@ viewHistoryRow : Model -> String -> HistoryEntry -> Html Msg
 viewHistoryRow model slot entry =
     div [ HA.class "atelier-history-row border-b border-edge/40 py-1.5" ]
         (div [ HA.class "flex items-center gap-2" ]
-            [ span [ HA.class "badge shrink-0 bg-white/10" ] [ text ("v" ++ String.fromInt entry.ver) ]
+            [ span [ HA.class "d-badge d-badge-xs shrink-0" ] [ text ("v" ++ String.fromInt entry.ver) ]
             , span [ HA.class "min-w-0 flex-1 truncate font-mono text-[11px] text-ink", HA.title entry.file ]
                 [ text (baseName slot) ]
             , case entry.note of
@@ -2220,7 +2220,7 @@ viewHistoryRow model slot entry =
                     span [ HA.class "flex-1" ] []
             , span [ HA.class "shrink-0 text-[10px] text-ink-faint" ] [ text (mtimeLabel entry.mtime) ]
             , button
-                [ HA.class "btn btn-mini shrink-0"
+                [ HA.class "d-btn d-btn-xs d-btn-mini shrink-0"
                 , HA.disabled (model.pending /= Nothing)
                 , HE.onClick (RollbackClicked slot entry.file)
                 ]
@@ -2321,11 +2321,11 @@ viewPickRow src model row =
                     [ [ span [ HA.class "text-sm font-semibold text-ink" ] [ text row.title ]
                       , span [ HA.class "min-w-0 truncate font-mono text-[10px] text-ink-faint", HA.title row.file ]
                             [ text row.file ]
-                      , span [ HA.class "atelier-slot-version badge shrink-0 bg-white/10" ]
+                      , span [ HA.class "atelier-slot-version d-badge d-badge-xs shrink-0" ]
                             [ text ("いまのアセット: v" ++ String.fromInt (slotVersion model row.file)) ]
                       ]
                     , if rowCandidateCount > 0 then
-                        [ span [ HA.class "atelier-slot-count badge shrink-0" ]
+                        [ span [ HA.class "atelier-slot-count d-badge d-badge-xs shrink-0" ]
                             [ text ("候補 " ++ String.fromInt rowCandidateCount ++ " 件") ]
                         ]
 
@@ -2424,7 +2424,7 @@ viewCurrentCard src model baking slot =
             { file = slot.slot, note = Nothing, compareWith = Nothing, isPrev = False }
             (previewState { ready = slot.currentPreviewReady, baking = baking })
         , div [ HA.class "mt-2 flex items-center gap-1.5" ]
-            [ span [ HA.class "badge shrink-0" ] [ text "いまの見た目" ]
+            [ span [ HA.class "d-badge d-badge-xs shrink-0" ] [ text "いまの見た目" ]
             , span [ HA.class "min-w-0 flex-1 truncate font-mono text-[10px] text-ink-faint", HA.title slot.slot ]
                 [ text (baseName slot.slot) ]
             ]
@@ -2432,7 +2432,7 @@ viewCurrentCard src model baking slot =
         -- 写し(atelier/)が候補の列に増えて、そこを直す — 元には触らない
         , div [ HA.class "mt-2.5" ]
             [ button
-                [ HA.class "btn btn-mini w-full"
+                [ HA.class "d-btn d-btn-xs d-btn-mini w-full"
                 , HA.disabled model.create.copyPending
                 , HE.onClick (CopyCurrentClicked slot.slot)
                 ]
@@ -2483,7 +2483,7 @@ viewPreview src bust info state =
 
             PreviewBaking ->
                 [ div [ HA.class "flex flex-col items-center gap-1.5" ]
-                    [ span [ HA.class "progress-spinner", HA.attribute "aria-hidden" "true" ] []
+                    [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent", HA.attribute "aria-hidden" "true" ] []
                     , span [ HA.class "text-[10px] text-ink-faint" ] [ text "プレビューを描き出しています…" ]
                     ]
                 ]
@@ -2492,7 +2492,7 @@ viewPreview src bust info state =
                 [ div [ HA.class "flex flex-col items-center gap-1" ]
                     [ span [ HA.class "text-[10px] text-ink-faint" ] [ text "プレビューが作れませんでした" ]
                     , button
-                        [ HA.class "btn btn-ghost btn-mini"
+                        [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini"
                         , stopClick BakeLogToggled
                         ]
                         [ text "ログ" ]
@@ -2544,7 +2544,7 @@ viewCard src model baking slotName candidate =
             [ span [ HA.class "min-w-0 flex-1 truncate font-mono text-[11px] text-ink", HA.title candidate.file ]
                 [ text (baseName candidate.file) ]
             , if candidate.isPrev then
-                span [ HA.class "badge shrink-0 bg-white/10" ] [ text (prevTag candidate.file) ]
+                span [ HA.class "d-badge d-badge-xs shrink-0" ] [ text (prevTag candidate.file) ]
 
               else
                 text ""
@@ -2561,7 +2561,7 @@ viewCard src model baking slotName candidate =
             -- 音の候補の聴き比べ(これから)。押すと予定を一言で返す
             , if slotKind model slotName == Just "sound" then
                 button
-                    [ HA.class "btn btn-ghost btn-mini shrink-0"
+                    [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                     , stopClick AuditionClicked
                     ]
                     [ text "▶ 試聴", mockChip ]
@@ -2572,7 +2572,7 @@ viewCard src model baking slotName candidate =
             -- 調整(エディタ)でこの候補ファイルを開く。カードの選択とは
             -- 別の動詞なので伝播は止める
             , button
-                [ HA.class "btn btn-ghost btn-mini shrink-0"
+                [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                 , stopClick (EditCandidateClicked candidate.file)
                 ]
                 [ text "✏️ クイック編集" ]
@@ -2580,7 +2580,7 @@ viewCard src model baking slotName candidate =
             -- アーカイブへ送る(消さない)。押した瞬間 ⏳ + 無効化
             , if archiveAvailable model then
                 button
-                    [ HA.class "btn btn-ghost btn-mini shrink-0"
+                    [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                     , HA.title "アーカイブへ送る(いつでも候補に戻せます)"
                     , HA.disabled (model.archivePending /= Nothing)
                     , stopClick (ArchiveClicked candidate.file)
@@ -2606,7 +2606,7 @@ viewCard src model baking slotName candidate =
                     [ case action of
                         Swap ->
                             button
-                                [ HA.class "btn btn-primary w-full"
+                                [ HA.class "d-btn d-btn-xs d-btn-primary w-full"
                                 , HA.disabled (model.pending /= Nothing)
                                 , stopClick SwapClicked
                                 ]
@@ -2621,7 +2621,7 @@ viewCard src model baking slotName candidate =
 
                         Rollback ->
                             button
-                                [ HA.class "btn w-full"
+                                [ HA.class "d-btn d-btn-xs w-full"
                                 , HA.disabled (model.pending /= Nothing)
                                 , stopClick (RollbackClicked slotName candidate.file)
                                 ]
@@ -2670,7 +2670,7 @@ viewComboTrial slots =
 
     else
         [ div [ HA.class "atelier-combo mb-4" ]
-            [ button [ HA.class "btn btn-mini", HE.onClick ComboTrialClicked ]
+            [ button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick ComboTrialClicked ]
                 [ text "選んだ組み合わせで試す", mockChip ]
             ]
         ]
@@ -2695,7 +2695,7 @@ viewGate model =
             [ text "ゲームが起きていません。切り替えは今すぐできますが、変化をその場で見るには起動しましょう" ]
             :: div [ HA.class "mt-3 flex items-center gap-3" ]
                 [ button
-                    [ HA.class "btn btn-primary"
+                    [ HA.class "d-btn d-btn-xs d-btn-primary"
                     , HA.disabled (launchBusy model.launch)
                     , HE.onClick StartGameClicked
                     ]
@@ -2708,7 +2708,7 @@ viewGate model =
                                 "▶ ゲームを起動する"
                         )
                     ]
-                , button [ HA.class "btn", HE.onClick PromoteAnywayClicked ]
+                , button [ HA.class "d-btn d-btn-xs", HE.onClick PromoteAnywayClicked ]
                     [ text "そのまま切り替える" ]
                 ]
             :: viewLaunch model
@@ -2827,7 +2827,7 @@ viewOverlay overlay =
                     Nothing ->
                         text ""
                 ]
-            , button [ HA.class "btn mt-6", HE.onClick OverlayClosed ]
+            , button [ HA.class "d-btn d-btn-xs mt-6", HE.onClick OverlayClosed ]
                 [ text "アトリエに戻る" ]
             ]
         ]
@@ -2884,18 +2884,18 @@ viewLightbox src bust lightbox =
                         -- 見比べて「これだ」の瞬間にその場で決められる —
                         -- 候補は採用、過去バージョン(prev)は戻す(既存経路に委譲)
                         if lightbox.isPrev then
-                            button [ HA.class "btn btn-mini", stopClick LightboxRollbackClicked ]
+                            button [ HA.class "d-btn d-btn-xs d-btn-mini", stopClick LightboxRollbackClicked ]
                                 [ text "↩ このバージョンに戻す" ]
 
                         else
-                            button [ HA.class "btn btn-primary btn-mini", stopClick LightboxSwapClicked ]
+                            button [ HA.class "d-btn d-btn-xs d-btn-primary d-btn-mini", stopClick LightboxSwapClicked ]
                                 [ text "🔄 これを使う" ]
 
                     Nothing ->
                         text ""
                 , case lightbox.compareWith of
                     Just _ ->
-                        button [ HA.class "btn btn-mini", stopClick CompareToggled ]
+                        button [ HA.class "d-btn d-btn-xs d-btn-mini", stopClick CompareToggled ]
                             [ text
                                 (if lightbox.showingCurrent then
                                     "候補に戻す"
@@ -2907,7 +2907,7 @@ viewLightbox src bust lightbox =
 
                     Nothing ->
                         text ""
-                , button [ HA.class "btn btn-mini", stopClick LightboxClosed ]
+                , button [ HA.class "d-btn d-btn-xs d-btn-mini", stopClick LightboxClosed ]
                     [ text "閉じる" ]
                 ]
             ]
@@ -2966,7 +2966,7 @@ viewCreateForm : Create -> List (Html Msg)
 viewCreateForm create =
     List.concat
         [ [ Html.textarea
-                [ HA.class "field h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+                [ HA.class "d-textarea d-textarea-sm h-auto min-h-[4.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
                 , HA.rows 3
                 , HA.placeholder "方向性: このアセットで何を、どんな雰囲気にしたいかを書きます"
                 , HA.value create.direction
@@ -2979,7 +2979,7 @@ viewCreateForm create =
                 )
           , div [ HA.class "mt-3" ]
                 [ button
-                    [ HA.class "btn btn-primary"
+                    [ HA.class "d-btn d-btn-xs d-btn-primary"
                     , HA.disabled (create.prompt == PromptLoading)
                     , HE.onClick MakePromptClicked
                     ]
@@ -3001,8 +3001,8 @@ viewCountButton : Int -> Int -> Html Msg
 viewCountButton current n =
     button
         [ HA.classList
-            [ ( "btn btn-mini", True )
-            , ( "btn-primary", current == n )
+            [ ( "d-btn d-btn-xs d-btn-mini", True )
+            , ( "d-btn-primary", current == n )
             ]
         , HE.onClick (CreateCountChosen n)
         ]
@@ -3025,13 +3025,13 @@ viewPromptBox create =
 
         PromptReady prompt ->
             [ Html.textarea
-                [ HA.class "atelier-prompt mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+                [ HA.class "atelier-prompt d-textarea mt-3 h-48 max-h-48 w-full resize-none overflow-y-auto rounded border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
                 , HA.readonly True
                 , HA.value prompt
                 ]
                 []
             , div [ HA.class "mt-2" ]
-                [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyPromptClicked ]
+                [ button [ HA.class "d-btn d-btn-xs d-btn-primary w-full", HE.onClick CopyPromptClicked ]
                     [ text
                         (if create.copied then
                             "✓ コピーしました"

@@ -544,7 +544,8 @@ viewToolbar config model shape =
         , span [ HA.class "sfx-vol" ]
             [ span [] [ text "音量" ]
             , input
-                [ HA.type_ "range"
+                [ HA.class "d-range d-range-xs"
+                , HA.type_ "range"
                 , HA.min "0"
                 , HA.max "1"
                 , HA.step "0.01"

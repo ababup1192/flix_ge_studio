@@ -108,11 +108,11 @@ viewCrudBar handlers state doc key section =
     -- ボタンの格: 追加=secondary / 複製・削除=tertiary(テキスト系)。
     -- 削除の確定(danger)はダイアログ側の担当
     div [ HA.class "crud-bar mb-1.5 flex shrink-0 items-center gap-1.5" ]
-        [ button [ HA.class "crud-add btn", HE.onClick handlers.onAdd ] [ text "+ 追加" ]
-        , button [ HA.class "crud-dup btn btn-ghost", HE.onClick handlers.onDuplicate, HA.disabled (not hasSelection) ] [ text "複製" ]
-        , button [ HA.class "crud-delete btn btn-ghost hover:text-danger", HE.onClick handlers.onDelete, HA.disabled (not hasSelection) ] [ text "削除" ]
+        [ button [ HA.class "crud-add d-btn d-btn-xs", HE.onClick handlers.onAdd ] [ text "+ 追加" ]
+        , button [ HA.class "crud-dup d-btn d-btn-xs d-btn-ghost", HE.onClick handlers.onDuplicate, HA.disabled (not hasSelection) ] [ text "複製" ]
+        , button [ HA.class "crud-delete d-btn d-btn-xs d-btn-ghost hover:text-danger", HE.onClick handlers.onDelete, HA.disabled (not hasSelection) ] [ text "削除" ]
         , input
-            [ HA.class "table-filter field ml-auto w-40 min-w-0"
+            [ HA.class "table-filter d-input d-input-sm ml-auto w-40 min-w-0"
             , HA.type_ "text"
             , HA.placeholder "絞り込み"
             , HA.value state.filter
@@ -172,7 +172,7 @@ viewRegularBox handlers state heightClass doc key section usageDict =
         rowOpsHeader =
             case rowOps of
                 Just _ ->
-                    [ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "操作" ] ]
+                    [ th [ HA.class headerCellClass ] [ text "操作" ] ]
 
                 Nothing ->
                     []
@@ -181,13 +181,13 @@ viewRegularBox handlers state heightClass doc key section usageDict =
         usageHeader =
             case usageDict of
                 Just _ ->
-                    [ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "使用" ] ]
+                    [ th [ HA.class headerCellClass ] [ text "使用" ] ]
 
                 Nothing ->
                     []
     in
     div [ HA.class ("table-wrap mb-2.5 overflow-auto rounded border border-edge " ++ heightClass) ]
-        [ table [ HA.class "entry-table w-full border-collapse font-mono text-[11px] tabular-nums whitespace-nowrap" ]
+        [ table [ HA.class "entry-table d-table d-table-xs d-table-pin-rows w-full font-mono text-[11px] tabular-nums whitespace-nowrap" ]
             [ thead []
                 [ tr []
                     ((viewHeaderCell handlers state.sort Table.idColumn idLabel False
@@ -222,18 +222,18 @@ viewOneOfBox handlers state heightClass doc key section =
         rowOpsHeader =
             case rowOps of
                 Just _ ->
-                    [ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "操作" ] ]
+                    [ th [ HA.class headerCellClass ] [ text "操作" ] ]
 
                 Nothing ->
                     []
     in
     div [ HA.class ("table-wrap mb-2.5 overflow-auto rounded border border-edge " ++ heightClass) ]
-        [ table [ HA.class "entry-table entry-table-oneof w-full border-collapse font-mono text-[11px] tabular-nums whitespace-nowrap" ]
+        [ table [ HA.class "entry-table entry-table-oneof d-table d-table-xs d-table-pin-rows w-full font-mono text-[11px] tabular-nums whitespace-nowrap" ]
             [ thead []
                 [ tr []
-                    ([ th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "#" ]
-                     , th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "カット" ]
-                     , th [ HA.class "sticky top-0 z-10 border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none" ] [ text "内容" ]
+                    ([ th [ HA.class headerCellClass ] [ text "#" ]
+                     , th [ HA.class headerCellClass ] [ text "カット" ]
+                     , th [ HA.class headerCellClass ] [ text "内容" ]
                      ]
                         ++ rowOpsHeader
                     )
@@ -356,6 +356,14 @@ viewExternalUsageSite handlers usage =
         [ text (usage.path ++ ": " ++ Refs.siteLabel usage.site) ]
 
 
+{-| 見出しセル共通の見た目。sticky は d-table-pin-rows の仕事なのでここには書かない
+(bg-raised は残す — pin-rows の下地は base-100 で、既存の見出し色と違うため)。
+-}
+headerCellClass : String
+headerCellClass =
+    "border-b border-edge bg-raised px-2 py-1 text-left font-normal text-ink-soft select-none"
+
+
 viewHeaderCell : Handlers msg -> Maybe Table.SortState -> String -> String -> Bool -> Html msg
 viewHeaderCell handlers sort column label numeric =
     let
@@ -378,7 +386,7 @@ viewHeaderCell handlers sort column label numeric =
     in
     th
         [ HA.classList
-            [ ( "sticky top-0 z-10 cursor-pointer border-b border-edge bg-raised px-2 py-1 font-normal text-ink-soft select-none hover:text-ink", True )
+            [ ( "cursor-pointer border-b border-edge bg-raised px-2 py-1 font-normal text-ink-soft select-none hover:text-ink", True )
             , ( "text-right", numeric )
             , ( "text-left", not numeric )
             ]
@@ -503,7 +511,7 @@ viewRowOpsCell handlers rowOps rowId =
             let
                 opButton className title_ enabled msg label =
                     button
-                        [ HA.class ("btn btn-ghost btn-mini shrink-0 " ++ className)
+                        [ HA.class ("d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0 " ++ className)
                         , HA.title title_
                         , HA.disabled (not enabled)
                         , HE.stopPropagationOn "click" (D.succeed ( msg, True ))
@@ -543,7 +551,7 @@ viewUsageCell handlers catalogUsage rowId =
 
                   else
                     button
-                        [ HA.class "usage-badge badge cursor-pointer bg-accent/15 font-semibold text-accent hover:bg-accent/25"
+                        [ HA.class "usage-badge d-badge d-badge-xs d-badge-soft d-badge-primary cursor-pointer font-semibold hover:bg-primary/25"
                         , HE.stopPropagationOn "click" (D.succeed ( handlers.onUsagesToggle ukey, True ))
                         ]
                         [ text (String.fromInt count) ]

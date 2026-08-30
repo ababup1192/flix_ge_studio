@@ -1517,7 +1517,7 @@ loopLabel loop =
 viewClipPicker : List ( String, Clip ) -> String -> Html Msg
 viewClipPicker clips current =
     select
-        [ HA.class "h-6 shrink-0 cursor-pointer rounded border border-edge bg-well px-1 font-mono text-[11px] text-ink-soft"
+        [ HA.class "d-select d-select-sm w-auto shrink-0 cursor-pointer font-mono text-[11px] text-ink-soft"
         , HA.title "どの動きを確かめるか"
         , HA.value current
         , HE.onInput ClipChosen
@@ -1666,7 +1666,7 @@ viewStatus : Model -> Int -> Int -> Html Msg
 viewStatus model cols rowCount =
     div [ HA.class "px-status flex h-8 shrink-0 items-center gap-2 border-t border-edge bg-panel px-3 text-[11px] text-ink-soft" ]
         [ button
-            [ HA.class "btn btn-mini"
+            [ HA.class "d-btn d-btn-xs d-btn-mini"
             , HA.title "縮小(ピンチイン・⌘ホイールでも)"
             , HA.disabled (model.cellPx <= smallestZoom)
             , HE.onClick (ZoomStepped -1)
@@ -1675,7 +1675,7 @@ viewStatus model cols rowCount =
         , span [ HA.class "w-10 text-center font-mono" ]
             [ text (String.fromInt (model.cellPx * 100 // 16) ++ "%") ]
         , button
-            [ HA.class "btn btn-mini"
+            [ HA.class "d-btn d-btn-xs d-btn-mini"
             , HA.title "拡大(ピンチアウト・⌘ホイールでも)"
             , HA.disabled (model.cellPx >= largestZoom)
             , HE.onClick (ZoomStepped 1)
@@ -1719,7 +1719,7 @@ viewPalette colors doc model =
          , div [ HA.class "mt-3 flex flex-wrap gap-1.5" ]
             ((swatches |> List.map (viewSwatch doc model))
                 ++ [ button
-                        [ HA.class "btn h-7 rounded-full"
+                        [ HA.class "d-btn d-btn-xs h-7 rounded-full"
                         , HE.onClick AddColorPressed
                         ]
                         [ text "◇ 色を足す" ]

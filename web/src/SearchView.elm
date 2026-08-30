@@ -223,7 +223,7 @@ view handlers model =
         div [ HA.class "search-panel fixed top-12 left-1/2 z-50 w-[42rem] max-w-[92vw] -translate-x-1/2 rounded-lg border border-edge bg-panel p-3 shadow-[0_8px_32px_rgb(0_0_0/0.5)]" ]
             [ div [ HA.class "flex items-center gap-2" ]
                 [ input
-                    [ HA.class "search-query field min-w-0 flex-1"
+                    [ HA.class "search-query d-input d-input-sm min-w-0 flex-1"
                     , HA.type_ "text"
                     , HA.placeholder "すべての Doc から探す(⌘⇧F)"
                     , HA.value model.query
@@ -233,7 +233,7 @@ view handlers model =
                     ]
                     []
                 , button
-                    [ HA.class "search-close btn btn-ghost btn-mini shrink-0"
+                    [ HA.class "search-close d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                     , HA.title "閉じる(Esc)"
                     , HE.onClick handlers.onClose
                     ]
@@ -241,7 +241,7 @@ view handlers model =
                 ]
             , div [ HA.class "mt-1.5 flex items-center gap-2" ]
                 [ input
-                    [ HA.class "search-replacement field min-w-0 flex-1"
+                    [ HA.class "search-replacement d-input d-input-sm min-w-0 flex-1"
                     , HA.type_ "text"
                     , HA.placeholder "置き換える文字(空のままなら探すだけ)"
                     , HA.value model.replacement
@@ -249,7 +249,7 @@ view handlers model =
                     ]
                     []
                 , button
-                    [ HA.class "search-replace btn shrink-0"
+                    [ HA.class "search-replace d-btn d-btn-xs shrink-0"
                     , HA.disabled (model.query == "" || List.isEmpty (plan model))
                     , HA.title "一覧の全部を置き換える(⌘Z で 1 回で戻せる)"
                     , HE.onClick handlers.onReplaceRun

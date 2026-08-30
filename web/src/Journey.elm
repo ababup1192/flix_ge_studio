@@ -231,12 +231,12 @@ view model =
 
             Failed _ ->
                 -- 提案が読めない時も行き止まりにしない。して欲しいことを言う
-                [ div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5" ]
+                [ div [ HA.class "journey-card d-card d-card-border border-edge bg-panel p-5" ]
                     [ div [ HA.class "text-sm font-semibold text-ink" ] [ text "ゲームをアレンジしてみましょう" ]
                     , div [ HA.class "mt-1.5 text-xs text-ink-soft" ]
                         [ text "ゲームのパラメータを変えられます。保存した瞬間、走っているゲームに反映されます。" ]
                     , div [ HA.class "mt-4" ]
-                        [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked ToArrange) ]
+                        [ button [ HA.class "d-btn d-btn-primary d-btn-xs", HE.onClick (GoClicked ToArrange) ]
                             [ text "アレンジする" ]
                         ]
                     ]
@@ -261,7 +261,7 @@ viewSuggestion state =
         s =
             state.suggestion
     in
-    div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5 shadow-[0_2px_8px_rgb(0_0_0/0.35)]" ]
+    div [ HA.class "journey-card d-card d-card-border border-edge bg-panel p-5 shadow-[0_2px_8px_rgb(0_0_0/0.35)]" ]
         [ div [ HA.class "flex items-start gap-3" ]
             [ span [ HA.class "journey-icon text-3xl leading-none" ] [ text (iconFor s.id) ]
             , div [ HA.class "min-w-0 flex-1" ]
@@ -272,9 +272,9 @@ viewSuggestion state =
                 ]
             ]
         , div [ HA.class "mt-4 flex items-center gap-3" ]
-            [ button [ HA.class "btn btn-primary", HE.onClick (GoClicked s.nav) ]
+            [ button [ HA.class "d-btn d-btn-primary d-btn-xs", HE.onClick (GoClicked s.nav) ]
                 [ text (goLabel s.nav) ]
-            , button [ HA.class "journey-skip cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft", HE.onClick SkipClicked ]
+            , button [ HA.class "journey-skip d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink", HE.onClick SkipClicked ]
                 [ text "スキップ" ]
             ]
         ]
@@ -293,7 +293,7 @@ viewChecksLine checks =
 
 quietCard : String -> String -> Html msg
 quietCard title detail =
-    div [ HA.class "journey-card rounded-lg border border-edge bg-panel p-5" ]
+    div [ HA.class "journey-card d-card d-card-border border-edge bg-panel p-5" ]
         [ div [ HA.class "text-sm font-semibold text-ink" ] [ text title ]
         , div [ HA.class "mt-1.5 text-xs text-ink-soft" ] [ text detail ]
         ]
@@ -385,9 +385,10 @@ viewTrail sid =
         step index label =
             span
                 [ HA.classList
-                    [ ( "journey-step badge", True )
-                    , ( "journey-step-done bg-ok/15 text-ok", done index )
-                    , ( "journey-step-current bg-accent/20 text-accent ring-1 ring-accent/50", current == Just index )
+                    [ ( "journey-step d-badge d-badge-xs", True )
+                    , ( "d-badge-ghost text-ink-soft", not (done index) && current /= Just index )
+                    , ( "journey-step-done d-badge-soft d-badge-success", done index )
+                    , ( "journey-step-current d-badge-soft d-badge-primary ring-1 ring-primary/50", current == Just index )
                     ]
                 ]
                 [ text

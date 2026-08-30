@@ -210,7 +210,7 @@ staleBefore scenes =
 
 viewCard : Ctx -> Int -> Scene -> Html Msg
 viewCard ctx stale scene =
-    div [ HA.class "gallery-card flex flex-col overflow-hidden rounded-lg border border-edge bg-panel" ]
+    div [ HA.class "gallery-card d-card d-card-border overflow-hidden rounded-lg border-edge bg-panel" ]
         [ img
             [ HA.class "scene-shot block w-full cursor-zoom-in bg-well"
             , HA.src (shotUrl ctx scene)

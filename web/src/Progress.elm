@@ -31,7 +31,7 @@ view cfg =
                 span [ HA.class "shrink-0 text-xs text-danger" ] [ text "✗" ]
 
               else
-                span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
             , span
                 [ HA.classList
                     [ ( "min-w-0 flex-1 text-[11px]", True )
@@ -41,7 +41,7 @@ view cfg =
                 ]
                 [ text cfg.message ]
             , button
-                [ HA.class "btn btn-ghost btn-mini shrink-0"
+                [ HA.class "d-btn d-btn-xs d-btn-ghost d-btn-mini shrink-0"
                 , HA.title
                     (if cfg.expanded then
                         "ログをたたむ"

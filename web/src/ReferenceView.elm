@@ -201,7 +201,7 @@ viewHead handlers model =
             ]
             [ text summary ]
         , span [ HA.class "flex-1" ] []
-        , button [ HA.class "reference-close btn btn-mini", HE.onClick handlers.onClose ] [ text "閉じる(Esc)" ]
+        , button [ HA.class "reference-close d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onClose ] [ text "閉じる(Esc)" ]
         ]
 
 
@@ -302,7 +302,7 @@ viewCompareHead handlers item =
 
           else
             button
-                [ HA.class "reference-update btn btn-mini"
+                [ HA.class "reference-update d-btn d-btn-xs d-btn-mini"
                 , HA.title "今の描き出した絵を新しいリファレンス画像にする(元には戻せません)"
                 , HE.onClick (handlers.onUpdate item)
                 ]
@@ -317,7 +317,7 @@ viewImage handlers urls model item =
         tab mode label =
             button
                 [ HA.classList
-                    [ ( "reference-mode btn btn-mini", True )
+                    [ ( "reference-mode d-btn d-btn-xs d-btn-mini", True )
                     , ( "bg-accent text-white hover:bg-accent", model.mode == mode )
                     ]
                 , HE.onClick (handlers.onMode mode)
@@ -337,7 +337,7 @@ viewImage handlers urls model item =
         , case model.mode of
             Overlay ->
                 input
-                    [ HA.class "reference-opacity ml-2 w-40"
+                    [ HA.class "reference-opacity d-range d-range-xs ml-2 w-40"
                     , HA.type_ "range"
                     , HA.min "0"
                     , HA.max "1"
@@ -387,7 +387,7 @@ viewSound handlers item =
     let
         play label dir =
             button
-                [ HA.class "reference-play btn btn-mini"
+                [ HA.class "reference-play d-btn d-btn-xs d-btn-mini"
                 , HE.onClick (handlers.onPlay { name = item.name, dir = dir })
                 ]
                 [ text label ]

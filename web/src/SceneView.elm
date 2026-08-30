@@ -142,7 +142,7 @@ viewChips handlers state =
             chip cls label active msg =
                 button
                     [ HA.classList
-                        [ ( cls ++ " badge cursor-pointer", True )
+                        [ ( cls ++ " d-badge d-badge-xs cursor-pointer", True )
                         , ( "bg-accent/20 text-accent", active )
                         , ( "text-ink-faint hover:text-ink-soft", not active )
                         ]
@@ -185,7 +185,7 @@ viewPicture handlers state =
                     []
                 , if state.baking then
                     div [ HA.class "mini-baking absolute inset-0 flex items-center justify-center gap-2 rounded bg-black/60 text-[11px] text-ink" ]
-                        [ span [ HA.class "progress-spinner shrink-0", HA.attribute "aria-hidden" "true" ] []
+                        [ span [ HA.class "d-loading d-loading-spinner d-loading-xs text-accent shrink-0", HA.attribute "aria-hidden" "true" ] []
                         , text "描き直しています…"
                         ]
 
@@ -207,9 +207,9 @@ viewStatus handlers state =
         [ div [ HA.class "mt-2 flex items-center gap-1.5 text-[11px] text-ink-soft" ]
             [ span
                 [ HA.classList
-                    [ ( "inline-block h-2 w-2 rounded-full", True )
-                    , ( "bg-ok", running )
-                    , ( "bg-danger", not running && state.failed )
+                    [ ( "d-status", True )
+                    , ( "d-status-success", running )
+                    , ( "d-status-error", not running && state.failed )
                     , ( "bg-ink-faint", not running && not state.failed )
                     ]
                 ]
@@ -226,16 +226,16 @@ viewStatus handlers state =
                 )
             , span [ HA.class "flex-1" ] []
             , if running then
-                button [ HA.class "btn btn-mini", HE.onClick handlers.onStop ] [ text "■ 止める" ]
+                button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onStop ] [ text "■ 止める" ]
 
               else if state.starting then
-                button [ HA.class "btn btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]
+                button [ HA.class "d-btn d-btn-xs d-btn-mini", HA.disabled True ] [ text "⏳ 起動しています…" ]
 
               else if state.failed then
-                button [ HA.class "mini-retry btn btn-mini", HE.onClick handlers.onStart ] [ text "↻ もう一度起動する" ]
+                button [ HA.class "mini-retry d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onStart ] [ text "↻ もう一度起動する" ]
 
               else
-                button [ HA.class "btn btn-mini", HE.onClick handlers.onStart ] [ text "▶ 起動する" ]
+                button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onStart ] [ text "▶ 起動する" ]
             ]
         , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
             [ text
@@ -324,6 +324,6 @@ viewZoom handlers state =
                     []
                 , div [ HA.class "flex items-center gap-3" ]
                     [ div [ HA.class "font-mono text-[11px] text-ink" ] [ text (sceneLabel name) ]
-                    , button [ HA.class "btn btn-mini", HE.onClick handlers.onZoomClosed ] [ text "閉じる" ]
+                    , button [ HA.class "d-btn d-btn-xs d-btn-mini", HE.onClick handlers.onZoomClosed ] [ text "閉じる" ]
                     ]
                 ]

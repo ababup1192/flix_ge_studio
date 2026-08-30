@@ -250,7 +250,7 @@ view ctx model =
 
     else
         div [ HA.class "tickets mx-auto mt-6 w-full max-w-lg px-4" ]
-            [ div [ HA.class "rounded-lg border border-edge bg-panel p-5" ]
+            [ div [ HA.class "d-card d-card-border border-edge bg-panel p-5" ]
                 (div [ HA.class "flex items-baseline gap-2" ]
                     [ span [ HA.class "text-sm font-semibold text-ink" ]
                         [ text ("🎫 アノテーションチケット(" ++ String.fromInt (List.length model.tickets) ++ ")") ]
@@ -272,7 +272,7 @@ viewTicket ctx model ticket =
         canReport =
             String.trim comment /= ""
     in
-    div [ HA.class "mt-3 flex gap-3 rounded-md border border-edge p-3" ]
+    div [ HA.class "d-card d-card-border mt-3 flex-row gap-3 rounded-md border-edge p-3" ]
         [ viewShot ctx ticket
         , div [ HA.class "min-w-0 flex-1" ]
             [ -- 見出しは「どこのアノテーションか」と「いつ切ったか」の 2 行に分けて全文を見せる
@@ -288,7 +288,7 @@ viewTicket ctx model ticket =
                 Just stamp ->
                     div [ HA.class "text-[11px] text-ink-faint" ] [ text stamp ]
             , input
-                [ HA.class "mt-1.5 w-full rounded border border-edge bg-transparent px-2 py-1 text-xs text-ink"
+                [ HA.class "d-input d-input-sm mt-1.5 w-full"
                 , HA.placeholder "ここに不具合の内容を記述"
                 , HA.value comment
                 , HE.onInput (CommentEdited ticket.id)
@@ -297,7 +297,7 @@ viewTicket ctx model ticket =
                 []
             , div [ HA.class "mt-2 flex items-center gap-3" ]
                 [ button
-                    [ HA.class "btn btn-primary text-xs"
+                    [ HA.class "d-btn d-btn-primary d-btn-xs"
                     , HA.disabled (not canReport)
                     , HA.title "一言とチケットの場所をプロンプトにしてコピーします(Claude Code に貼ってください)"
                     , HE.onClick (ReportClicked ticket)
@@ -311,7 +311,7 @@ viewTicket ctx model ticket =
                         )
                     ]
                 , button
-                    [ HA.class "cursor-pointer text-[11px] text-ink-faint hover:text-ink-soft"
+                    [ HA.class "d-btn d-btn-ghost d-btn-xs text-[11px] font-normal text-ink-faint hover:text-ink"
                     , HA.title "済んだチケットを archive/ へ移して一覧から下げます(消しません)"
                     , HE.onClick (ArchiveClicked ticket)
                     ]
@@ -328,14 +328,14 @@ viewMark : Ticket -> Html Msg
 viewMark ticket =
     if ticket.isSketch then
         span
-            [ HA.class "ticket-mark shrink-0 rounded-sm bg-accent/20 px-1 text-[10px] text-ink-soft"
+            [ HA.class "ticket-mark d-badge d-badge-xs d-badge-soft d-badge-primary shrink-0"
             , HA.title "ラフと見比べて気づいた事"
             ]
             [ text "ラフ比較" ]
 
     else
         span
-            [ HA.class "ticket-mark shrink-0 rounded-sm bg-white/10 px-1 text-[10px] text-ink-faint"
+            [ HA.class "ticket-mark d-badge d-badge-xs d-badge-ghost shrink-0 text-ink-faint"
             , HA.title "遊んでいて気づいた事"
             ]
             [ text "遊んで" ]

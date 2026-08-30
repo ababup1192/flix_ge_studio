@@ -961,7 +961,7 @@ viewGenesis genres model =
                     [ div [ HA.class "text-[11px] text-ink-faint" ]
                         [ text "ジャンルをひとつ選ぶと、ここに次の一歩が出ます" ]
                     , div [ HA.class "mt-2" ]
-                        [ button [ HA.class "btn btn-primary", HA.disabled True ]
+                        [ button [ HA.class "d-btn d-btn-xs d-btn-primary", HA.disabled True ]
                             [ text "テンプレートではじめる →" ]
                         ]
                     ]
@@ -1085,7 +1085,7 @@ viewStarterForm model =
     viewNameTitle model
         ++ [ div [ HA.class "mt-3" ]
                 [ button
-                    [ HA.class "btn btn-primary"
+                    [ HA.class "d-btn d-btn-xs d-btn-primary"
                   , HA.disabled (not (canCreate model))
                     , HE.onClick CreateClicked
                     ]
@@ -1108,7 +1108,7 @@ viewNameTitle : Model -> List (Html Msg)
 viewNameTitle model =
     [ div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "フォルダ名" ]
     , input
-        [ HA.class "field mt-1 w-full font-mono text-xs"
+        [ HA.class "d-input d-input-sm mt-1 w-full font-mono text-xs"
         , HA.placeholder "[a-z][a-z0-9_]*"
         , HA.value model.name
         , HE.onInput NameEdited
@@ -1122,7 +1122,7 @@ viewNameTitle model =
             text ""
     , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "タイトル" ]
     , input
-        [ HA.class "field mt-1 w-full text-xs"
+        [ HA.class "d-input d-input-sm mt-1 w-full text-xs"
         , HA.placeholder "ゲームタイトル"
         , HA.value model.title
         , HE.onInput TitleEdited
@@ -1158,7 +1158,7 @@ viewSketchDraw model =
     , footer =
         [ div [ HA.class "flex items-center gap-3" ]
             [ button
-                [ HA.class "btn btn-primary"
+                [ HA.class "d-btn d-btn-xs d-btn-primary"
                 , HA.disabled (not (canCreateSketch model))
                 , HE.onClick CreateClicked
                 ]
@@ -1203,7 +1203,7 @@ viewSketchCreated created model =
                             [ text "⏳ プロンプトを取り寄せています…" ]
 
                       else
-                        button [ HA.class "newgame-created-retry btn btn-primary w-full", HE.onClick CreatedRetryClicked ]
+                        button [ HA.class "newgame-created-retry d-btn d-btn-xs d-btn-primary w-full", HE.onClick CreatedRetryClicked ]
                             [ text "プロンプトを取得できませんでした — 取り直す" ]
                     ]
                 ]
@@ -1211,7 +1211,7 @@ viewSketchCreated created model =
             else
                 [ viewPromptTextarea CreatedPromptEdited created.prompt
                 , div [ HA.class "mt-2" ]
-                    [ button [ HA.class "newgame-sketch-open btn btn-primary w-full", HE.onClick OpenCreatedClicked ]
+                    [ button [ HA.class "newgame-sketch-open d-btn d-btn-xs d-btn-primary w-full", HE.onClick OpenCreatedClicked ]
                         [ text
                             (case ( model.genesisCopied, created.dir ) of
                                 ( True, Just _ ) ->
@@ -1233,7 +1233,7 @@ viewSketchCreated created model =
                 ]
            )
         ++ [ div [ HA.class "mt-3" ]
-                [ button [ HA.class "newgame-sketch-restart btn btn-mini", HE.onClick SketchRestartClicked ]
+                [ button [ HA.class "newgame-sketch-restart d-btn d-btn-xs d-btn-mini", HE.onClick SketchRestartClicked ]
                     [ text "🎨 新しいラフでもう一度" ]
                 ]
            ]
@@ -1261,7 +1261,7 @@ viewFreeConfirm genre model =
         ]
     , div [ HA.class "mt-2 text-[11px] text-ink-soft" ] [ text "どんなゲーム?" ]
     , Html.textarea
-        [ HA.class "field mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
+        [ HA.class "d-textarea d-textarea-sm mt-1 h-auto min-h-[3.5rem] w-full resize-y py-1.5 text-xs leading-relaxed"
         , HA.rows 2
         , HA.placeholder "どんな世界で、何をして遊ぶゲームかを言葉で書きます"
         , HA.value model.freeDirection
@@ -1270,7 +1270,7 @@ viewFreeConfirm genre model =
         []
     , div [ HA.class "mt-2" ]
         [ button
-            [ HA.class "btn btn-primary"
+            [ HA.class "d-btn d-btn-xs d-btn-primary"
             , HA.disabled
                 (String.trim model.freeDirection
                     == ""
@@ -1312,7 +1312,7 @@ viewGenesisPrompt model =
         GenesisReady prompt ->
             [ viewPromptTextarea GenesisPromptEdited prompt
             , div [ HA.class "mt-2" ]
-                [ button [ HA.class "btn btn-primary w-full", HE.onClick CopyGenesisPromptClicked ]
+                [ button [ HA.class "d-btn d-btn-xs d-btn-primary w-full", HE.onClick CopyGenesisPromptClicked ]
                     [ text
                         (if model.genesisCopied then
                             "✓ コピーしました"
@@ -1333,7 +1333,7 @@ viewGenesisPrompt model =
 viewPromptTextarea : (String -> Msg) -> String -> Html Msg
 viewPromptTextarea onEdit prompt =
     Html.textarea
-        [ HA.class "newgame-genesis-prompt mt-2 h-44 max-h-44 w-full resize-none overflow-y-auto rounded border border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
+        [ HA.class "newgame-genesis-prompt d-textarea mt-2 h-44 max-h-44 w-full resize-none overflow-y-auto rounded border-edge bg-black/40 p-2 font-mono text-[11px] leading-relaxed text-ink"
         , HA.value prompt
         , HE.onInput onEdit
         ]
@@ -1359,7 +1359,7 @@ viewForm : Model -> List (Html Msg)
 viewForm model =
     [ div [ HA.class "mt-1 text-[11px] text-ink-soft" ] [ text "フォルダ名" ]
     , input
-        [ HA.class "field mt-1 w-full font-mono text-xs"
+        [ HA.class "d-input d-input-sm mt-1 w-full font-mono text-xs"
         , HA.placeholder "[a-z][a-z0-9_]*"
         , HA.value model.name
         , HE.onInput NameEdited
@@ -1373,7 +1373,7 @@ viewForm model =
             text ""
     , div [ HA.class "mt-3 text-[11px] text-ink-soft" ] [ text "タイトル" ]
     , input
-        [ HA.class "field mt-1 w-full text-xs"
+        [ HA.class "d-input d-input-sm mt-1 w-full text-xs"
         , HA.placeholder "ゲームタイトル"
         , HA.value model.title
         , HE.onInput TitleEdited
@@ -1384,7 +1384,7 @@ viewForm model =
     , div [ HA.class "mt-2 flex items-center gap-2" ]
         [ span [ HA.class "text-[11px] text-ink-soft" ] [ text "よこ" ]
         , input
-            [ HA.class "field w-20 font-mono text-xs"
+            [ HA.class "d-input d-input-sm w-20 font-mono text-xs"
             , HA.type_ "number"
             , HA.value model.w
             , HE.onInput WidthEdited
@@ -1392,7 +1392,7 @@ viewForm model =
             []
         , span [ HA.class "text-[11px] text-ink-soft" ] [ text "たて" ]
         , input
-            [ HA.class "field w-20 font-mono text-xs"
+            [ HA.class "d-input d-input-sm w-20 font-mono text-xs"
             , HA.type_ "number"
             , HA.value model.h
             , HE.onInput HeightEdited
@@ -1401,7 +1401,7 @@ viewForm model =
         ]
     , div [ HA.class "mt-3" ]
         [ button
-            [ HA.class "btn btn-primary"
+            [ HA.class "d-btn d-btn-xs d-btn-primary"
           , HA.disabled (not (canCreate model))
             , HE.onClick CreateClicked
             ]
@@ -1433,8 +1433,8 @@ viewPreset model preset =
     in
     button
         [ HA.classList
-            [ ( "btn btn-mini", True )
-            , ( "btn-primary", active )
+            [ ( "d-btn d-btn-xs d-btn-mini", True )
+            , ( "d-btn-primary", active )
             ]
         , HE.onClick (PresetChosen preset.w preset.h)
         ]

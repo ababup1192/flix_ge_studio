@@ -5,7 +5,6 @@ import "../styles.css";
 import "@shoelace-style/shoelace/dist/themes/dark.css";
 import "@shoelace-style/shoelace/dist/components/range/range.js";
 import "@shoelace-style/shoelace/dist/components/dialog/dialog.js";
-import "@shoelace-style/shoelace/dist/components/alert/alert.js";
 import "@shoelace-style/shoelace/dist/components/color-picker/color-picker.js";
 import { realApi } from "./realApi";
 import { applyDocAppend, applyDocEdit, applyDocEdits, applyDocRemove, rangeAt, type DocEditOp, type PathSeg } from "./docEdit";

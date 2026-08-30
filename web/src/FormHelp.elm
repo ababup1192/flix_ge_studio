@@ -27,7 +27,8 @@ toggle onToggle open key help =
     case help of
         Just _ ->
             button
-                [ HA.class "help-toggle ml-1 inline-flex h-3.5 w-3.5 cursor-pointer items-center justify-center rounded-full border border-edge text-[9px] leading-none text-ink-faint hover:border-accent hover:text-accent"
+                [ -- h-3.5 w-3.5 は d-btn-xs(24px)を従来の密度(14px)へ寄せる補正
+                  HA.class "help-toggle d-btn d-btn-circle d-btn-ghost d-btn-xs ml-1 h-3.5 w-3.5 border border-edge text-[9px] leading-none font-normal text-ink-faint hover:border-accent hover:text-accent"
                 , HA.title "説明"
                 , HA.attribute "aria-expanded"
                     (if Set.member key open then

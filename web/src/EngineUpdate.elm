@@ -321,7 +321,7 @@ view handlers state =
                         [ span [ HA.class "text-[10px] text-muted tabular-nums" ]
                             [ text ("engine " ++ version ++ " が出ています") ]
                         , button
-                            [ HA.class "btn btn-mini"
+                            [ HA.class "d-btn d-btn-xs d-btn-mini"
                             , HA.title "engine だけを新しくします(開いているゲームはそのまま走り続けます)"
                             , HE.onClick (handlers.onUpdate version)
                             ]
@@ -379,7 +379,7 @@ gameLagView handlers state =
                 [ span [ HA.class "text-[10px] text-muted tabular-nums" ]
                     [ text ("このゲームは engine " ++ version ++ " のままです") ]
                 , button
-                    [ HA.class "btn btn-mini"
+                    [ HA.class "d-btn d-btn-xs d-btn-mini"
                     , HA.title "このゲームが使う engine を、いま Studio が使っている物へそろえます"
                     , HE.onClick handlers.onUpgradeGame
                     ]

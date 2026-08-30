@@ -1862,7 +1862,7 @@ viewRowButtons rows =
 growButton : String -> Msg -> Html Msg
 growButton label msg =
     button
-        [ HA.class "btn btn-mini h-6 w-6 justify-center"
+        [ HA.class "d-btn d-btn-xs d-btn-mini h-6 w-6 justify-center"
         , HA.title label
         , HE.onClick msg
         ]
@@ -1872,7 +1872,7 @@ growButton label msg =
 shrinkButton : String -> Bool -> Msg -> Html Msg
 shrinkButton label enabled msg =
     button
-        [ HA.class "btn btn-mini h-6 w-6 justify-center"
+        [ HA.class "d-btn d-btn-xs d-btn-mini h-6 w-6 justify-center"
         , HA.title label
         , HA.disabled (not enabled)
         , HE.onClick msg
@@ -1884,7 +1884,7 @@ viewStatus : Model -> List String -> Html Msg
 viewStatus model rows =
     div [ HA.class "map-status flex h-8 shrink-0 items-center gap-2 border-t border-edge bg-panel px-3 text-[11px] text-ink-soft" ]
         [ button
-            [ HA.class "btn btn-mini"
+            [ HA.class "d-btn d-btn-xs d-btn-mini"
             , HA.title "縮小(ピンチイン・⌘ホイールでも)"
             , HA.disabled (Just model.cellPx == List.head zoomLevels)
             , HE.onClick (ZoomStepped -1)
@@ -1893,7 +1893,7 @@ viewStatus model rows =
         , span [ HA.class "w-10 text-center font-mono" ]
             [ text (String.fromInt (model.cellPx * 100 // baseCellPx) ++ "%") ]
         , button
-            [ HA.class "btn btn-mini"
+            [ HA.class "d-btn d-btn-xs d-btn-mini"
             , HA.title "拡大(ピンチアウト・⌘ホイールでも)"
             , HA.disabled (Just model.cellPx == List.head (List.reverse zoomLevels))
             , HE.onClick (ZoomStepped 1)
@@ -2177,8 +2177,8 @@ viewConfirm confirm =
         [ div [ HA.class "w-72 rounded border border-edge bg-panel p-4 shadow-lg" ]
             [ div [ HA.class "mb-3 text-xs text-ink" ] [ text message ]
             , div [ HA.class "flex justify-end gap-2" ]
-                [ button [ HA.class "btn", HE.onClick ConfirmDismissed ] [ text "やめる" ]
-                , button [ HA.class "btn btn-danger", HE.onClick ConfirmAccepted ] [ text okLabel ]
+                [ button [ HA.class "d-btn d-btn-xs", HE.onClick ConfirmDismissed ] [ text "やめる" ]
+                , button [ HA.class "d-btn d-btn-xs d-btn-error", HE.onClick ConfirmAccepted ] [ text okLabel ]
                 ]
             ]
         ]
