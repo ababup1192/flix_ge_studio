@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 env:
-  FLIX_VERSION: "0.75.1"
+  FLIX_VERSION: "0.75.3"
 
 jobs:
   # engine_full.fpkg は engine リポにコミットされていない (gitignore)。作るには
