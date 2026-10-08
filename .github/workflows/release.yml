@@ -16,10 +16,10 @@ on:
   workflow_dispatch:
 
 env:
-  FLIX_VERSION: "0.75.3"
+  FLIX_VERSION: "0.77.0"
 
 jobs:
-  # engine_full.fpkg は engine リポにコミットされていない (gitignore)。作るには
+  # engine の fpkg は engine リポにコミットされていない (gitignore)。作るには
   # symlink + bash の make sync-engine-full が要るので、ubuntu で 1 回だけ焼いて
   # 両 OS のジョブへ配る。
   prepare:
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: engine-full-fpkg
-          path: engine_full/artifact/engine_full.fpkg
+          path: engine_full/artifact/package.fpkg
 
   windows:
     runs-on: windows-latest

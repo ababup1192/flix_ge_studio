@@ -209,19 +209,19 @@ app: jar web jre
 # ので中身が古くても新しい版に見え、Flix は「版名が同じなら取り直さない」から、
 # 使う人の側では engine にも Release にも在る def が「Undefined name」になって終わる。
 # engine のソースが手元に無いとき (CI の一部) は judge できないので黙って通す。
-ENGINE_FULL_FPKG := $(ENGINE)/engine_full/artifact/engine_full.fpkg
+ENGINE_FULL_FPKG := $(ENGINE)/engine_full/artifact/package.fpkg
 ENGINE_SRC_PKGS  := engine render_gl engine_world engine_tools
 .PHONY: check-engine-full
 check-engine-full:
 	@test -f "$(ENGINE_FULL_FPKG)" \
-	  || (echo "!! engine_full.fpkg がありません: $(ENGINE_FULL_FPKG) (engine で make sync-engine-full)" && exit 1)
+	  || (echo "!! engine の fpkg がありません: $(ENGINE_FULL_FPKG) (engine で make sync-engine-full)" && exit 1)
 	@dirs=""; for p in $(ENGINE_SRC_PKGS); do [ -d "$(ENGINE)/$$p/src" ] && dirs="$$dirs $(ENGINE)/$$p/src"; done; \
 	 if [ -z "$$dirs" ]; then \
 	   echo "==> [engine] engine のソースが無いので鮮度は見ません"; \
 	 else \
 	   newer=$$(find $$dirs -name '*.flix' -newer "$(ENGINE_FULL_FPKG)" 2>/dev/null | head -5); \
 	   if [ -n "$$newer" ]; then \
-	     echo "!! engine_full.fpkg が engine のソースより古いです。engine で make sync-engine-full してください"; \
+	     echo "!! engine の fpkg が engine のソースより古いです。engine で make sync-engine-full してください"; \
 	     echo "$$newer" | sed 's/^/  新しい: /'; exit 1; \
 	   fi; \
 	 fi
