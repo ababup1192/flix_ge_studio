@@ -2,7 +2,7 @@
 // 変わったら知らせる・見たければ前と今を見比べる・戻すのはアセットのバージョン(アーカイブ)。
 //
 // pump が 1 目盛り進める (journey/state と GET /changes が呼ぶ):
-//   1. アセットが絵より新しい (stale) → 走行権が空いていれば焼きを裏で起こす。
+//   1. アセットの中身が前の描き出しから変わった (stale) → 走行権が空いていれば焼きを裏で起こす。
 //      このプロジェクトのゲームが走っていて命令口 (DEBUG_HTTP_PORT) を覚えていれば
 //      走行中のゲームに頼み (速い)、それ以外は従来の make bake
 //   2. 焼きたてでリファレンス画像と違う絵がある → 旧いリファレンス画像を reference/archive/ の vN へ退避し、
@@ -14,6 +14,7 @@
 mod Changes {
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.lang.System
+    import java.lang.Exception
     import java.io.{File => JFile}
     import java.io.FileOutputStream
     import java.nio.file.Files
@@ -22,10 +23,11 @@ mod Changes {
     use Util.Json.Json.{JObject, JArray, JString, JBool, JNumber}
 
     /// dir ごとの記録 (キー: "<dir>|list" = "name,ver;name,ver…"、"<dir>|seen"、
-    /// "<dir>|stamp" = 最後に成功した描き出しを起こす直前のアセットの新しさ、
+    /// "<dir>|stamp" = 最後に成功した描き出しを起こす直前のアセットの指紋
+    /// (NextStep.computeAssetsFingerprint)、
     /// "<dir>|failedStamp" = 失敗したときの同じ値 (これを超えるまで起こし直さない)、
     /// "<dir>|pending" = 起こした描き出しの通し番号、"<dir>|pendingStamp" = その控え、
-    /// "<dir>|renderAt" = 最後に描き出しを起こした時刻)。
+    /// "<dir>|renderAt" = 最後に描き出しを起こした時刻、"hash|<パス>" = NextStep のハッシュの使い回し)。
     /// Runner と同じ理由で Java の Map を借りる (リクエストをまたいで生きる可変の器)。
     pub type alias State = JMap[String, String]
 
@@ -38,20 +40,21 @@ mod Changes {
         let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
         let firsts = items |> List.filter(item -> snd(item) == "missingReference") |> List.map(fst);
         let running = Runner.runningTarget(runner) == Some("render");
-        let stale = NextStep.staleGalleryOf(dir, stampOf(state, dir));
+        // 起こす前に測る。描き出している最中に入った保存はこの指紋と違うので、
+        // 次の目盛りでそのまま拾える。
+        let fingerprint = NextStep.computeAssetsFingerprint(state, dir);
+        let stale = NextStep.staleGalleryOf(dir, fingerprint, stampOf(state, dir));
         let baking =
-            if (stale and not running and not isBlocked(state, dir)) {
-                // 起こす直前に測る。描き出している最中に入った保存はこの値より新しいので、
-                // 次の目盛りでそのまま拾える。
-                let candidate = NextStep.assetsMaxMtime(dir);
+            if (stale and not running and not isBlocked(state, dir, fingerprint)) {
+                let candidate = fingerprint;
                 let startedAt = System.currentTimeMillis();
                 let (status, _) = launchBake(runner, game, dir);
                 if (status == 202) {
                     discard state.put("${dir}|renderAt", "${startedAt}");
                     match (Runner.currentRunId(runner), candidate) {
-                        case (Some(runId), Some(mtime)) =>
+                        case (Some(runId), Some(print)) =>
                             discard state.put("${dir}|pending", "${runId}");
-                            discard state.put("${dir}|pendingStamp", "${mtime}")
+                            discard state.put("${dir}|pendingStamp", print)
                         case _ => ()
                     }
                 } else ();
@@ -105,7 +108,8 @@ mod Changes {
                     clearPending(state, dir);
                     if (last#exitCode == 0) {
                         discard state.remove("${dir}|failedStamp");
-                        putStamp(state, "${dir}|stamp", candidate)
+                        putStamp(state, "${dir}|stamp", candidate);
+                        foreach (print <- candidate) saveStamp(dir, print)
                     } else
                         // 失敗したまま起こし続けると、直らない限り繰り返しになる。
                         // アセットがこの値を追い越す (＝誰かが直した) まで自動では起こさない。
@@ -120,17 +124,32 @@ mod Changes {
         discard state.remove("${dir}|pending");
         discard state.remove("${dir}|pendingStamp")
 
-    def putStamp(state: State, key: String, value: Option[Int64]): Unit \ IO =
+    def putStamp(state: State, key: String, value: Option[String]): Unit \ IO =
         match value {
-            case Some(mtime) => discard state.put(key, "${mtime}")
+            case Some(print) => discard state.put(key, print)
             case None        => ()
         }
 
-    def stampOf(state: State, dir: String): Option[Int64] \ IO =
-        int64At(state, "${dir}|stamp")
+    /// 最後に成功した描き出しの指紋。メモリに無ければ (Studio を起こした直後)
+    /// ディスクの書き残しを 1 回だけ読む。
+    ///
+    /// WhyNot: 起こした直後を「覚えていない」のまま時刻の比較に任せない。中身の同じ保存で
+    /// 時刻だけ進んでいると、起動のたびに描き出しが 1 回余計に走る。
+    def stampOf(state: State, dir: String): Option[String] \ IO =
+        match stringAt(state, "${dir}|stamp") {
+            case Some(print) => Some(print)
+            case None        =>
+                if (Object.isNull(state.putIfAbsent("${dir}|stampLoaded", "true")))
+                    loadStamp(dir) |> Option.map(print -> { discard state.put("${dir}|stamp", print); print })
+                else None
+        }
 
-    def pendingStampOf(state: State, dir: String): Option[Int64] \ IO =
-        int64At(state, "${dir}|pendingStamp")
+    def pendingStampOf(state: State, dir: String): Option[String] \ IO =
+        stringAt(state, "${dir}|pendingStamp")
+
+    def stringAt(state: State, key: String): Option[String] \ IO =
+        let value = state.get(key);
+        if (Object.isNull(value)) None else Some(value)
 
     def int64At(state: State, key: String): Option[Int64] \ IO =
         let value = state.get(key);
@@ -140,12 +159,49 @@ mod Changes {
         let value = state.get("${dir}|pending");
         if (Object.isNull(value)) None else Int32.fromString(value)
 
-    /// 前の描き出しが失敗した値のまま、アセットが動いていないか。
-    def isBlocked(state: State, dir: String): Bool \ IO =
-        match (int64At(state, "${dir}|failedStamp"), NextStep.assetsMaxMtime(dir)) {
-            case (Some(failed), Some(now)) => now <= failed
+    /// 前の描き出しが失敗した中身のまま、アセットが変わっていないか。
+    def isBlocked(state: State, dir: String, fingerprint: Option[String]): Bool \ IO =
+        match (stringAt(state, "${dir}|failedStamp"), fingerprint) {
+            case (Some(failed), Some(now)) => now == failed
             case (Some(_), None)           => true
             case _                         => false
+        }
+
+    // ── 指紋の書き残し (~/.flix_ge_studio/bake-stamps.json) ───────
+
+    def stampsFile(): String \ IO =
+        "${System.getProperty("user.home")}${JFile.separator}.flix_ge_studio${JFile.separator}bake-stamps.json"
+
+    /// 書き残し全体 (dir → 指紋)。無い・壊れているは空扱い (起動直後に 1 回余計に描き出すだけ)。
+    def loadStamps(): Map[String, String] \ IO =
+        let readResult = run { Fs.ReadFile.read(stampsFile()) }
+            with Fs.ReadFile.runWithFileRead
+            with Fs.FileRead.runWithIO;
+        readResult
+            |> Result.toOption
+            |> Option.flatMap(DocJson.parse)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.map(Map.filterMap(JsonCodec.expectString))
+            |> Option.getWithDefault(Map#{})
+
+    def loadStamp(dir: String): Option[String] \ IO =
+        Map.get(dir, loadStamps())
+
+    /// dir の指紋を書き残す。隣に書いてから改名で差し替える (Game の書き残しと同じ理由)。
+    /// 書けなくても落とさない (書き残しは保険であって本体ではない)。
+    def saveStamp(dir: String, print: String): Unit \ IO =
+        try {
+            discard new JFile("${System.getProperty("user.home")}${JFile.separator}.flix_ge_studio").mkdirs();
+            let json = JObject(loadStamps() |> Map.insert(dir, print) |> Map.map(JString));
+            let temp = stampsFile() + ".tmp";
+            let _ = run { Fs.WriteFile.write(str = Util.Json.toPrettyString(2, json) + "\n", temp) }
+                with Fs.WriteFile.runWithFileWrite
+                with Fs.FileWrite.runWithIO;
+            discard new JFile(stampsFile()).delete();
+            discard new JFile(temp).renameTo(new JFile(stampsFile()));
+            ()
+        } catch {
+            case _: Exception => ()
         }
 
     /// 追随してよい絵の名前 — 最後に起こした描き出しが書いた物だけ。

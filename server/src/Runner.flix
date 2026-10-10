@@ -24,6 +24,8 @@ mod Runner {
     import java.io.BufferedReader
     import java.net.InetSocketAddress
     import java.net.Socket
+    import java.net.SocketTimeoutException
+    import java.lang.Thread
     import java.nio.file.Files
 
     use Util.Json.Json
@@ -76,6 +78,51 @@ mod Runner {
     pub def remoteBakeOk(body: String): Bool =
         String.lines(body) |> List.head
             |> Option.exists(line -> String.startsWith(prefix = "ok ", line))
+
+    /// 走行中のゲームへの描き出し依頼がどう終わったか。
+    pub enum RemoteBakeOutcome with Eq, ToString {
+        /// "ok rendered=…" が返った。
+        case Done
+        /// 命令口に繋がらない (接続拒否・接続の時間切れ・途中で切れた)。ゲームは描いていない。
+        case Unreachable
+        /// ゲームが描き出しを持っていない ("error: render not supported")。
+        case Unsupported
+        /// 時間切れ (読み取りの時間切れ・ループ無応答の 503)。ゲームはまだ描いている途中。
+        case Busy
+        /// それ以外の応答。
+        case Failed
+    }
+
+    /// 命令口へ 1 発送った結果の生の形。分類は classifyRemoteBake の仕事。
+    pub enum GameReply {
+        /// 応答が全部読めた (生の HTTP 応答テキスト)。
+        case Answered(String)
+        /// 繋ぐ段で失敗した (例外の文面)。
+        case ConnectFailed(String)
+        /// 繋がった後、読み取りが時間切れになった。
+        case ReadTimedOut
+        /// 繋がった後、読み取りが時間切れ以外で失敗した (例外の文面)。
+        case ReadFailed(String)
+    }
+
+    /// 依頼の結果を分ける。make render へ倒してよいのは、ゲームが描いていないと分かる時だけ —
+    /// Busy で倒すと、ゲームの中の描き出しと make の描き出しが同時に走る。
+    pub def classifyRemoteBake(reply: GameReply): RemoteBakeOutcome =
+        match reply {
+            case GameReply.ConnectFailed(_) => RemoteBakeOutcome.Unreachable
+            case GameReply.ReadFailed(_)    => RemoteBakeOutcome.Unreachable
+            case GameReply.ReadTimedOut     => RemoteBakeOutcome.Busy
+            case GameReply.Answered(raw)    =>
+                let body = bodyOfHttpText(raw);
+                if (String.startsWith(prefix = "HTTP/1.1 503", raw)
+                    or String.startsWith(prefix = "error: game loop did not answer", body)) RemoteBakeOutcome.Busy
+                else if (remoteBakeOk(body)) RemoteBakeOutcome.Done
+                else if (String.startsWith(prefix = "error: render not supported", body)) RemoteBakeOutcome.Unsupported
+                else RemoteBakeOutcome.Failed
+        }
+
+    /// 時間切れの後、ゲームの描き出しの終わりを待つ上限 (ミリ秒)。
+    pub def remoteBakeWaitLimitMs(): Int64 = 5i64 * 60i64 * 1000i64
 
     /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
     /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
@@ -351,8 +398,8 @@ mod Runner {
 
     // ── リモート焼き (走行中のゲームに頼む) ────────────────
 
-    /// 走行中のゲームに焼きを頼み、だめなら同じスレッドで `make bake` へ切り替える。
-    /// 成功の応答 ("ok baked=…" と [baked] のパス列) はそのままログへ積む —
+    /// 走行中のゲームに焼きを頼み、ゲームが描いていないと分かったら同じスレッドで `make render` へ切り替える。
+    /// 成功の応答 ("ok rendered=…" と [rendered] のパス列) はそのままログへ積む —
     /// GET /runner/log で make のときと同じように読める。
     def runRemoteBake(state: State, dir: String, port: Int32, alive: {alive = Unit -> Bool \ IO}, forget: {forget = Unit -> Unit \ IO}): Unit \ IO =
         if (not (alive#alive)()) {
@@ -361,47 +408,109 @@ mod Runner {
             runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
         } else {
             appendLine(state, "[runner] 走行中のゲームに描き出しを頼みます (POST 127.0.0.1:${port}/render)");
-            match postBake(port) {
-                case Ok(raw) =>
-                    let body = bodyOfHttpText(raw);
-                    if (remoteBakeOk(body)) {
-                        foreach (line <- String.lines(body)) appendLine(state, line);
-                        finish(state, 0)
-                    } else {
-                        (forget#forget)();
-                        appendLine(state, "[runner] ゲームが描き出せなかったので make render で描き出します: ${headLineOf(body)}");
-                        runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
-                    }
-                case Err(message) => {
+            let reply = requestGame(port, "POST /render");
+            match classifyRemoteBake(reply) {
+                case RemoteBakeOutcome.Done => finishRemoteBake(state, reply)
+                case RemoteBakeOutcome.Busy => {
+                    appendLine(state, "[runner] ゲームが描き出し中なので待ちます");
+                    awaitRemoteBake(state, dir, port, forget,
+                        System.currentTimeMillis() + remoteBakeWaitLimitMs())
+                }
+                case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
+            }
+        }
+
+    /// 時間切れの後、ゲームの描き出しが終わるのを待つ。
+    ///
+    /// WhyNot: 終わりを知るのに POST /render を送り直さない — 描き出しがもう 1 回走る。
+    /// 命令口は届いた順に答えを 1 つずつ返すので、時間切れで受け取り損ねた描き出しの答えは
+    /// 次に送った依頼 (中身を変えない GET /help) の応答として届く。
+    /// WhyNot: 待った後は命令口を忘れる。受け取り損ねた答えの分だけ、以後の応答が 1 つずつ
+    /// ずれたままになり、次の依頼が前の答えを受け取ってしまう。
+    def awaitRemoteBake(state: State, dir: String, port: Int32, forget: {forget = Unit -> Unit \ IO}, deadline: Int64): Unit \ IO =
+        if (System.currentTimeMillis() > deadline) {
+            (forget#forget)();
+            appendLine(state, "[runner] ${remoteBakeWaitLimitMs() / 60000i64} 分待ってもゲームの描き出しが終わらないので、失敗として終えます");
+            finish(state, -1)
+        } else {
+            let reply = requestGame(port, "GET /help");
+            match classifyRemoteBake(reply) {
+                case RemoteBakeOutcome.Done => {
                     (forget#forget)();
-                    appendLine(state, "[runner] ゲームに繋がらなかったので make render で描き出します: ${message}");
-                    runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
+                    finishRemoteBake(state, reply)
+                }
+                case RemoteBakeOutcome.Busy => {
+                    Thread.sleep(1000i64);
+                    awaitRemoteBake(state, dir, port, forget, deadline)
+                }
+                // 描いている途中でゲームが落ちた: もう二重にはならないので make で描き直す。
+                case RemoteBakeOutcome.Unreachable => fallBackToMake(state, dir, forget, reasonOf(reply))
+                case _ => {
+                    (forget#forget)();
+                    appendLine(state, "[runner] ゲームの描き出しの結果を受け取れませんでした: ${reasonOf(reply)}");
+                    finish(state, -1)
                 }
             }
+        }
+
+    def finishRemoteBake(state: State, reply: GameReply): Unit \ IO =
+        match reply {
+            case GameReply.Answered(raw) =>
+                foreach (line <- String.lines(bodyOfHttpText(raw))) appendLine(state, line)
+            case _ => ()
+        };
+        finish(state, 0)
+
+    def fallBackToMake(state: State, dir: String, forget: {forget = Unit -> Unit \ IO}, reason: String): Unit \ IO =
+        (forget#forget)();
+        appendLine(state, "[runner] ゲームが描き出せなかったので make render で描き出します: ${reason}");
+        runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
+
+    /// ログの理由書き。応答なら本文の 1 行目、例外ならその文面。
+    def reasonOf(reply: GameReply): String =
+        match reply {
+            case GameReply.Answered(raw)        => headLineOf(bodyOfHttpText(raw))
+            case GameReply.ConnectFailed(cause) => cause
+            case GameReply.ReadTimedOut         => "読み取りの時間切れ"
+            case GameReply.ReadFailed(cause)    => cause
         }
 
     /// 本文の 1 行目 (ログの理由書きに使う)。空なら「(空の応答)」。
     def headLineOf(body: String): String =
         String.lines(body) |> List.head |> Option.getWithDefault("(空の応答)")
 
-    /// ゲームの命令口へ POST /bake を 1 発。生の HTTP 応答テキストを返す。
+    /// ゲームの命令口へ 1 発 ("POST /render" のように メソッドとパス)。生の HTTP 応答テキストを返す。
     /// 接続 2 秒・読み取り 15 秒で見切る (命令口自身がループ無応答を 10 秒で 503 にするので、
     /// それより長く待ってから諦める)。素の Socket なのは、依存もキャストも増やさず
     /// 「1 行書いて全部読む」だけで足りるため (応答は Content-Length 付き + Connection: close)。
-    def postBake(port: Int32): Result[String, String] \ IO =
-        try {
-            let socket = new Socket();
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 2000);
-            socket.setSoTimeout(15000);
-            let request = "POST /render HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            socket.getOutputStream().write(request.getBytes("UTF-8"));
-            socket.getOutputStream().flush();
-            let bytes = socket.getInputStream().readAllBytes();
-            socket.close();
-            Ok(new JavaString(bytes, "UTF-8"))
-        } catch {
-            case e: Exception => Err(e.toString())
-        }
+    /// 繋ぐ段と読む段を分けて返すのは、接続の時間切れ (描いていない) と読み取りの時間切れ
+    /// (描いている途中) が同じ SocketTimeoutException で来るため。
+    def requestGame(port: Int32, request: String): GameReply \ IO =
+        let socket = new Socket();
+        let connected =
+            try {
+                socket.connect(new InetSocketAddress("127.0.0.1", port), 2000);
+                None
+            } catch {
+                case e: Exception => Some(GameReply.ConnectFailed(e.toString()))
+            };
+        let reply = match connected {
+            case Some(failed) => failed
+            case None         =>
+                try {
+                    socket.setSoTimeout(15000);
+                    let text = "${request} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    socket.getOutputStream().write(text.getBytes("UTF-8"));
+                    socket.getOutputStream().flush();
+                    let bytes = socket.getInputStream().readAllBytes();
+                    GameReply.Answered(new JavaString(bytes, "UTF-8"))
+                } catch {
+                    case _: SocketTimeoutException => GameReply.ReadTimedOut
+                    case e: Exception              => GameReply.ReadFailed(e.toString())
+                }
+        };
+        try { socket.close() } catch { case _: Exception => () };
+        reply
 
     /// 子プロセスの出力を終端まで 1 行ずつログへ流し込む。
     def pump(state: State, reader: BufferedReader): Unit \ IO =

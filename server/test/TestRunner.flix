@@ -55,4 +55,19 @@ mod TestRunner {
             expected = ("ok baked=1 ms=200\n[baked]\ngallery/title.png", ""),
             (Runner.bodyOfHttpText("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok baked=1 ms=200\n[baked]\ngallery/title.png"),
              Runner.bodyOfHttpText("HTTP/1.1 200 OK\r\nContent-Type: text/plain")))
+
+    /// 描き出し依頼の失敗の分け方: 繋がらない・未対応は make へ倒せる側、
+    /// 時間切れ (読み取りの時間切れ・503) はゲームがまだ描いている側。
+    @Test
+    def testClassifyRemoteBake(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (Runner.RemoteBakeOutcome.Done, Runner.RemoteBakeOutcome.Unreachable,
+                        Runner.RemoteBakeOutcome.Unsupported, Runner.RemoteBakeOutcome.Busy,
+                        Runner.RemoteBakeOutcome.Busy, Runner.RemoteBakeOutcome.Failed),
+            (Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 200 OK\r\n\r\nok rendered=1 ms=200\n")),
+             Runner.classifyRemoteBake(Runner.GameReply.ConnectFailed("java.net.ConnectException: Connection refused")),
+             Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 200 OK\r\n\r\nerror: render not supported (game does not wire App.onRenderRequest)\n")),
+             Runner.classifyRemoteBake(Runner.GameReply.ReadTimedOut),
+             Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 503 Service Unavailable\r\n\r\nerror: game loop did not answer within 10s\n")),
+             Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 200 OK\r\n\r\nerror: no route for POST /render\n"))))
 }

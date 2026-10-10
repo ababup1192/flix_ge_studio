@@ -40,21 +40,22 @@ mod TestNextStep {
              NextStep.isStale(Nil, Nil),
              NextStep.isStale(20i64 :: Nil, 20i64 :: Nil)))
 
-    /// 前の描き出しの時点を覚えていれば、絵の側は判定に関わらない — 描き出しが書き直さない
+    /// 前の描き出しの指紋を覚えていれば、絵の側は判定に関わらない — 描き出しが書き直さない
     /// 古い PNG が gallery に混ざっていても、作り直しは要らないと読む。
     @Test
     def testNeedsBakeIgnoresForeignImages(): Unit \ Assert =
         Assert.assertEq(
             expected = false,
-            NextStep.needsBake(50i64 :: Nil, 10i64 :: 90i64 :: Nil, Some(50i64)))
+            NextStep.needsBake(Some("a"), Some("a"), 50i64 :: Nil, 10i64 :: 90i64 :: Nil))
 
-    /// 前の描き出しを起こした時点より後にアセットが動いたら作り直す。同時刻は作り直さない。
+    /// 作り直すのは中身が変わった時だけ。時刻が絵より新しくても、指紋が前の描き出しと
+    /// 同じなら作り直さない (中身の同じ書き直しで描き出しが輪にならない)。
     @Test
-    def testNeedsBakeAfterStamp(): Unit \ Assert =
+    def testNeedsBakeComparesFingerprint(): Unit \ Assert =
         Assert.assertEq(
             expected = (true, false),
-            (NextStep.needsBake(60i64 :: Nil, 90i64 :: Nil, Some(50i64)),
-             NextStep.needsBake(50i64 :: Nil, 90i64 :: Nil, Some(50i64))))
+            (NextStep.needsBake(Some("b"), Some("a"), 90i64 :: Nil, 50i64 :: Nil),
+             NextStep.needsBake(Some("a"), Some("a"), 90i64 :: Nil, 50i64 :: Nil)))
 
     /// 絵が 1 枚も無いときは、前の描き出しを覚えていても描き出す (人が gallery を消した形)。
     /// アセットが無ければ作る物が無い。
@@ -62,8 +63,8 @@ mod TestNextStep {
     def testNeedsBakeWithoutImages(): Unit \ Assert =
         Assert.assertEq(
             expected = (true, false),
-            (NextStep.needsBake(50i64 :: Nil, Nil, Some(50i64)),
-             NextStep.needsBake(Nil, Nil, None)))
+            (NextStep.needsBake(Some("a"), Some("a"), 50i64 :: Nil, Nil),
+             NextStep.needsBake(None, None, Nil, Nil)))
 
     /// パレットは描き出しが毎回作り直す生成物なので、鮮度の入力から外す
     /// (外さないと、そのパレット自身が次の描き出しの理由になり続ける)。

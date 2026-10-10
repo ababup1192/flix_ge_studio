@@ -5,6 +5,10 @@
 
 mod NextStep {
     import java.io.{File => JFile}
+    import java.nio.file.Files
+    import java.security.MessageDigest
+    import java.util.HexFormat
+    import java.util.concurrent.{ConcurrentHashMap => JMap}
 
     use Util.Json.Json
     use Util.Json.Json.{JObject, JString, JNumber, JBool}
@@ -73,28 +77,31 @@ mod NextStep {
     /// (別の道具が置いた調べ物のシート等) が混ざり得て、その 1 枚が古いまま居座ると
     /// 判定が永久に真になる。描き出しても真のままなので、描き直しが止まらなくなる。
     pub def isStale(assetMtimes: List[Int64], galleryMtimes: List[Int64]): Bool =
-        needsBake(assetMtimes, galleryMtimes, None)
+        match (List.maximum(assetMtimes), List.maximum(galleryMtimes)) {
+            case (None, _)                 => false
+            case (Some(_), None)           => true
+            case (Some(newest), Some(drawn)) => newest > drawn
+        }
 
-    /// 絵を作り直す必要があるか。stamp は「最後に成功した描き出しを起こす直前に測った
-    /// アセットの新しさ」。
+    /// 絵を作り直す必要があるか。fingerprint は今のアセットの中身の指紋 (アセットが無ければ None)、
+    /// stamp は「最後に成功した描き出しを起こす直前に測った指紋」。
     ///
+    /// WhyNot: 更新時刻で比べない。中身の同じ書き直し (描き出しの前段が同じ値を書き戻す等) でも
+    /// 時刻は進むので、描き出しがまた描き出しを呼ぶ輪になる。
     /// WhyNot: stamp があるときに絵の mtime を見ない。絵を誰が書いたかは判定の材料にならず、
-    /// 「前の描き出しを起こした後にアセットが動いたか」だけが作り直す理由だから。
+    /// 「前の描き出しを起こした後にアセットの中身が変わったか」だけが作り直す理由だから。
     /// WhyNot: 絵が 1 枚も無い場合だけは stamp があっても描き出す — 人が gallery/ を
     /// 消したときに「作り済み」のまま何も知らせず絵が戻らないのは、原因の分からない故障になる。
-    pub def needsBake(assetMtimes: List[Int64], galleryMtimes: List[Int64],
-                      stamp: Option[Int64]): Bool =
-        match List.maximum(assetMtimes) {
-            case None         => false
-            case Some(newest) =>
+    pub def needsBake(fingerprint: Option[String], stamp: Option[String],
+                      assetMtimes: List[Int64], galleryMtimes: List[Int64]): Bool =
+        match fingerprint {
+            case None      => false
+            case Some(now) =>
                 if (List.isEmpty(galleryMtimes)) true
                 else match stamp {
-                    case Some(baked) => newest > baked
-                    // 覚えていない (Studio を起こした直後) は、いちばん新しい絵と比べる。
-                    case None        => match List.maximum(galleryMtimes) {
-                        case None        => true
-                        case Some(drawn) => newest > drawn
-                    }
+                    case Some(baked) => now != baked
+                    // 覚えていない (前の描き出しの記録が無い) ときだけ、いちばん新しい絵と時刻で比べる。
+                    case None        => isStale(assetMtimes, galleryMtimes)
                 }
         }
 
@@ -109,12 +116,51 @@ mod NextStep {
     // ── IO: 材料集め ──────────────────────────────────────
 
     /// 絵を作り直す必要があるか (Changes の自動検査が使う)。stamp は Changes が覚えている。
-    pub def staleGalleryOf(dir: String, stamp: Option[Int64]): Bool \ IO =
-        needsBake(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir), stamp)
+    pub def staleGalleryOf(dir: String, fingerprint: Option[String], stamp: Option[String]): Bool \ IO =
+        needsBake(fingerprint, stamp, jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir))
 
-    /// いまのアセットの新しさ (描き出しを起こす直前に測り、成功したら stamp にする値)。
-    pub def assetsMaxMtime(dir: String): Option[Int64] \ IO =
-        List.maximum(jsonMtimes(dir, "assets"))
+    /// ファイルごとの SHA-256 を覚えておく器 (キー: "hash|<パス>" = "<mtime>|<size>|<sha>")。
+    /// Changes の State をそのまま渡す。
+    pub type alias HashCache = JMap[String, String]
+
+    /// いまのアセット (assets/ 直下の描き出しの入力) の中身から作る 1 つの指紋。
+    /// 名前順に「名前 + 中身の SHA-256」を並べて、もう一度 SHA-256 をかける。アセットが無ければ None。
+    /// 描き出しを起こす直前に測り、成功したら stamp にする値。
+    ///
+    /// WhyNot: 毎回全部を読み直さない。ポーリングのたびに呼ばれるので、(mtime, size) が
+    /// 前と同じファイルは前のハッシュを使い回す。
+    pub def computeAssetsFingerprint(cache: HashCache, dir: String): Option[String] \ IO =
+        let entries = jsonFiles(dir, "assets")
+            |> List.map(file -> (file.getName(), computeFileHash(cache, file)))
+            |> List.sortBy(fst);
+        if (List.isEmpty(entries)) None
+        else {
+            let listing = entries
+                |> List.map(entry -> { let (name, hash) = entry; "${name}\t${hash}\n" })
+                |> List.join("");
+            Some(sha256Hex(listing.getBytes("UTF-8")))
+        }
+
+    /// 1 ファイルの SHA-256。(mtime, size) が覚えている物と同じならそのまま返す。
+    def computeFileHash(cache: HashCache, file: JFile): String \ IO =
+        let path = file.getAbsolutePath();
+        let mark = "${file.lastModified()}|${file.length()}";
+        let cached: String = cache.get("hash|${path}");
+        let reused =
+            if (Object.isNull(cached)) None
+            else if (String.startsWith(prefix = "${mark}|", cached))
+                Some(String.dropLeft(String.length(mark) + 1, cached))
+            else None;
+        match reused {
+            case Some(hash) => hash
+            case None       =>
+                let hash = sha256Hex(Files.readAllBytes(file.toPath()));
+                discard cache.put("hash|${path}", "${mark}|${hash}");
+                hash
+        }
+
+    def sha256Hex(bytes: Array[Int8, Static]): String \ IO =
+        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 
     /// GET /journey/state の本文。unseen は Changes の未読の知らせの数。
     pub def stateJson(game: Game.Runtime, dir: String, unseen: Int32): Json \ IO =
