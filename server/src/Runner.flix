@@ -120,6 +120,9 @@ mod Runner {
                 else RemoteBakeOutcome.Failed
         }
 
+    /// 走行中のゲームの描き出しが時間切れで、答えを受け取らずに終えたときの終了コード。
+    pub def remoteBakeBusyExitCode(): Int32 = -2
+
     /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
     /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
     pub def taskOfTarget(target: String): Option[EngineTasks.Task] =
@@ -409,11 +412,13 @@ mod Runner {
                 case RemoteBakeOutcome.Done => finishRemoteBake(state, reply)
                 // WhyNot: 答えを待つためにゲームへ要求を重ねない — 古いエンジンの命令口は時間切れの
                 // 要求も後で全部に答えるので、送った数だけ以後の応答がずれる。make にも倒さない —
-                // ゲームの描き出しと 2 系統になる。描き終われば gallery はゲームが書くので、
-                // この中身で描いたものとして終える。
+                // ゲームの描き出しと 2 系統になる。
+                // WhyNot: 成功 (0) で終えない — 成功にすると Changes が書きかけの gallery を
+                // reference へ写し得る。失敗として終えれば、同じ中身では起こし直さず、
+                // 中身が変われば次の描き出しが起きる。
                 case RemoteBakeOutcome.Busy => {
                     appendLine(state, "[runner] ゲームがまだ描き出し中。答えは待たず、make にも倒しません（描き終われば gallery はゲームが書く）");
-                    finish(state, 0)
+                    finish(state, remoteBakeBusyExitCode())
                 }
                 case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
             }
