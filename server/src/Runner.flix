@@ -25,7 +25,6 @@ mod Runner {
     import java.net.InetSocketAddress
     import java.net.Socket
     import java.net.SocketTimeoutException
-    import java.lang.Thread
     import java.nio.file.Files
 
     use Util.Json.Json
@@ -120,9 +119,6 @@ mod Runner {
                 else if (String.startsWith(prefix = "error: render not supported", body)) RemoteBakeOutcome.Unsupported
                 else RemoteBakeOutcome.Failed
         }
-
-    /// 時間切れの後、ゲームの描き出しの終わりを待つ上限 (ミリ秒)。
-    pub def remoteBakeWaitLimitMs(): Int64 = 5i64 * 60i64 * 1000i64
 
     /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
     /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
@@ -411,45 +407,15 @@ mod Runner {
             let reply = requestGame(port, "POST /render");
             match classifyRemoteBake(reply) {
                 case RemoteBakeOutcome.Done => finishRemoteBake(state, reply)
+                // WhyNot: 答えを待つためにゲームへ要求を重ねない — 古いエンジンの命令口は時間切れの
+                // 要求も後で全部に答えるので、送った数だけ以後の応答がずれる。make にも倒さない —
+                // ゲームの描き出しと 2 系統になる。描き終われば gallery はゲームが書くので、
+                // この中身で描いたものとして終える。
                 case RemoteBakeOutcome.Busy => {
-                    appendLine(state, "[runner] ゲームが描き出し中なので待ちます");
-                    awaitRemoteBake(state, dir, port, forget,
-                        System.currentTimeMillis() + remoteBakeWaitLimitMs())
+                    appendLine(state, "[runner] ゲームがまだ描き出し中。答えは待たず、make にも倒しません（描き終われば gallery はゲームが書く）");
+                    finish(state, 0)
                 }
                 case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
-            }
-        }
-
-    /// 時間切れの後、ゲームの描き出しが終わるのを待つ。
-    ///
-    /// WhyNot: 終わりを知るのに POST /render を送り直さない — 描き出しがもう 1 回走る。
-    /// 命令口は届いた順に答えを 1 つずつ返すので、時間切れで受け取り損ねた描き出しの答えは
-    /// 次に送った依頼 (中身を変えない GET /help) の応答として届く。
-    /// WhyNot: 待った後は命令口を忘れる。受け取り損ねた答えの分だけ、以後の応答が 1 つずつ
-    /// ずれたままになり、次の依頼が前の答えを受け取ってしまう。
-    def awaitRemoteBake(state: State, dir: String, port: Int32, forget: {forget = Unit -> Unit \ IO}, deadline: Int64): Unit \ IO =
-        if (System.currentTimeMillis() > deadline) {
-            (forget#forget)();
-            appendLine(state, "[runner] ${remoteBakeWaitLimitMs() / 60000i64} 分待ってもゲームの描き出しが終わらないので、失敗として終えます");
-            finish(state, -1)
-        } else {
-            let reply = requestGame(port, "GET /help");
-            match classifyRemoteBake(reply) {
-                case RemoteBakeOutcome.Done => {
-                    (forget#forget)();
-                    finishRemoteBake(state, reply)
-                }
-                case RemoteBakeOutcome.Busy => {
-                    Thread.sleep(1000i64);
-                    awaitRemoteBake(state, dir, port, forget, deadline)
-                }
-                // 描いている途中でゲームが落ちた: もう二重にはならないので make で描き直す。
-                case RemoteBakeOutcome.Unreachable => fallBackToMake(state, dir, forget, reasonOf(reply))
-                case _ => {
-                    (forget#forget)();
-                    appendLine(state, "[runner] ゲームの描き出しの結果を受け取れませんでした: ${reasonOf(reply)}");
-                    finish(state, -1)
-                }
             }
         }
 

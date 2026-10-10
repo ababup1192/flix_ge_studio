@@ -6,6 +6,7 @@
 mod NextStep {
     import java.io.{File => JFile}
     import java.nio.file.Files
+    import java.lang.Exception
     import java.security.MessageDigest
     import java.util.HexFormat
     import java.util.concurrent.{ConcurrentHashMap => JMap}
@@ -131,7 +132,7 @@ mod NextStep {
     /// 前と同じファイルは前のハッシュを使い回す。
     pub def computeAssetsFingerprint(cache: HashCache, dir: String): Option[String] \ IO =
         let entries = jsonFiles(dir, "assets")
-            |> List.map(file -> (file.getName(), computeFileHash(cache, file)))
+            |> List.filterMap(file -> computeFileHash(cache, file) |> Option.map(hash -> (file.getName(), hash)))
             |> List.sortBy(fst);
         if (List.isEmpty(entries)) None
         else {
@@ -142,7 +143,11 @@ mod NextStep {
         }
 
     /// 1 ファイルの SHA-256。(mtime, size) が覚えている物と同じならそのまま返す。
-    def computeFileHash(cache: HashCache, file: JFile): String \ IO =
+    /// 一覧を取った後に消えた・読めないファイルは None (指紋に入れない)。
+    ///
+    /// WhyNot: 読めない例外を上へ投げない。保存の途中や改名の合間に当たり得て、
+    /// 投げると検査 (pump) ごと落ちる。消えたファイルは次の目盛りの一覧から外れる。
+    def computeFileHash(cache: HashCache, file: JFile): Option[String] \ IO =
         let path = file.getAbsolutePath();
         let mark = "${file.lastModified()}|${file.length()}";
         let cached: String = cache.get("hash|${path}");
@@ -152,11 +157,15 @@ mod NextStep {
                 Some(String.dropLeft(String.length(mark) + 1, cached))
             else None;
         match reused {
-            case Some(hash) => hash
+            case Some(hash) => Some(hash)
             case None       =>
-                let hash = sha256Hex(Files.readAllBytes(file.toPath()));
-                discard cache.put("hash|${path}", "${mark}|${hash}");
-                hash
+                try {
+                    let hash = sha256Hex(Files.readAllBytes(file.toPath()));
+                    discard cache.put("hash|${path}", "${mark}|${hash}");
+                    Some(hash)
+                } catch {
+                    case _: Exception => None
+                }
         }
 
     def sha256Hex(bytes: Array[Int8, Static]): String \ IO =
