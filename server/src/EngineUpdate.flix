@@ -238,6 +238,7 @@ mod EngineUpdate {
                     1
                 } else {
                     EngineHome.relinkAlias();
+                    EngineHome.relinkJre();
                     log("[update] engine ${placed} に切り替えました");
                     discard upgradeGame(log, tool, placed, game);
                     0

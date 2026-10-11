@@ -44,6 +44,23 @@ mod EngineHome {
         let home = dir();
         if (usable(home)) discard linkedAlias(home) else ()
 
+    /// engines/jre を .app 同梱の JRE へ張り直す。指し先が変わった直後と起動時に呼ぶ。
+    // WhyNot: 置き場の engine ごとに JRE を写さない — 同梱ラッパ (bin/flix) は
+    // 「engine の隣の jre」(engines/<バージョン>/../jre) を見るので、隣に 1 本別名を
+    // 置けば全バージョンが同じ JRE を使える。写すと 1 版ごとに 100MB 増える。
+    // Windows は ln が無いので何もしない (bash のラッパを持たず、local.mk の JAVA で走る)。
+    pub def relinkJre(): Unit \ IO =
+        match EngineStore.bundledDir() {
+            case Some(bundled) =>
+                let target = EngineStore.bundledJre(bundled);
+                if (new JFile("${target}/bin/java").canExecute()) {
+                    let link = EngineStore.jreLink(System.getProperty("user.home"));
+                    discard new JFile(EngineStore.versionsDir(System.getProperty("user.home"))).mkdirs();
+                    discard runCommand("ln" :: "-sfn" :: target :: link :: Nil)
+                } else ()
+            case None => ()
+        }
+
     /// その置き場が「走らせる手」を持っているか。
     pub def usable(home: String): Bool \ IO =
         new JFile("${home}/bin/flix").canExecute()

@@ -31,6 +31,15 @@ mod EngineStore {
     // 要る。テキスト 1 行なら両 OS で同じに書けて、テンプファイル → rename で差し替えられる。
     pub def currentFile(userHome: String): String = "${baseDir(userHome)}/engine-current.txt"
 
+    /// 置き場の engine が使う JRE の別名 (engines/jre)。同梱ラッパは engine の隣の jre を見る。
+    pub def jreLink(userHome: String): String = "${versionsDir(userHome)}/jre"
+
+    /// 別名の指し先 = 同梱 engine の隣の jre (.app なら Contents/Resources/jre)。
+    pub def bundledJre(bundledEngine: String): String =
+        let trimmed = if (String.endsWith(suffix = "/", bundledEngine)) String.dropRight(1, bundledEngine) else bundledEngine;
+        let parts = String.splitOn(substr = "/", trimmed);
+        "${String.intercalate("/", List.take(List.length(parts) - 1, parts))}/jre"
+
     /// engine-current.txt の中身の読み方。中身のある最初の行だけを見る。
     // WhyNot: 使えない行を飛ばして次を採らない — 壊れたファイルの 2 行目が偶然通ると、
     // 人が読んだ「今のバージョン」と実際に使う物が食い違う。
@@ -147,7 +156,8 @@ mod EngineStore {
                 // WhyNot: 別名 (~/.flix_ge_studio/engine) をここで張り直すのは、指し先が
                 // 変わる値になったため。Studio の画面からゲームを触るまで張り替えないと、
                 // ターミナルや AI エージェントの make が古いバージョンを掴み続ける。
-                EngineHome.relinkAlias()
+                EngineHome.relinkAlias();
+                EngineHome.relinkJre()
             }
             case _ => ()
         }

@@ -1,0 +1,6 @@
+# Windows の checkout (core.autocrlf=true) で改行を CRLF に変えさせない物。
+# server/lib/ は flix の依存解決が packages.lock の sha256 とバイトで突き合わせるので、
+# 1 バイトでも変わると「toml が packages.lock の sha256 と違う」で fatjar が組めない。
+server/lib/** -text
+*.toml text eol=lf
+*.lock text eol=lf

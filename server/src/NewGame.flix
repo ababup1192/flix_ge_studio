@@ -447,12 +447,121 @@ mod NewGame {
 
     /// manifest の配布計画を実行する。順序は engine 側と同じ copyDirs → copy → copyIfAbsent。
     def runPlan(engine: String, gameDir: String, entries: ManifestPlan): Unit \ IO =
-        List.forEach(entry -> mirrorDirEntry(gameDir, "${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyDirsList);
+        match ledgerPathOf(engine) {
+            case Some(ledger) => distributeDirs(gameDir, engine, "${gameDir}/${ledger}", entries#copyDirsList)
+            case None =>
+                List.forEach(entry -> mirrorDirEntry(gameDir, "${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyDirsList)
+        };
         List.forEach(entry -> copyEntry("${engine}/${fst(entry)}", "${gameDir}/${snd(entry)}"), entries#copyList);
         List.forEach(entry -> {
             let dst = "${gameDir}/${snd(entry)}";
             if (new JFile(dst).exists()) () else copyEntry("${engine}/${fst(entry)}", dst)
         }, entries#copyIfAbsentList)
+
+    // ── 配った物の一覧 (engine 0.35.5 から) ─────────────────
+    // engine の bin/fge sync-agents (go/internal/syncagents/ledger.go) と同じ動き:
+    // copyDirs の配り先には、前の回に配って配り元から無くなった物だけを消し、
+    // 一覧に無い物 (ゲームが自分で置いた .claude/rules/art-style.md 等) は残す。
+    // 一覧の無い初回は消さずに一覧だけ書く。中身のバイトは check-agents-parity が突き合わせる。
+
+    /// 一覧の置き場 (ゲームからの相対)。engine の規約 bin/lint-rules/sync-agents.json の
+    /// ledgerPath。持たない古い engine では None = 従来のミラー。
+    def ledgerPathOf(engine: String): Option[String] \ IO =
+        readTextIfFile("${engine}/bin/lint-rules/sync-agents.json")
+            |> Option.flatMap(DocJson.parse)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.flatMap(top -> Map.get("ledgerPath", top))
+            |> Option.flatMap(JsonCodec.expectString)
+
+    /// 前の回の一覧。無い・壊れているときは None (消し込みを飛ばす側へ倒す)。
+    def loadLedger(path: String): Option[Map[String, List[String]]] \ IO =
+        readTextIfFile(path)
+            |> Option.flatMap(DocJson.parse)
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.flatMap(top -> Map.get("dirs", top))
+            |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.map(dirs -> Map.map(value ->
+                   JsonCodec.decodeList(JsonCodec.expectString, value) |> Option.getWithDefault(Nil), dirs))
+
+    def distributeDirs(gameDir: String, engine: String, ledgerFile: String, dirs: List[(String, String)]): Unit \ IO =
+        let prev = loadLedger(ledgerFile);
+        let next = dirs |> List.foldLeft((acc, entry) -> {
+            let (srcRel, dstRel) = entry;
+            let src = "${engine}/${srcRel}";
+            let dst = "${gameDir}/${dstRel}";
+            if (not new JFile(src).isDirectory()) acc
+            else {
+                discard new JFile(dst).mkdirs();
+                let files = filesUnder(src);
+                let before = prev |> Option.flatMap(Map.get(dstRel)) |> Option.getWithDefault(Nil);
+                let listed =
+                    if (not canPrune(gameDir, src, dst)) List.distinct(List.sort(before ::: files))
+                    else {
+                        if (Option.isEmpty(prev)) () else pruneListed(dst, before, files);
+                        files
+                    };
+                copyTree(skipTopLevel = Set#{}, src, dst);
+                Map.insert(dstRel, listed, acc)
+            }
+        }, Map.empty());
+        writeText(ledgerFile, ledgerText(next))
+
+    /// dir の下のファイルを dir からの相対パスで名前順に (engine の filesUnder と同じ)。
+    def filesUnder(dir: String): List[String] \ IO =
+        let base = new JFile(dir).getPath();
+        walkFiles(new JFile(dir))
+            |> List.map(file -> String.drop(String.length(base) + 1, file.getPath()))
+            |> List.sort
+
+    /// 前の回に配って今回の配り元に無い物だけを消す。途中に symlink があれば辿らない。
+    def pruneListed(dst: String, before: List[String], current: List[String]): Unit \ IO =
+        let keep = List.toSet(current);
+        before |> List.forEach(rel ->
+            if (Set.memberOf(rel, keep) or not isSafeRel(rel) or hasSymlinkBetween(dst, rel)) ()
+            else {
+                let file = new JFile("${dst}/${rel}");
+                if (file.isDirectory() or not (file.exists() or isSymlink(file.getPath()))) ()
+                else {
+                    discard file.delete();
+                    removeEmptyParents(dst, rel)
+                }
+            })
+
+    /// 一覧の 1 行が配り先の中を指すか (手で書き換えられた一覧で外を消さない)。
+    def isSafeRel(rel: String): Bool =
+        rel != "" and not String.startsWith(prefix = "/", rel)
+            and List.forAll(part -> part != "" and part != "." and part != "..", String.splitOn(substr = "/", rel))
+
+    def hasSymlinkBetween(dst: String, rel: String): Bool \ IO =
+        let parts = String.splitOn(substr = "/", rel);
+        let dirs = List.take(List.length(parts) - 1, parts);
+        dirs |> List.scan((acc, part) -> "${acc}/${part}", dst) |> List.drop(1) |> List.exists(isSymlink)
+
+    def removeEmptyParents(dst: String, rel: String): Unit \ IO =
+        let parts = String.splitOn(substr = "/", rel);
+        def loop(n) = if (n <= 0) () else {
+            let dir = new JFile("${dst}/${String.intercalate("/", List.take(n, parts))}");
+            let entries = dir.listFiles();
+            if (Object.isNull(entries) or Array.length(entries) > 0) ()
+            else if (dir.delete()) loop(n - 1) else ()
+        };
+        loop(List.length(parts) - 1)
+
+    /// 一覧の本文。engine の json.MarshalIndent (2 字下げ・キーは名前順・末尾に改行) と
+    /// バイト一致させる。note の字は engine の ledger.go の ledgerNote の写し。
+    pub def ledgerText(dirs: Map[String, List[String]]): String =
+        let quote = text -> "\"" + (text |> String.replace(src = "\\", dst = "\\\\") |> String.replace(src = "\"", dst = "\\\"")) + "\"";
+        let list = files ->
+            if (List.isEmpty(files)) "[]"
+            else "[\n" + String.intercalate(",\n", List.map(f -> "      " + quote(f), files)) + "\n    ]";
+        let body =
+            if (Map.isEmpty(dirs)) "{}"
+            else "{\n" + String.intercalate(",\n", Map.toList(dirs) |> List.map(kv -> "    " + quote(fst(kv)) + ": " + list(snd(kv)))) + "\n  }";
+        "{\n  \"version\": 1,\n  \"note\": " + quote(ledgerNote()) + ",\n  \"dirs\": " + body + "\n}\n"
+
+    def ledgerNote(): String =
+        "bin/fge sync-agents が書く。copyDirs の配り先ごとに engine が配ったファイルの一覧。"
+            + "次の配りで、ここに載っていて engine から無くなった物だけを消す（載っていない物はゲームの物として残す）。手で編集しない。"
 
     /// 1 ファイルを親フォルダごと写す。src が無ければ黙って飛ばす — 同梱 engine が
     /// 痩せていても配布全体を失敗にしない (足りない分は engine 側の make sync-agents で配り直せる)。

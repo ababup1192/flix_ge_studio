@@ -16,6 +16,17 @@ mod TestEngineStore {
              EngineStore.versionDir("/home/me", "0.31.0"),
              EngineStore.currentFile("/home/me")))
 
+    /// JRE の別名: engines/jre が、同梱 engine の隣の jre (.app の Resources/jre) を指す。
+    @Test
+    def testJreLink(): Unit \ Assert =
+        Assert.assertEq(
+            expected = ("/home/me/.flix_ge_studio/engines/jre",
+                        "/Applications/Flix GE Studio.app/Contents/Resources/jre",
+                        "/Applications/Flix GE Studio.app/Contents/Resources/jre"),
+            (EngineStore.jreLink("/home/me"),
+             EngineStore.bundledJre("/Applications/Flix GE Studio.app/Contents/Resources/engine"),
+             EngineStore.bundledJre("/Applications/Flix GE Studio.app/Contents/Resources/engine/")))
+
     /// 指し先の読み方: 最初の中身のある行。空・空白だけ・末尾の改行は None にしない。
     @Test
     def testCurrentVersion(): Unit \ Assert =
