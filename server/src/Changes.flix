@@ -44,8 +44,10 @@ mod Changes {
         // 次の目盛りでそのまま拾える。
         let fingerprint = NextStep.computeAssetsFingerprint(state, dir);
         let stale = NextStep.staleGalleryOf(dir, fingerprint, stampOf(state, dir));
+        // ゲームの起動の途中 (コンパイル中・開いた直後) は自動の描き出しを始めない (Game.isStarting)。
+        let starting = Game.isStarting(game, dir);
         let baking =
-            if (stale and not running and not isBlocked(state, dir, fingerprint)) {
+            if (stale and not running and not starting and not isBlocked(state, dir, fingerprint)) {
                 let candidate = fingerprint;
                 let startedAt = System.currentTimeMillis();
                 let (status, _) = launchBake(runner, game, dir);

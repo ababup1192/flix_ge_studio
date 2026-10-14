@@ -13,6 +13,7 @@ mod Game {
     import java.lang.Thread
     import java.io.{File => JFile}
     import java.net.ServerSocket
+    import java.net.{Socket, InetSocketAddress}
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.util.concurrent.TimeUnit
 
@@ -46,9 +47,10 @@ mod Game {
         revive(runtime);
         runtime
 
-    /// dir のゲームの命令口を覚える (再起動は上書き)。
+    /// dir のゲームの命令口を覚える (再起動は上書き。起動の覚え = 開いた時刻も忘れて数え直す)。
     pub def rememberPort(ports: Ports, dir: String, port: Int32): Unit \ IO =
-        discard ports.put(dir, "${port}")
+        discard ports.put(dir, "${port}");
+        discard ports.remove(readyKey(dir))
 
     /// dir のゲームの命令口 (覚えていなければ None)。
     pub def portOf(ports: Ports, dir: String): Option[Int32] \ IO =
@@ -57,7 +59,60 @@ mod Game {
 
     /// dir の覚え書きを消す (ゲームの停止・命令口の不調を検知したとき)。
     pub def forgetPort(ports: Ports, dir: String): Unit \ IO =
-        discard ports.remove(dir)
+        discard ports.remove(dir);
+        discard ports.remove(readyKey(dir))
+
+    // ── 起動の途中か (自動の描き出しを始めない間) ─────────────
+
+    /// 命令口が初めて答えた時刻 (ミリ秒) の覚え書きのキー (同じ Ports の器に並べる)。
+    def readyKey(dir: String): String = "${dir}|readyAt"
+
+    /// 命令口が開いてから、自動の描き出しを頼まずに待つ時間 (ミリ秒)。開いた直後はウィンドウを
+    /// 出して最初の場面を組んでいる最中で、そこへ全場面の描き出しを重ねると起動がもたつく。
+    pub def warmupMillis(): Int64 = 60000i64
+
+    /// 起動の途中か (純粋なルール)。走っていなければ途中ではない。走っていて、命令口がまだ
+    /// 答えない (コンパイル中) か、答え始めてから warmupMillis に届いていなければ途中。
+    /// readyAge = 命令口が初めて答えてからの経過 (まだ答えていなければ None)。
+    pub def isStartingBy(r: {running = Bool, readyAge = Option[Int64]}): Bool =
+        r#running and (match r#readyAge {
+            case None      => true
+            case Some(age) => age < warmupMillis()
+        })
+
+    /// dir のゲームが起動の途中か (Changes が自動の描き出しを見送るのに使う)。
+    /// 起動の途中に全場面の描き出し (SceneRender.all) を始めると、ゲームのコンパイルと
+    /// 描き出しのコンパイルのメモリの山が重なるか、開いたばかりのゲームの中で全場面を
+    /// 描くことになる (2026-10-14 MacBook Air で起動の 90 秒後に描き出しが走り出していた)。
+    /// 命令口を覚えていない走行中のゲーム (make に倒れた道) は、止まるまで途中として扱う。
+    pub def isStarting(runtime: Runtime, dir: String): Bool \ IO =
+        if (not isRunning(runtime, dir)) false
+        else {
+            let ports = runtime#ports;
+            let now = System.currentTimeMillis();
+            let readyAge = match portOf(ports, dir) {
+                case None       => None
+                case Some(port) =>
+                    let stamp = ports.get(readyKey(dir));
+                    if (not Object.isNull(stamp)) Int64.fromString(stamp) |> Option.map(at -> now - at)
+                    else if (answers(port)) {
+                        discard ports.put(readyKey(dir), "${now}");
+                        Some(0i64)
+                    } else None
+            };
+            isStartingBy({running = true, readyAge = readyAge})
+        }
+
+    /// 命令口に繋がるか (接続だけ見て、何も頼まずに閉じる)。
+    def answers(port: Int32): Bool \ IO =
+        let socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 300);
+            socket.close();
+            true
+        } catch {
+            case _: Exception => false
+        }
 
     // ── 純粋なルール ──────────────────────────────────────
 
