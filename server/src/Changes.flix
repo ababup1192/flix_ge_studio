@@ -106,7 +106,9 @@ mod Changes {
                 if (last#runId == pending) {
                     let candidate = pendingStampOf(state, dir);
                     clearPending(state, dir);
-                    if (last#exitCode == 0) {
+                    // ゲームの起動中で見送った描き出しは失敗として覚えない（次の目盛りで起こし直す）。
+                    if (last#exitCode == Runner.remoteBakeDeferredExitCode()) ()
+                    else if (last#exitCode == 0) {
                         discard state.remove("${dir}|failedStamp");
                         putStamp(state, "${dir}|stamp", candidate);
                         foreach (print <- candidate) saveStamp(dir, print)

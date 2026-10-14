@@ -62,45 +62,19 @@ mod EngineTasks {
             case _          => Nil
         }
 
-    /// ヒープと GC の旗。実機再生 (Play ボタン) だけは ZGC で走らせる。
-    /// ZGC は止まる時間 (GC でゲームが固まる一瞬) がヒープの大きさに関係なく短く、
-    /// 遊んでいる間のカクつきが出にくい。
-    /// ZGenerational は JDK 21 では既定でないので明示する (JDK 23 で既定・24 で唯一になる)。
-    /// 世代別にすると、同じ物理ページを 3 つのアドレスへ映す仕組みが無くなり、
-    /// OS から見えるメモリの量が実際に使っている量と合う。
-    /// 上限が決めるのは**コンパイルの山に耐えられるか**だけで、遊んでいる間の消費は
-    /// SoftMaxHeapSize が決める。ZGC は上限まで目一杯使う設計だが、SoftMaxHeapSize を
-    /// 超えないよう努めるので、上限を上げても普段の消費は上がらない。
-    /// flix run はコンパイラとゲームが 1 つの JVM を分け合うため、上限はゲームの大きさ
-    /// (ソースの行数) に付いていく必要がある — 絶対値で蓋をすると、大きく育ったゲームが
-    /// ある日から起動しなくなる (実測 2026-08-22: 13,009 行のゲームは上限 2GB では
-    /// 型検査の途中で OutOfMemoryError、上限 4GB なら起動する。上限 512MB では
-    /// 割り当て待ちでスレッドが止まり、ウィンドウが開かないまま)。
-    /// そこで**上限は書かない** — JVM の既定 (物理メモリの 25%) に任せ、普段の目標だけ
-    /// SoftMaxHeapSize で 512MB に下げる。engine の bin/flix ラッパも -Xmx を付けないので、
-    /// これで Play は素の `make run` と同じ広さになる。約束はこの 1 行で言える:
-    /// **make run で起動するゲームは Studio でも起動する**。Studio だけ狭かったことが
-    /// この不具合の正体だった (実測 2026-08-22: 13,009 行のゲームが -Xmx2g では型検査の
-    /// 途中で OutOfMemoryError、既定の 4GB (16GB の機械) なら起動する)。
-    /// 絶対値で蓋をすると、大きく育ったゲームがある日から起動しなくなり、直すのに
-    /// Studio の焼き直しが要る。割合 (MaxRAMPercentage) を明示するのも避ける —
-    /// ZGC は空きがあるだけ使いに行くので、50% にすると 16GB の機械でコンパイルの山が
-    /// 8.5GB まで太り、Studio 本体 (-Xmx2g) と押し出し合う (実測)。
-    /// 既定の 25% なら山は 2.8GB・遊んでいる間は 0.7GB (ZUncommitDelay で山が返った後)。
-    /// ZUncommitDelay を既定の 300 秒から縮めるのは、コンパイルで膨らんだぶんが
-    /// 遊び始めてから 5 分間 OS へ返らないため。短くしすぎない (30 秒など) のは、
-    /// 場面の切り替えのたびに返却と確保を往復すると、その確保でスレッドが待たされるから。
-    /// ウィンドウを開かない仕事 (検査・テスト・焼き) は据え置き:
-    /// flix run はコンパイラとゲームが 1 つの JVM を分け合い、コンパイラの残した山が
-    /// ヒープに居座る。既定の上限 (物理メモリの 25%) だとメモリ 8GB の機械で 2GB しか
-    /// 無く、大きなゲームの焼きが詰まる。50% なら Studio 本体と同居しても押し出し合わない。
-    pub def memoryArgs(task: Task): List[String] =
-        match task {
-            case Task.Debug =>
-                "-XX:+UseZGC" :: "-XX:+ZGenerational"
-                    :: "-XX:SoftMaxHeapSize=512m" :: "-XX:ZUncommitDelay=60" :: Nil
-            case _          => "-XX:MaxRAMPercentage=50" :: Nil
-        }
+    /// ヒープと GC の旗。どの仕事も同じ: GC は JVM の既定 (G1)、上限は物理メモリの 50%。
+    /// flix run はコンパイラとゲームが 1 つの JVM を分け合うので、上限が決めるのは
+    /// **コンパイルの山に耐えられるか**。山はゲームの大きさ (ソースの行数) に付いていくので
+    /// 絶対値 (-Xmx) では蓋をしない — 大きく育ったゲームがある日から起動しなくなり、
+    /// 直すのに Studio の焼き直しが要る。
+    /// 2026-10-14 まで実機再生 (Debug) だけ ZGC (ZGenerational・SoftMaxHeapSize=512m・
+    /// ZUncommitDelay=60・上限は既定の 25%) で走らせていたが、ZGC は圧縮ポインタを使わないので
+    /// 同じ中身でも G1 よりヒープを食い、16GB の MacBook Air (上限 4GB) で Flix の最適化
+    /// (Inliner) が OutOfMemoryError になった。実測 (Mac mini・internet_dungeon 753147e の
+    /// flix build): ZGC + -Xmx4g は OutOfMemoryError、G1 は -Xmx3g で通る。
+    /// SoftMaxHeapSize は G1 では効かず、ZUncommitDelay は ZGC 専用なので一緒に外した。
+    /// 50% にしても G1 は山が済めば縮むので、遊んでいる間の消費は山の大きさで決まらない。
+    pub def memoryArgs(_task: Task): List[String] = "-XX:MaxRAMPercentage=50" :: Nil
 
     /// 起動する 1 本のコマンドの完全な引数列。
     /// -XstartOnFirstThread は macOS のウィンドウの決まりごと (他の OS の JVM はこの旗を知らず
@@ -110,7 +84,7 @@ mod EngineTasks {
     /// -Xss16m は削らない。Flix の型検査は式の深さぶん再帰するので、スレッドの既定スタックが
     /// 1MB の Windows では少し大きいゲームで StackOverflowError になる
     /// (macOS/arm64 は既定 2MB なので手元では気づけない)。
-    /// ヒープと GC の旗は仕事で分ける (memoryArgs)。
+    /// ヒープと GC の旗は memoryArgs (どの仕事も同じ)。
     pub def argv(exec: Exec, isMacHost: Bool, task: Task): List[String] =
         (exec#javaExe :: Nil)
             ::: (if (isMacHost) "-XstartOnFirstThread" :: Nil else Nil)
