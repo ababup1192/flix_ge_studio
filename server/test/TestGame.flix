@@ -12,4 +12,16 @@ mod TestGame {
             (Game.portFromRecord(Some("8123")),
              Game.portFromRecord(None),
              Game.portFromRecord(Some("こわれた記録"))))
+
+    /// 起動の途中の判定: 走っていなければ途中ではない。走っていて命令口がまだ答えない間と、
+    /// 答え始めてから warmupMillis に届くまでは途中 (自動の描き出しを始めない)。
+    @Test
+    def testIsStartingBy(): Unit \ Assert =
+        let warm = Game.warmupMillis();
+        Assert.assertEq(
+            expected = (false, true, true, false),
+            (Game.isStartingBy({running = false, readyAge = None}),
+             Game.isStartingBy({running = true, readyAge = None}),
+             Game.isStartingBy({running = true, readyAge = Some(warm - 1i64)}),
+             Game.isStartingBy({running = true, readyAge = Some(warm)})))
 }

@@ -123,6 +123,10 @@ mod Runner {
     /// 走行中のゲームの描き出しが時間切れで、答えを受け取らずに終えたときの終了コード。
     pub def remoteBakeBusyExitCode(): Int32 = -2
 
+    /// ゲームの Process は生きているのに命令口がまだ開いていない (起動中 = コンパイル中) ので、
+    /// 描き出しを見送ったときの終了コード。失敗として覚えず、次の目盛りで頼み直す (Changes.observeBake)。
+    pub def remoteBakeDeferredExitCode(): Int32 = -3
+
     /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
     /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
     pub def taskOfTarget(target: String): Option[EngineTasks.Task] =
@@ -419,6 +423,13 @@ mod Runner {
                 case RemoteBakeOutcome.Busy => {
                     appendLine(state, "[runner] ゲームがまだ描き出し中。答えは待たず、make にも倒しません（描き終われば gallery はゲームが書く）");
                     finish(state, remoteBakeBusyExitCode())
+                }
+                // 起動中のゲーム (Process は生きているが命令口が開く前 = コンパイル中) は make に倒さない —
+                // 倒すと SceneRender.all のコンパイルがゲームのコンパイルと同時に走り、メモリの山が 2 つ重なる
+                // (2026-10-14 MacBook Air でゲームが OutOfMemoryError で起動しなかった一因)。
+                case RemoteBakeOutcome.Unreachable => {
+                    appendLine(state, "[runner] ゲームが起動中（命令口がまだ開いていない）。make にも倒さず、起動してから頼み直します");
+                    finish(state, remoteBakeDeferredExitCode())
                 }
                 case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
             }
