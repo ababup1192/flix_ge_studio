@@ -70,4 +70,34 @@ mod TestRunner {
              Runner.classifyRemoteBake(Runner.GameReply.ReadTimedOut),
              Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 503 Service Unavailable\r\n\r\nerror: game loop did not answer within 10s\n")),
              Runner.classifyRemoteBake(Runner.GameReply.Answered("HTTP/1.1 200 OK\r\n\r\nerror: no route for POST /render\n"))))
+
+    /// 新しいエンジンの受付 ("ok accepted job=N") からは番号が取れ、
+    /// 古いエンジンがその場で描き終えた応答 ("ok rendered=…") からは取れない (今までの扱いへ回す)。
+    @Test
+    def testAcceptedJobOf(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (Some(12i64), None),
+            (Runner.acceptedJobOf("ok accepted job=12\n"),
+             Runner.acceptedJobOf("ok rendered=1 ms=200\n[rendered]\ngallery/title.png\n")))
+
+    /// GET /render の応答から、描き終えた最後の番号と、その回の応答本文 ([last] の下) を取る。
+    @Test
+    def testRenderStatusOfReadsDoneAndLast(): Unit \ Assert =
+        Assert.assertEq(
+            expected = Some((4i64, "ok rendered=1 ms=9 job=4\n[rendered]\ngallery/title.png\n")),
+            Runner.renderStatusOf("ok render requested=5 done=4 running=5\n[last]\nok rendered=1 ms=9 job=4\n[rendered]\ngallery/title.png\n"))
+
+    /// まだ 1 回も描き終えていない間は、番号だけで本文は空。
+    @Test
+    def testRenderStatusOfBeforeFirstJob(): Unit \ Assert =
+        Assert.assertEq(expected = Some((0i64, "")),
+            Runner.renderStatusOf("ok render requested=1 done=0 running=1\n"))
+
+    /// 頼んだ番号より前の回が終わっただけでは済まない (保存後の変更を描いていない絵を成功と言わない)。
+    /// 後の番号の回でまとめて描き終えていれば済む。
+    @Test
+    def testIsRenderSettled(): Unit \ Assert =
+        Assert.assertEq(expected = (false, true, true),
+            (Runner.isRenderSettled(5i64, 4i64), Runner.isRenderSettled(5i64, 5i64),
+             Runner.isRenderSettled(5i64, 7i64)))
 }

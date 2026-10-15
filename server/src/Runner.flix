@@ -14,6 +14,7 @@ mod Runner {
     import java.util.concurrent.Callable
     import java.lang.Exception
     import java.lang.Throwable
+    import java.lang.Thread
     import java.util.ArrayList
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.util.concurrent.TimeUnit
@@ -126,6 +127,38 @@ mod Runner {
     /// ゲームの Process は生きているのに命令口がまだ開いていない (起動中 = コンパイル中) ので、
     /// 描き出しを見送ったときの終了コード。失敗として覚えず、次の目盛りで頼み直す (Changes.observeBake)。
     pub def remoteBakeDeferredExitCode(): Int32 = -3
+
+    /// POST /render?async=1 の受付の応答 ("ok accepted job=N") から番号を取る。
+    /// async を知らない古いエンジンは今までどおりその場で描くので、この形は来ない (None)。
+    pub def acceptedJobOf(body: String): Option[Int64] =
+        String.lines(body) |> List.head
+            |> Option.flatMap(line ->
+                if (String.startsWith(prefix = "ok accepted job=", line))
+                    Int64.fromString(String.trim(String.dropLeft(String.length("ok accepted job="), line)))
+                else None)
+
+    /// GET /render の応答 ("ok render requested=Q done=D running=R" と、描き終えた回があれば
+    /// "[last]" の下にその回の応答本文) から、描き終えた最後の番号とその回の本文を取る。
+    pub def renderStatusOf(body: String): Option[(Int64, String)] =
+        match String.lines(body) {
+            case first :: _ if String.startsWith(prefix = "ok render ", first) =>
+                String.words(first)
+                    |> List.findMap(word -> if (String.startsWith(prefix = "done=", word))
+                                                Int64.fromString(String.dropLeft(5, word))
+                                            else None)
+                    |> Option.map(done -> {
+                        let last = match String.indexOfLeft(substr = "[last]\n", body) {
+                            case Some(at) => String.dropLeft(at + String.length("[last]\n"), body)
+                            case None     => ""
+                        };
+                        (done, last)
+                    })
+            case _ => None
+        }
+
+    /// 番号 job の描き出しが済んだか。後の番号の回でまとめて描き終えていても済んだ扱い
+    /// (その回は job を頼んだ後に Docs を読み直している)。走っている途中の回の終わりでは済まない。
+    pub def isRenderSettled(job: Int64, done: Int64): Bool = done >= job
 
     /// make の対象名から、make を使わずに直接走らせられる仕事を引く。
     /// 引けない対象 (gallery-prologue などゲーム固有の焼き) は None = 従来の make に任せる。
@@ -410,29 +443,75 @@ mod Runner {
             appendLine(state, "[runner] ゲームが走っていないので make render で描き出します");
             runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
         } else {
-            appendLine(state, "[runner] 走行中のゲームに描き出しを頼みます (POST 127.0.0.1:${port}/render)");
-            let reply = requestGame(port, "POST /render");
-            match classifyRemoteBake(reply) {
-                case RemoteBakeOutcome.Done => finishRemoteBake(state, reply)
-                // WhyNot: 答えを待つためにゲームへ要求を重ねない — 古いエンジンの命令口は時間切れの
-                // 要求も後で全部に答えるので、送った数だけ以後の応答がずれる。make にも倒さない —
-                // ゲームの描き出しと 2 系統になる。
-                // WhyNot: 成功 (0) で終えない — 成功にすると Changes が書きかけの gallery を
-                // reference へ写し得る。失敗として終えれば、同じ中身では起こし直さず、
-                // 中身が変われば次の描き出しが起きる。
-                case RemoteBakeOutcome.Busy => {
-                    appendLine(state, "[runner] ゲームがまだ描き出し中。答えは待たず、make にも倒しません（描き終われば gallery はゲームが書く）");
-                    finish(state, remoteBakeBusyExitCode())
+            appendLine(state, "[runner] 走行中のゲームに描き出しを頼みます (POST 127.0.0.1:${port}/render?async=1)");
+            let reply = requestGame(port, "POST /render?async=1");
+            let accepted = match reply {
+                case GameReply.Answered(raw) => acceptedJobOf(bodyOfHttpText(raw))
+                case _                       => None
+            };
+            match accepted {
+                // 新しいエンジンは描き出しを別スレッドで走らせ、番号だけすぐ返す（ゲームは止まらない）。
+                case Some(job) => {
+                    appendLine(state, "[runner] 受け付けられました (job=${job})。描き終わるのを待ちます");
+                    awaitRemoteBake(state, port, job, System.nanoTime() + 600_000_000_000i64)
                 }
-                // 起動中のゲーム (Process は生きているが命令口が開く前 = コンパイル中) は make に倒さない —
-                // 倒すと SceneRender.all のコンパイルがゲームのコンパイルと同時に走り、メモリの山が 2 つ重なる
-                // (2026-10-14 MacBook Air でゲームが OutOfMemoryError で起動しなかった一因)。
-                case RemoteBakeOutcome.Unreachable => {
-                    appendLine(state, "[runner] ゲームが起動中（命令口がまだ開いていない）。make にも倒さず、起動してから頼み直します");
-                    finish(state, remoteBakeDeferredExitCode())
-                }
-                case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
+                case None => classifiedRemoteBake(state, dir, reply, forget)
             }
+        }
+
+    /// 受付の番号が返らなかった (async を知らない古いエンジン・未対応・繋がらない) ときの今までの扱い。
+    def classifiedRemoteBake(state: State, dir: String, reply: GameReply, forget: {forget = Unit -> Unit \ IO}): Unit \ IO =
+        match classifyRemoteBake(reply) {
+            case RemoteBakeOutcome.Done => finishRemoteBake(state, reply)
+            // WhyNot: 答えを待つためにゲームへ要求を重ねない — 古いエンジンの命令口は時間切れの
+            // 要求も後で全部に答えるので、送った数だけ以後の応答がずれる。make にも倒さない —
+            // ゲームの描き出しと 2 系統になる。
+            // WhyNot: 成功 (0) で終えない — 成功にすると Changes が書きかけの gallery を
+            // reference へ写し得る。失敗として終えれば、同じ中身では起こし直さず、
+            // 中身が変われば次の描き出しが起きる。
+            case RemoteBakeOutcome.Busy => {
+                appendLine(state, "[runner] ゲームがまだ描き出し中。答えは待たず、make にも倒しません（描き終われば gallery はゲームが書く）");
+                finish(state, remoteBakeBusyExitCode())
+            }
+            // 起動中のゲーム (Process は生きているが命令口が開く前 = コンパイル中) は make に倒さない —
+            // 倒すと SceneRender.all のコンパイルがゲームのコンパイルと同時に走り、メモリの山が 2 つ重なる
+            // (2026-10-14 MacBook Air でゲームが OutOfMemoryError で起動しなかった一因)。
+            case RemoteBakeOutcome.Unreachable => {
+                appendLine(state, "[runner] ゲームが起動中（命令口がまだ開いていない）。make にも倒さず、起動してから頼み直します");
+                finish(state, remoteBakeDeferredExitCode())
+            }
+            case _ => fallBackToMake(state, dir, forget, reasonOf(reply))
+        }
+
+    /// 受け付けられた番号 job の描き出しが済むまで、2 秒ごとに GET /render で確かめる。
+    /// 済んだ回の応答が "ok " で始まれば成功、それ以外 (描き出しの中で落ちた) は失敗として終える。
+    /// deadlineNs を過ぎたら「描き出し中」と同じ終わり方 (失敗として覚え、中身が変われば次が起きる)。
+    /// 命令口に繋がらなくなった (ゲームを閉じた) ら見送り — 次の目盛りで make に頼み直す。
+    // WhyNot: make に倒さない — ゲームが生きている間はゲームの描き出しと 2 系統になり、
+    // 同じ gallery / assets/sfx へ同時に書く。
+    // WhyNot: 待つ間に走行権を手放さない — 手放すと、描き終わる前に Changes が次の描き出しを
+    // 起こしたり、gallery を reference へ写す仕事が描きかけの絵を拾ったりする。その間ほかの仕事が
+    // 「走っています」で断られるのは、make render で描いていたときと同じ。
+    def awaitRemoteBake(state: State, port: Int32, job: Int64, deadlineNs: Int64): Unit \ IO =
+        Thread.sleep(2000i64);
+        let status = match requestGame(port, "GET /render") {
+            case GameReply.Answered(raw) => Ok(renderStatusOf(bodyOfHttpText(raw)))
+            case other                   => Err(reasonOf(other))
+        };
+        match status {
+            case Ok(Some((done, last))) if isRenderSettled(job, done) => {
+                foreach (line <- String.lines(last)) appendLine(state, line);
+                finish(state, if (remoteBakeOk(last)) 0 else 1)
+            }
+            case Err(reason) => {
+                appendLine(state, "[runner] ゲームの命令口に繋がらなくなりました (${reason})。次の目盛りで頼み直します");
+                finish(state, remoteBakeDeferredExitCode())
+            }
+            case _ =>
+                if (System.nanoTime() >= deadlineNs) {
+                    appendLine(state, "[runner] 10 分待っても描き終わりませんでした。待つのをやめます（make にも倒しません）");
+                    finish(state, remoteBakeBusyExitCode())
+                } else awaitRemoteBake(state, port, job, deadlineNs)
         }
 
     def finishRemoteBake(state: State, reply: GameReply): Unit \ IO =
