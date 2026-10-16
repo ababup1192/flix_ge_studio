@@ -89,6 +89,22 @@ make app     # 上を全部同梱した .app
 make clean   # 生成物を消す（engine fpkg の server/lib は残す）
 ```
 
+## リリースの手順
+
+タグ（`v*`）を push すると CI（`.github/workflows/release.yml`）が mac と Windows の zip を
+作って Release に載せる。同梱する engine の版は **リポジトリ直下の `engine-version`** が決める
+（engine の main の最新ではない。ゲームとずれると make と Studio を行き来するたびに
+全部コンパイルし直しになるため）。
+
+1. ゲームの master の `flix.toml` で `flix_game_engine` の `version` を見る（例 `0.35.31`）。
+2. `engine-version` をその版に書き換えて main へ commit・push（同じなら不要）。
+3. タグを打って push（`git tag v0.32.10 && git push origin v0.32.10`）。
+
+版が無い・形が違う・engine にそのタグ（`v0.35.31`）が無いときは、最初の `resolve` で
+理由を出して止まる。Release の本文に「同梱の engine: v…」が載る。
+試しに作るだけなら Actions の release を workflow_dispatch で流す（入力 `engine_version`
+で版を上書きできる・Release は作らない）。
+
 ## テスト
 
 ```bash
