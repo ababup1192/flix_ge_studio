@@ -19,7 +19,8 @@ v="${1:-}"
 if [ -z "${v}" ]; then
   src="engine-version"
   [ -f "${FILE}" ] || fail "engine-version がありません。リポジトリ直下に同梱する engine の版（例 0.35.31）を 1 行で書いてください（README の「リリースの手順」）。"
-  v="$(grep -v '^[[:space:]]*#' "${FILE}" | tr -d '[:space:]')"
+  # grep -v は残る行が無いと 1 を返し、pipefail で下の「書かれていません」に届かないので sed で消す。
+  v="$(sed '/^[[:space:]]*#/d' "${FILE}" | tr -d '[:space:]')"
 fi
 v="${v#v}"
 [ -n "${v}" ] || fail "${src} に版が書かれていません。ゲームの master の flix.toml にある flix_game_engine の version（例 0.35.31）を書いてください。"
