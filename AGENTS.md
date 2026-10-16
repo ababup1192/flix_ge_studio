@@ -193,7 +193,7 @@
 `/名前` は Claude Code のスキル呼び出しの書き方だが、中身は**ただの markdown**。
 どのエージェントでも `.claude/skills/<名前>/SKILL.md` を直接読めば同じ内容が手に入る
 （同じ物が `.agents/skills/` にもあり、Codex はそちらを `$名前` で呼べる）。
-**このゲームに配られているスキルの一覧は、このファイル末尾の「配られているスキル一覧」
+**このゲームに配られているスキルの一覧は、このファイル末尾の「配られているスキル」
 （sync-agents が自動生成する節）にある。作業に入る前に該当するスキルを読む。**
 
 - `.claude/rules/*.md`（絵の下限 `drawing.md`・Flix の決まり `flix.md`）も同じくただの
@@ -230,7 +230,7 @@ python3 bin/lint-anim.py [ファイル...]    # コマ間の飛び・接地と 4
 - 規約と地図: engine リポの `docs/doc-conventions.md`(Doc の外形)・`docs/module-index.md`(やりたいこと → モジュール)・`docs/glossary.md`(UI に出す言葉)
 - 動く見本: engine の `templates/game-starter`(最小)と、隣にある既存ゲームのソース
 
-## 配られているスキル一覧（sync-agents が自動生成。手で編集しない）
+## 配られているスキル（sync-agents が自動生成。手で編集しない）
 
 - `.claude/skills/atelier-draft/SKILL.md` — assets のスロットに対する素材候補を atelier/ に複数案つくり、描き出して自己批評して報告する（assets/ には書かない）。素材の案を見比べたいとき、「もっと暖かい色で」「短く鋭い音で」のように方向性だけ言われたとき、assets を差し替える前に候補を並べたいときに使う。
 - `.claude/skills/carve-sprite/SKILL.md` — 3 面図 (正面・右向き・背面の立ち絵を横に並べた 1 枚) から、4 方向の歩きスプライト (sprite.json + gallery の PNG/GIF) を機械で彫り出す。キャラの歩き 4 方向が要るとき、立ち絵 1 枚はあるが向きと歩きコマを増やしたいとき、AI 画像生成の出力をゲームで使えるスプライトにしたいときに使う。
