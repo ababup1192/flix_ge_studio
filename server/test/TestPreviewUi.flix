@@ -3,6 +3,7 @@
 // warning の導出だけを見る。
 
 mod TestPreviewUi {
+    use fge::{DocJson, JsonCodec, UiSpec, UiStore}
     use Util.Json.Json
 
     /// テスト用の最小 ui.json を UiSpec.Spec に解く。ここで解けないのはテスト自身の書き間違い。

@@ -13,6 +13,8 @@
 // 照合は大小を区別する単純一致。置換 (web 側) が「見つけた文字をそのまま置き換える」
 // 形なので、探し方と置き換え方を同じ規則に揃える。
 mod Search {
+    use fge::DocJson
+
     import java.io.{File => JFile}
 
     use Util.Json.Json

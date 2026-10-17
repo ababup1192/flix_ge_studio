@@ -4,6 +4,8 @@
 // HTTP のウィンドウ口は /journey/* のまま (web 側の Journey.elm と対)。名前を揃えるなら両方いっぺんに動かす。
 
 mod NextStep {
+    use fge::JsonCodec
+
     import java.io.{File => JFile}
     import java.nio.file.Files
     import java.lang.Exception

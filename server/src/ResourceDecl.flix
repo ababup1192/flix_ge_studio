@@ -5,6 +5,7 @@
 // パターン照合・パス規約の計算だけを持つ。
 
 mod ResourceDecl {
+    use fge::JsonCodec
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray}
 

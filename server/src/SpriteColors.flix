@@ -4,6 +4,7 @@
 // *.theme.json) を引いて「legend の値 → #rrggbb」の表を返す。
 // 解決できない値は表に載せない (fail-open — 画面側は従来の仮色で描き続ける)。
 mod SpriteColors {
+    use fge::{DocJson, JsonCodec}
     use Util.Json.Json
     use Util.Json.Json.{JArray, JObject, JString, JBool}
 

@@ -11,6 +11,11 @@
 // 送り続けるので、それを HTTP エラーにしない。
 
 mod PreviewUi {
+    use fge::{
+        Color, DocJson, EntityId, HeadlessFont, JsonCodec, Rect2, Render, SoftRaster, UiBinding, UiDoc,
+        UiExtract, UiLayout, UiRender, UiSpec, UiStore, Vec2
+    }
+
     import java.awt.image.BufferedImage
 
     use Util.Json.Json

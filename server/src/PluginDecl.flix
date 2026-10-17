@@ -5,6 +5,7 @@
 // 実在確認 (index.html があるか) と配信は Plugins.flix (IO 層) の仕事。
 
 mod PluginDecl {
+    use fge::JsonCodec
     use Util.Json.Json
     use Util.Json.Json.{JArray}
 

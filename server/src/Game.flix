@@ -6,6 +6,8 @@
 // 書き残し、次の server が「まだ生きているもの」だけを引き継ぐ。
 
 mod Game {
+    use fge::{DocJson, JsonCodec}
+
     import java.lang.Process
     import java.lang.ProcessHandle
     import java.lang.Exception

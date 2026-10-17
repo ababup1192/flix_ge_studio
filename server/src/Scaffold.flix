@@ -4,6 +4,8 @@
 // 名前・大きさの門番は純粋な関数に分けてある (そこだけテストする)。
 
 mod Scaffold {
+    use fge::{DocJson, JsonCodec}
+
     import java.lang.System
     import java.io.{File => JFile}
 

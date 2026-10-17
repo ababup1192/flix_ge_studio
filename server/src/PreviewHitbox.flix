@@ -5,9 +5,14 @@
 // 失敗の返し分けは PreviewUi と同じ: 封筒不正だけ HTTP 400、ドキュメント側の問題は 200 の ok:false。
 
 mod PreviewHitbox {
+    use fge::{
+        Color, DocJson, FontAtlas, HeadlessFont, HitDoc, JsonCodec, RawDraw, Rect2, Render, SoftRaster,
+        Vec2
+    }
+
     import java.awt.image.BufferedImage
 
-    use Hit.HitShape
+    use fge::Hit.HitShape
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
 

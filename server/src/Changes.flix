@@ -12,6 +12,8 @@
 // 記録はサーバの生存中だけ (メモリ)。事故の警報が目的で、レジストリではない —
 // 「触っていないのに知らせが来た」を成立させるのが仕事。
 mod Changes {
+    use fge::{DocJson, JsonCodec}
+
     import java.util.concurrent.{ConcurrentHashMap => JMap}
     import java.lang.System
     import java.lang.Exception

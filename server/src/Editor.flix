@@ -7,6 +7,8 @@
 // executor を与えない (null) ので処理は 1 スレッド直列 = 同時リクエストも順番に並ぶ。
 
 mod Editor {
+    use fge::{DocJson, JsonCodec, ProjectLoader}
+
     import java.lang.System
     import java.lang.Thread
     import java.lang.Exception

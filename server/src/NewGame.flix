@@ -5,6 +5,8 @@
 // 文字の書き換えは純粋な関数に分けてある (そこだけテストする)。
 
 mod NewGame {
+    use fge::{DocJson, JsonCodec}
+
     import java.lang.Exception
     import java.lang.ProcessBuilder
     import java.lang.System

@@ -2,7 +2,8 @@
 // "//" 注釈の収集) を固定する。描画そのもの (PNG の中身) は目視検品に任せ、ここでは座標だけを見る。
 
 mod TestPreviewHitbox {
-    use Hit.HitShape
+    use fge::{DocJson, Rect2}
+    use fge::Hit.HitShape
 
     /// 矩形を比較しやすいタプル (x, y, w, h) へ写す。
     def rectTuple(rect: Rect2.Rect2): (Float64, Float64, Float64, Float64) =

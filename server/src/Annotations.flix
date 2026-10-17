@@ -3,6 +3,8 @@
 // あとはパスを運ぶ。ゲームの言葉を Studio に持ち込まないための線引き。
 
 mod Annotations {
+    use fge::{DocJson, JsonCodec}
+
     import java.io.{File => JFile}
     import java.io.FileOutputStream
     import java.nio.file.Files
