@@ -100,15 +100,14 @@ mod TestNewGame {
             (NewGame.shortTrigger("絵を描くとき、音を作るときに使う。"),
              NewGame.shortTrigger("絵を描くときに使う。")))
 
-    /// 配られているスキルの節: 見出し + 空行 + 「- `名前` — 縮めた引き金」を渡した順に 1 行ずつ、
-    /// description が「詳しい参考」で始まる物は名前だけ最後の 1 行へ。末尾に改行は付かない。
+    /// 配られているスキルの節: 見出し + 空行 + 「- `名前` — 縮めた引き金」を渡した順に 1 行ずつ。
+    /// 末尾に改行は付かない。
     @Test
     def testSkillsSection(): Unit \ Assert =
         Assert.assertEq(
-            expected = "## 配られているスキル（sync-agents が自動生成。手で編集しない）\n\n- `bake-loop` — 絵を直すときなど。\n- `flix-docs` — Flix の決まり。\n- 詳しい参考（既定では読まない。入口のスキルから節だけ引く）: `px-a`・`px-b`",
+            expected = "## 配られているスキル（sync-agents が自動生成。手で編集しない）\n\n- `bake-loop` — 絵を直すときなど。\n- `flix-docs` — Flix の決まり。",
             NewGame.skillsSection(
-                ("bake-loop", "能書き。絵を直すとき、色を変えるときに使う。") :: ("flix-docs", "Flix の決まり") ::
-                ("px-a", "詳しい参考。a") :: ("px-b", "詳しい参考。b") :: Nil))
+                ("bake-loop", "能書き。絵を直すとき、色を変えるときに使う。") :: ("flix-docs", "Flix の決まり") :: Nil))
 
     /// AGENTS.md の組み立て: 刻印 + 空行 + 共通部 + 空行 + 配られているスキルの節、
     /// ゲーム固有部があれば空行で続く。終端は改行 1 個

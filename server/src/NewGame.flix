@@ -144,24 +144,14 @@ mod NewGame {
             case None    => s
         }
 
-    /// description がこの語で始まるスキルは「詳しい参考」として名前だけ 1 行にまとめる
-    /// (engine の bin/lint-rules/sync-agents.json の referencePrefix と同じ値)。
-    def referencePrefix(): String = "詳しい参考"
-
-    /// 「配られているスキル」の節 (見出し + 空行 + 1 スキル 1 行 + あれば詳しい参考の 1 行)。
+    /// 「配られているスキル」の節 (見出し + 空行 + 1 スキル 1 行)。
     /// skills は (名前, description の全文) を名前昇順で渡す。末尾に改行は付けない
     /// (つなぎは agentsText の仕事)。engine の bin/fge sync-agents の buildAgentsMD とバイト一致させる。
     pub def skillsSection(skills: List[(String, String)]): String =
-        let isRef = entry -> String.startsWith(prefix = referencePrefix(), snd(entry));
-        let entries = List.filter(entry -> not isRef(entry), skills)
-            |> List.map(entry -> "- `${fst(entry)}` — ${shortTrigger(triggerSentence(snd(entry)))}");
-        let refs = List.filter(isRef, skills) |> List.map(entry -> "`${fst(entry)}`");
-        let refLine = if (List.isEmpty(refs)) Nil
-            else "- ${referencePrefix()}（既定では読まない。入口のスキルから節だけ引く）: ${String.intercalate("・", refs)}" :: Nil;
         String.intercalate("\n",
             "## 配られているスキル（sync-agents が自動生成。手で編集しない）"
                 :: ""
-                :: List.append(entries, refLine))
+                :: List.map(entry -> "- `${fst(entry)}` — ${shortTrigger(triggerSentence(snd(entry)))}", skills))
 
     /// 末尾の改行をぜんぶ落とす (engine 側の bin/fge sync-agents と同じ)。
     def dropTrailingNewlines(text: String): String =
@@ -450,7 +440,7 @@ mod NewGame {
         }
 
     /// agents-pack/skills の (名前, description の全文) 一覧を名前昇順で
-    /// (1 文に縮めるのは skillsSection の仕事。詳しい参考の見分けに全文が要る)。
+    /// (1 文に縮めるのは skillsSection の仕事)。
     def skillCatalog(engine: String): List[(String, String)] \ IO =
         let entries = new JFile("${engine}/agents-pack/skills").listFiles();
         if (Object.isNull(entries)) Nil
