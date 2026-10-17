@@ -7,8 +7,8 @@
 
 mod PreviewItems {
     use fge::{
-        Color, DocJson, DrawCmd, FontAtlas, GameEngine, HeadlessFont, JsonCodec, RawDraw, Rect2, Render,
-        SoftRaster, UiDoc, Vec2
+        Color, DocJson, DrawCmd, FontAtlas, GameEngine, HeadlessFont, JsonCodec, RawDraw, Rect2,
+        Render, SoftRaster, UiDoc, Vec2
     }
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
