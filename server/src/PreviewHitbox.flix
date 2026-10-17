@@ -6,8 +6,8 @@
 
 mod PreviewHitbox {
     use fge::{
-        Color, DocJson, FontAtlas, HeadlessFont, HitDoc, JsonCodec, RawDraw, Rect2, Render, SoftRaster,
-        Vec2
+        Color, DocJson, FontAtlas, HeadlessFont, HitDoc, JsonCodec, RawDraw, Rect2, Render,
+        SoftRaster, Vec2
     }
 
     import java.awt.image.BufferedImage

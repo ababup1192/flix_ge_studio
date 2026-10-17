@@ -12,8 +12,8 @@
 
 mod PreviewUi {
     use fge::{
-        Color, DocJson, EntityId, HeadlessFont, JsonCodec, Rect2, Render, SoftRaster, UiBinding, UiDoc,
-        UiExtract, UiLayout, UiRender, UiSpec, UiStore, Vec2
+        Color, DocJson, EntityId, HeadlessFont, JsonCodec, Rect2, Render, SoftRaster, UiBinding,
+        UiDoc, UiExtract, UiLayout, UiRender, UiSpec, UiStore, Vec2
     }
 
     import java.awt.image.BufferedImage
