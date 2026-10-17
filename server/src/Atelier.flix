@@ -4,6 +4,8 @@
 // watchFile で保存即反映を拾う。互換判定・名前づけ・経路の門番は純粋な関数に分けてある。
 
 mod Atelier {
+    use fge::{DocJson, JsonCodec}
+
     import java.io.{File => JFile}
     import java.io.FileOutputStream
     import java.lang.{String => JavaString}

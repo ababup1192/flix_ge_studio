@@ -3,6 +3,8 @@
 // 遊んでいるときの重さを直す係ではない — 「始まらない・固まる・字が乱れる」への手当て。
 
 mod Maintenance {
+    use fge::JsonCodec
+
     import java.io.{File => JFile}
     import java.lang.System
 

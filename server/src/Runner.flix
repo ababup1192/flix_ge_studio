@@ -7,6 +7,8 @@
 // (そこだけテストする)。
 
 mod Runner {
+    use fge::JsonCodec
+
     import java.lang.Process
     import java.lang.ProcessBuilder
     import java.lang.System

@@ -4,6 +4,8 @@
 
 mod TestPreviewItems {
 
+    use fge::{DocJson, JsonCodec, Rect2}
+
     /// テスト用の items JSON を描き物の列に解く。ここで JSON 自体が解けないのはテストの書き間違い。
     def itemsOf(text: String): Result[String, List[PreviewItems.Item]] =
         match DocJson.parse(text) {

@@ -5,6 +5,8 @@
 
 mod TestPreviewFx {
 
+    use fge::{Color, DrawCmd, FxDoc}
+
     /// 速度・寿命・カーブだけ差し替えられる最小 emitter (他は canvas 計算に効かない値)。
     def emitterOf(speed: {base = Float64, vary = Float64, over = FxDoc.CurveSpec},
                   life: {base = Float64, vary = Float64},

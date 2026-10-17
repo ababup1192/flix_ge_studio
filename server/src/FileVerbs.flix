@@ -5,6 +5,8 @@
 // プロジェクトの外を触らせない — 動詞が増えるほど、門番を通し忘れた 1 本が
 // 命取りになるので、開く・書く・消すのどれもここ 1 か所に集める。
 mod FileVerbs {
+    use fge::{DocJson, JsonCodec}
+
     import java.io.{File => JFile}
 
     use Util.Json.Json

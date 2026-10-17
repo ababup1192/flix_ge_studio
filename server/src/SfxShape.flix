@@ -3,6 +3,8 @@
 // 間引いた包絡 (peaks) と帯×時刻の升目 (bands) を返す。
 // 読めない・WAV でない・中身が空はどれも None (呼び手が 404 にする)。
 mod SfxShape {
+    use fge::JsonCodec
+
     import java.io.{File => JFile}
     import java.lang.Math
     import java.nio.file.Files

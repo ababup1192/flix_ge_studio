@@ -9,6 +9,8 @@
 // (正規化して配下チェック — シンボリックリンク越えも塞ぐ) の二段。
 // キャッシュ制御 (全ファイル no-cache) と応答の書き出しは Editor が受け持つ。
 mod Plugins {
+    use fge::DocJson
+
     import java.io.{File => JFile}
     import java.nio.file.Files
 

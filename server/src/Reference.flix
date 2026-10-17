@@ -11,6 +11,8 @@
 // .studio/reference-diff.json に控える。控えが無い時の初回は「今」。
 // 記録が消えても困らない(日数が 0 日からになるだけ)。
 mod Reference {
+    use fge::{DocJson, JsonCodec}
+
     import java.io.{File => JFile}
     import java.lang.Exception
     import java.lang.System

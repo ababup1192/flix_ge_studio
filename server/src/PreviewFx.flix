@@ -6,6 +6,7 @@
 // ドキュメント側の問題 (パース失敗等) は HTTP 200 の ok:false + error{message, path}。
 
 mod PreviewFx {
+    use fge::{DocJson, Fx, FxDoc, GameEngine, HeadlessFont, JsonCodec, Render, SoftRaster, Vec2}
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
 

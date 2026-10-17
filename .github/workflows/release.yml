@@ -21,7 +21,7 @@ on:
         default: ""
 
 env:
-  FLIX_VERSION: "0.77.0"
+  FLIX_VERSION: "0.78.0"
 
 jobs:
   # 同梱する engine の版を決める。正はリポジトリ直下の engine-version (ゲームの master の

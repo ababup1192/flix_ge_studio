@@ -12,6 +12,8 @@
 // reachable:false を返し、画面が「make cutscene-server で起動してください」と
 // 案内できるようにする。
 mod BakeProxy {
+    use fge::{DocJson, JsonCodec}
+
     import java.io.InputStream
     import java.io.{File => JFile}
     import java.lang.Exception

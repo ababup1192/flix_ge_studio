@@ -4,6 +4,8 @@
 // 載せ替える (fge upgrade-game) ところまで続ける。
 
 mod EngineUpdate {
+    use fge::{DocJson, JsonCodec}
+
     import java.lang.ProcessBuilder
     import java.lang.System
     import java.lang.Throwable

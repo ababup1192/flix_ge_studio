@@ -5,6 +5,8 @@
 // 引数列の組み立ては純粋な関数に分けてある (そこだけテストする)。
 
 mod EngineTasks {
+    use fge::{DocJson, JsonCodec}
+
     import java.lang.System
     import java.lang.Exception
     import java.lang.{String => JavaString}

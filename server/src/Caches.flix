@@ -5,6 +5,8 @@
 // フォントや画像を差し替えれば次の要求から新しい中身が反映される。
 
 mod Caches {
+    use fge::{FontAtlas, HeadlessFont}
+
     import java.io.File
     import javax.imageio.ImageIO
     import java.util.concurrent.{ConcurrentHashMap => JMap}

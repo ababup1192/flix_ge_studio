@@ -4,6 +4,7 @@
 // 読めない・無い・形が違うはすべて空の Map へ落とす (fail-open)。
 
 mod SceneNotes {
+    use fge::{DocJson, JsonCodec}
     use Util.Json.Json
     use Util.Json.Json.JArray
 

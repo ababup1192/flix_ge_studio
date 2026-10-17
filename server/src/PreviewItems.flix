@@ -6,6 +6,10 @@
 // 失敗の返し分けは PreviewUi と同じ: 封筒不正だけ HTTP 400、内容の問題は 200 の ok:false。
 
 mod PreviewItems {
+    use fge::{
+        Color, DocJson, DrawCmd, FontAtlas, GameEngine, HeadlessFont, JsonCodec, RawDraw, Rect2, Render,
+        SoftRaster, UiDoc, Vec2
+    }
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool, JNull}
 

@@ -3,6 +3,8 @@
 // 見せて POST /project で切り替える。履歴は ~/.flix_ge_editor.json に残す。
 
 mod Projects {
+    use fge::{DocJson, JsonCodec, ProjectLoader}
+
     import java.lang.System
     import java.io.{File => JFile}
     import java.util.concurrent.{ConcurrentHashMap => JMap}

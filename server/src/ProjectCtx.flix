@@ -4,6 +4,8 @@
 // 描いて返し、欠けた分は warning の文言で編集画面へ伝える。
 
 mod ProjectCtx {
+    use fge::{Color, FontAtlas, GameEngine, GpuHandle, ProjectLoader}
+
     /// プレビュー描画に使うプロジェクト設定一式。
     /// `designW`/`designH`: 設計解像度 (px)。`clearColor`: 背景色。
     /// `fonts`/`textures`: project.json の manifest (パスは絶対パス化済み)。

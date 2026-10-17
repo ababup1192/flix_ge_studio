@@ -2,6 +2,7 @@
 // 固定する。ファイル走査・HTTP の封筒は薄い IO 殻なので、ここでは表づくりの
 // ルール (解決の可否と勝ち順) だけを見る。
 mod TestSpriteColors {
+    use fge::{DocJson, JsonCodec}
     use Util.Json.Json
 
     /// 文字列をトップレベルの Map[String, Json] に解く (テスト入力用)。
