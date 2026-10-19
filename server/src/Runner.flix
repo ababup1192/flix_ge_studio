@@ -550,6 +550,10 @@ mod Runner {
     /// 繋ぐ段と読む段を分けて返すのは、接続の時間切れ (描いていない) と読み取りの時間切れ
     /// (描いている途中) が同じ SocketTimeoutException で来るため。
     pub def requestGame(port: Int32, request: String, body: String): GameReply \ IO =
+        requestGameWithin(port, request, 15000, body)
+
+    /// requestGame の読み取りの見切りを変えた物（readMillis ミリ秒）。橋に wait=<秒> を渡す頼みは、それより長く待つ。
+    pub def requestGameWithin(port: Int32, request: String, readMillis: Int32, body: String): GameReply \ IO =
         let socket = new Socket();
         let connected =
             try {
@@ -562,7 +566,7 @@ mod Runner {
             case Some(failed) => failed
             case None         =>
                 try {
-                    socket.setSoTimeout(15000);
+                    socket.setSoTimeout(readMillis);
                     let payload = body.getBytes("UTF-8");
                     let head = "${request} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Array.length(payload)}\r\nConnection: close\r\n\r\n";
                     socket.getOutputStream().write(head.getBytes("UTF-8"));

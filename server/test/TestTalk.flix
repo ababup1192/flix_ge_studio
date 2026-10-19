@@ -2,6 +2,8 @@
 // .yarn の文法と検査は engine の bin/fge yarn（Go のテスト）、絵はゲームの仕事。
 
 mod TestTalk {
+    use fge::JsonCodec
+    use Util.Json.Json.{JObject, JString, JNumber}
 
     /// プロジェクトの中の .yarn だけを受ける。
     @Test
@@ -33,4 +35,21 @@ mod TestTalk {
             expected = (Ok("debug/shot/shot-1.png"), Err("error: 始まり 'talk': ノード 'x' はシナリオに無い")),
             (Talk.shotOutcome("ok stepped=0\n[shot]\nok png=debug/shot/shot-1.png\n"),
              Talk.shotOutcome("error: 始まり 'talk': ノード 'x' はシナリオに無い\n")))
+
+    /// 1 枚撮りは橋に待つ秒数を渡す（0.51 の橋が読む。0.50 の橋は知らない引数を読み捨てる）。
+    @Test
+    def testShotRequestPassesWait(): Unit \ Assert =
+        Assert.assertEq(expected = "POST /step?view=shot&wait=${Talk.shotWaitSecs()}", Talk.shotRequest())
+
+    /// 起こしている間の答えは starting のまま、段（jar / boot）と経過秒を足す（古い画面は starting と一言だけ読む）。
+    @Test
+    def testBootingJsonHasStageAndElapsed(): Unit \ Assert =
+        let fieldsOf = json -> match json {
+            case JObject(fields) => (Map.get("headless", fields), Map.get("stage", fields), Map.get("elapsed", fields))
+            case _ => (None, None, None)
+        };
+        Assert.assertEq(
+            expected = (Some(JString("starting")), Some(JString("jar")),
+                        Some(JNumber(JsonCodec.intToBd(37)))),
+            fieldsOf(Talk.bootingJson(Headless.BootStage.BuildingJar, 37i64, 0)))
 }

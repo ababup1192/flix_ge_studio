@@ -13,7 +13,9 @@
 //     Crashed(2 以上) ──▶ Failed を答えたまま待つ（「もう一度起こす」= restart で 1 本だけ起こす）
 //
 // 決まり:
-//   - 起こすのは頼まれた時だけ。立ち上げ中は待たせず「起こしています」を返す（初回は jar を作るので 1〜2 分）
+//   - 起こすのは頼まれた時だけ。立ち上げ中は待たせず「起こしています」を返す。Booting の中は 2 段（BootStage）:
+//     jar を作っている（src が変わった時だけ。1〜2 分）と、起こしている（JVM の立ち上げ・最初の 1 枚。数秒）。
+//     どちらかは debug/headless.log と jar を作る鍵（build/headless/.lock）から毎回決め直す（Launch には写さない）
 //   - ゲーム（窓あり）が起動の途中なら起こさない（コンパイルと JVM のメモリの山を重ねない。Game.isStarting）
 //   - 続けて落ちる時は起こし直さない（頼まれるたびに JVM とコンパイルを量産しない）。数えた回数は ready で 0 に戻る
 //   - メモリの上限は -Xmx1g（HEADLESS_JAVA_OPTS）・放っておかれたら自分で終わる（HEADLESS_IDLE_SECS）。
@@ -63,14 +65,24 @@ mod Headless {
     /// ゲームに置く入口の名前（engine の App.Headless の冒頭の書き方）。
     pub def entry(): String = "E2e.serveHeadless"
 
+    /// 起こしている 1 本が今どの段か（engine の bin/headless-run の出す行で分かる）。
+    ///   BuildingJar  … jar を作っている（src・lib が変わった時だけ。1〜2 分）
+    ///   StartingGame … jar はある。JVM を立ち上げて最初の 1 枚を待っている（数秒）
+    pub enum BootStage with Eq, ToString {
+        case BuildingJar
+        case StartingGame
+    }
+
     /// 頼みの答え。
     ///   Ready(port)          … 頼める
-    ///   Starting(why)        … 起こしている・待っている（画面は「準備中」を出して、少し後にもう一度頼む）
+    ///   Booting(stage, 秒, 落ちた回数) … 起こしている 1 本を待っている（段と起こしてからの経過秒。少し後にもう一度頼む）
+    ///   Starting(why)        … それ以外で待っている（ゲームが起動の途中・答えない。少し後にもう一度頼む）
     ///   Stalled(why, log)    … 起こしてから長く ready にならない（待ち続けるが、理由とログの末尾と起こし直す口を見せる）
     ///   Failed(why, log)     … ready にならずに落ちた（続けては起こさない。画面は理由と「もう一度起こす」を出す）
     ///   Unsupported(why)     … このゲーム・この OS では起こせない
     pub enum Readiness with Eq, ToString {
         case Ready(Int32)
+        case Booting(BootStage, Int64, Int32)
         case Starting(String)
         case Stalled(String, List[String])
         case Failed(String, List[String])
@@ -82,7 +94,8 @@ mod Headless {
     ///   answering    … 今の 1 本のポートが繋がるか
     ///   gameStarting … ゲーム（窓あり）が起動の途中か
     ///   logTail      … debug/headless.log の末尾
-    pub type alias Seen = {now = Int64, answering = Bool, gameStarting = Bool, logTail = List[String]}
+    ///   stage        … 起こしている 1 本の段（bootStageOf で決めた物）
+    pub type alias Seen = {now = Int64, answering = Bool, gameStarting = Bool, logTail = List[String], stage = BootStage}
 
     /// 頼みをどうするか。
     pub enum Decision with Eq, ToString {
@@ -114,7 +127,7 @@ mod Headless {
             if (seen#answering) Decision.MarkRunning(port)
             else if (seen#now - startedAt >= stallMillis())
                 Decision.Answer(Readiness.Stalled(stalledMessage(seen#now - startedAt), seen#logTail))
-            else Decision.Answer(Readiness.Starting(bootingMessage(failures)))
+            else Decision.Answer(Readiness.Booting(seen#stage, (seen#now - startedAt) / 1000i64, failures))
         case Launch.Idle => startUnlessGameStarting(0, seen)
         case Launch.Crashed(failures, why, tail) =>
             if (failures >= maxCrashesInRow()) Decision.Answer(Readiness.Failed(why, tail))
@@ -142,10 +155,26 @@ mod Headless {
     pub def exitReason(code: Int32): String =
         "窓なしのゲームが ready にならずに終わりました（終了コード ${code}）"
 
-    /// 起こしている間の一言（前に落ちていれば、それも言う）。
-    pub def bootingMessage(failures: Int32): String =
-        if (failures > 0) "窓なしのゲームが落ちたので、もう一度起こしています（初回は jar を作るので 1〜2 分）"
-        else "窓なしのゲームを起こしています（初回は jar を作るので 1〜2 分）"
+    /// bin/headless-run が jar を作る（またはほかの make が作り終えるのを待つ・jar なしでコンパイルする）時に出す行の印。
+    pub def buildMarks(): List[String] =
+        "[headless-run] jar を作る" :: "が jar を作っているので待つ" :: "[headless-run] flix run で流す" :: Nil
+
+    /// 段を決める。log … debug/headless.log の全行・buildLocked … jar を作る鍵（build/headless/.lock）があるか。
+    /// jar を作ると言った後でも、鍵が外れていれば作り終えて JVM を起こしている（flix run は鍵なしでコンパイルし続ける）。
+    pub def bootStageOf(log: List[String], buildLocked: Bool): BootStage =
+        let said = mark -> List.exists(line -> String.contains(substr = mark, line), log);
+        if (said("[headless-run] flix run で流す")) BootStage.BuildingJar
+        else if (buildLocked and List.exists(said, buildMarks())) BootStage.BuildingJar
+        else BootStage.StartingGame
+
+    /// 起こしている間の一言（段・起こしてからの経過秒。前に落ちていれば、それも言う）。
+    pub def bootingMessage(stage: BootStage, elapsedSecs: Int64, failures: Int32): String =
+        let again = if (failures > 0) "落ちたので、もう一度" else "";
+        let secs = Int64.toString(elapsedSecs);
+        match stage {
+            case BootStage.BuildingJar  => "窓なしのゲームの jar を作っています（src が変わったので 1〜2 分。${again}起こして ${secs} 秒）"
+            case BootStage.StartingGame => "窓なしのゲームを${again}起こしています（数秒。${secs} 秒）"
+        }
 
     /// 長く起きない時の一言（起こしてからの経過ミリ秒）。
     pub def stalledMessage(elapsed: Int64): String =
@@ -201,7 +230,8 @@ mod Headless {
                     now = System.currentTimeMillis(),
                     answering = portOf(launch) |> Option.exists(answers),
                     gameStarting = gameStarting,
-                    logTail = logTail(dir, tailLines())
+                    logTail = logTail(dir, tailLines()),
+                    stage = bootStageOf(logLines(dir), new JFile("${dir}/build/headless/.lock").exists())
                 };
                 match rule(launch, seen) {
                     case Decision.Answer(readiness) => readiness
@@ -214,7 +244,7 @@ mod Headless {
                         let port = freePort();
                         discard (state#launches).put(dir, Launch.Booting(port, seen#now, failures));
                         startInBackground(state, dir, port);
-                        Readiness.Starting(bootingMessage(failures))
+                        Readiness.Booting(BootStage.StartingGame, 0i64, failures)
                 }
             })
         }
@@ -310,10 +340,14 @@ mod Headless {
 
     /// ログの末尾（起こせなかった時の理由に添える）。空の行は数えない。
     pub def logTail(dir: String, count: Int32): List[String] \ IO =
-        let lines = String.lines(readText(new JFile("${dir}/debug/headless.log")))
-            |> List.map(withoutColorCodes)
-            |> List.filter(line -> String.trim(line) != "");
+        let lines = logLines(dir);
         List.drop(List.length(lines) - count, lines)
+
+    /// debug/headless.log の全行（色の印を外し、空の行は数えない。起こすたびに書き直される）。
+    def logLines(dir: String): List[String] \ IO =
+        String.lines(readText(new JFile("${dir}/debug/headless.log")))
+            |> List.map(withoutColorCodes)
+            |> List.filter(line -> String.trim(line) != "")
 
     /// 端末の色の印（ESC [ … m。flix の出力に混ざる）を外す — 画面にはそのまま字で出るので。
     pub def withoutColorCodes(line: String): String =

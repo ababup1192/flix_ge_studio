@@ -1,5 +1,6 @@
 module TalkView exposing
-    ( Headless(..)
+    ( Boot(..)
+    , Headless(..)
     , Model
     , Msg(..)
     , Node
@@ -10,7 +11,9 @@ module TalkView exposing
     , ShotAnswer(..)
     , Shown(..)
     , Target
+    , bootDecoder
     , buildDecoder
+    , busyLabel
     , filesDecoder
     , gotBuild
     , gotFile
@@ -91,7 +94,7 @@ type alias Problem =
 
 {-| 撮った答え。
 
-  - ShotStarting … 窓なしのゲームを起こしている(少し後に頼み直す)
+  - ShotStarting … 窓なしのゲームを起こしている・待っている(少し後に頼み直す。段つき)
   - ShotStalled … 起こしてから長く ready にならない(頼み直しは続ける。ログの末尾つき)
   - ShotCrashed … ready にならずに落ちた(サーバは続けて起こさない。ログの末尾つき)
   - ShotFailed … それ以外の撮れなかった理由(台本・繋がらない等)
@@ -99,23 +102,36 @@ type alias Problem =
 -}
 type ShotAnswer
     = ShotOk String
-    | ShotStarting String
+    | ShotStarting String Boot
     | ShotStalled String (List String)
     | ShotCrashed String (List String)
     | ShotFailed String
 
 
+{-| 起こしている 1 本の段(サーバの stage と elapsed。秒は起こしてからの経過)。
+
+  - BootWaiting … 段の分からない待ち(ゲームが起動の途中・古いサーバ・押した直後)
+  - BootBuildingJar 秒 … jar を作っている(src が変わった時だけ。1〜2 分)
+  - BootStartingGame 秒 … jar はあり、JVM を起こして最初の 1 枚を待っている(数秒)
+
+-}
+type Boot
+    = BootWaiting
+    | BootBuildingJar Int
+    | BootStartingGame Int
+
+
 {-| 窓なしのゲームの様子(画面が知っている限り)。
 
   - HeadlessOk … 撮れた・まだ何も聞いていない
-  - HeadlessBooting … 起こしている(頼み直し中)
+  - HeadlessBooting … 起こしている(頼み直し中。段つき)
   - HeadlessStalled … 長く起きない(頼み直し中。ログの末尾と「もう一度起こす」を出す)
   - HeadlessCrashed … 落ちた(頼み直さない。ログの末尾と「もう一度起こす」を出す)
 
 -}
 type Headless
     = HeadlessOk
-    | HeadlessBooting
+    | HeadlessBooting Boot
     | HeadlessStalled (List String)
     | HeadlessCrashed (List String)
 
@@ -306,7 +322,7 @@ update msg model =
             -- 頼んでいる最中は押せない(ボタンも出さない)。答えは ShotStarting で返り、頼み直しが続く
             case ( model.request, targetAt model.path model.nodes model.cursor ) of
                 ( Idle, Just t ) ->
-                    ( { model | request = InFlight t, headless = HeadlessBooting, status = "" }, OutRestart t )
+                    ( { model | request = InFlight t, headless = HeadlessBooting BootWaiting, status = "" }, OutRestart t )
 
                 ( Idle, Nothing ) ->
                     ( { model | status = "カーソルを会話の行に置いてから起こしてください" }, OutNone )
@@ -416,8 +432,8 @@ gotShot t answer model =
                 ShotOk png ->
                     ( { m | shown = Shown { target = t, png = png }, note = "", headless = HeadlessOk }, OutNone )
 
-                ShotStarting why ->
-                    retryLater (hold why { m | headless = HeadlessBooting })
+                ShotStarting why boot ->
+                    retryLater (hold why { m | headless = HeadlessBooting boot })
 
                 ShotStalled why log ->
                     retryLater (hold why { m | headless = HeadlessStalled log })
@@ -534,11 +550,11 @@ shotAnswerDecoder =
                     D.map ShotOk (D.field "png" D.string)
 
                 else
-                    D.map3
-                        (\phase why log ->
+                    D.map4
+                        (\phase why log boot ->
                             case phase of
                                 "starting" ->
-                                    ShotStarting why
+                                    ShotStarting why boot
 
                                 "stalled" ->
                                     ShotStalled why log
@@ -552,7 +568,51 @@ shotAnswerDecoder =
                         (D.oneOf [ D.field "headless" D.string, D.succeed "" ])
                         (D.oneOf [ D.at [ "error", "message" ] D.string, D.succeed "撮れませんでした" ])
                         (D.oneOf [ D.field "log" (D.list D.string), D.succeed [] ])
+                        bootDecoder
             )
+
+
+{-| 段(stage: "jar" / "boot")と経過秒(elapsed)。無い・知らない段は BootWaiting(古いサーバ・ゲームの起動待ち)。 -}
+bootDecoder : D.Decoder Boot
+bootDecoder =
+    D.map2
+        (\stage elapsed ->
+            case stage of
+                "jar" ->
+                    BootBuildingJar elapsed
+
+                "boot" ->
+                    BootStartingGame elapsed
+
+                _ ->
+                    BootWaiting
+        )
+        (D.oneOf [ D.field "stage" D.string, D.succeed "" ])
+        (D.oneOf [ D.field "elapsed" D.int, D.succeed 0 ])
+
+
+{-| 見出しの一言。起こしている間は頼み直しの合間も出す(jar を作る時だけ「1〜2 分」、起こしているだけなら「数秒」)。
+撮っている最中だけ「撮っています」。どちらでもなければ出さない(空)。
+-}
+busyLabel : Bool -> Headless -> String
+busyLabel inFlight headless =
+    case headless of
+        HeadlessBooting (BootBuildingJar secs) ->
+            "⏳ jar を作っています(1〜2 分)… " ++ String.fromInt secs ++ " 秒"
+
+        HeadlessBooting (BootStartingGame secs) ->
+            "⏳ 起こしています(数秒)… " ++ String.fromInt secs ++ " 秒"
+
+        HeadlessBooting BootWaiting ->
+            "⏳ 待っています…"
+
+        _ ->
+            if inFlight then
+                "⏳ 撮っています…"
+
+            else
+                ""
+
 
 
 
@@ -784,13 +844,13 @@ viewPreview model =
                 []
 
         busy =
-            model.request /= Idle
+            busyLabel (model.request /= Idle) model.headless
     in
     div [ HA.class "flex flex-col gap-2" ]
         [ div [ HA.class "flex items-center gap-2" ]
             [ span [ HA.class "font-mono text-xs text-ink" ] [ text caption ]
-            , if busy then
-                span [ HA.class "text-[11px] text-ink-faint" ] [ text "⏳ 撮っています…" ]
+            , if busy /= "" then
+                span [ HA.class "talk-busy text-[11px] text-ink-faint" ] [ text busy ]
 
               else
                 text ""

@@ -11,7 +11,8 @@ module TalkViewTest exposing (suite)
 
 import Expect
 import Test exposing (Test, describe, test)
-import TalkView exposing (Headless(..), Out(..), Request(..), ShotAnswer(..), Shown(..))
+import Json.Decode as D
+import TalkView exposing (Boot(..), Headless(..), Out(..), Request(..), ShotAnswer(..), Shown(..))
 
 
 path : String
@@ -117,10 +118,46 @@ suite =
                         caretTo 41 m2
 
                     ( m4, out ) =
-                        TalkView.gotShot (clock 41) (ShotStarting "起こしています") m3
+                        TalkView.gotShot (clock 41) (ShotStarting "起こしています" (BootStartingGame 2)) m3
                 in
                 ( m4.shown, out )
                     |> Expect.equal ( Held { target = clock 40, png = "png40" } "起こしています", OutRetryLater m4.retrySeq )
+        , test "起こしている段は答えのまま持つ(jar を作っている・経過秒)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        caretTo 40 opened
+
+                    ( m2, _ ) =
+                        TalkView.gotShot (clock 40) (ShotStarting "jar を作っています" (BootBuildingJar 37)) m1
+                in
+                m2.headless |> Expect.equal (HeadlessBooting (BootBuildingJar 37))
+        , test "starting の答えの stage と elapsed を段に読む(無ければ段の分からない待ち)" <|
+            \_ ->
+                let
+                    decode json =
+                        D.decodeString TalkView.shotAnswerDecoder json
+                in
+                ( decode """{"ok":false,"headless":"starting","stage":"jar","elapsed":37,"error":{"message":"m"}}"""
+                , decode """{"ok":false,"headless":"starting","stage":"boot","elapsed":3,"error":{"message":"m"}}"""
+                , decode """{"ok":false,"headless":"starting","error":{"message":"m"}}"""
+                )
+                    |> Expect.equal
+                        ( Ok (ShotStarting "m" (BootBuildingJar 37))
+                        , Ok (ShotStarting "m" (BootStartingGame 3))
+                        , Ok (ShotStarting "m" BootWaiting)
+                        )
+        , test "見出しは jar を作る時だけ「1〜2 分」・起こしているだけなら「数秒」、頼み直しの合間も出す" <|
+            \_ ->
+                ( TalkView.busyLabel False (HeadlessBooting (BootBuildingJar 37))
+                , TalkView.busyLabel False (HeadlessBooting (BootStartingGame 3))
+                , ( TalkView.busyLabel True HeadlessOk, TalkView.busyLabel False HeadlessOk )
+                )
+                    |> Expect.equal
+                        ( "⏳ jar を作っています(1〜2 分)… 37 秒"
+                        , "⏳ 起こしています(数秒)… 3 秒"
+                        , ( "⏳ 撮っています…", "" )
+                        )
         , test "長く起きない間は、ログの末尾を持って頼み直しを続ける" <|
             \_ ->
                 let
@@ -157,7 +194,7 @@ suite =
                         TalkView.update TalkView.RestartClicked m3
                 in
                 ( ( m3.headless, m3.request ), ( out3, out4 ) )
-                    |> Expect.equal ( ( HeadlessBooting, InFlight (clock 40) ), ( OutRestart (clock 40), OutNone ) )
+                    |> Expect.equal ( ( HeadlessBooting BootWaiting, InFlight (clock 40) ), ( OutRestart (clock 40), OutNone ) )
         , test "頼み直しの時にカーソルがノードの外なら、頼まずに予約だけ続ける" <|
             \_ ->
                 let

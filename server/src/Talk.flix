@@ -120,7 +120,8 @@ mod Talk {
     // ── POST /talk/shot ───────────────────────────────────
 
     /// 窓なしのゲームで 1 枚撮る。撮れない間は ok:false と headless（窓なしのゲームの様子）:
-    ///   "starting" … 起こしている（画面は少し後に頼み直す）
+    ///   "starting" … 起こしている（画面は少し後に頼み直す）。起こしている 1 本を待つ時は stage（"jar" = jar を作っている・
+    ///                "boot" = 起こしている）と elapsed（起こしてからの秒）も付ける
     ///   "stalled"  … 起こしてから長く ready にならない（頼み直しは続ける。log に末尾）
     ///   "failed"   … ready にならずに落ちた（続けては起こさない。log に末尾。restart:true で起こし直す）
     /// body の restart:true は「もう一度起こす」のボタン（落ちた・長く起きない 1 本だけを起こし直す）。
@@ -131,11 +132,12 @@ mod Talk {
         if (not isNodeName(node) or line < 1) (400, failJson("node（ノードの名前）と line（1 以上）が要ります"))
         else match (if (restart) Headless.restart(headless, game, dir) else Headless.ensure(headless, game, dir)) {
             case Headless.Readiness.Unsupported(why) => (200, failJson(why))
+            case Headless.Readiness.Booting(stage, secs, failures) => (200, bootingJson(stage, secs, failures))
             case Headless.Readiness.Starting(why)    => (200, waitingJson("starting", why, Nil))
             case Headless.Readiness.Stalled(why, log) => (200, waitingJson("stalled", why, log))
             case Headless.Readiness.Failed(why, log)  => (200, waitingJson("failed", why, log))
             case Headless.Readiness.Ready(port) =>
-                match Runner.requestGame(port, "POST /step?view=shot", startLine(node, line)) {
+                match Runner.requestGameWithin(port, shotRequest(), (shotWaitSecs() + 5) * 1000, startLine(node, line)) {
                     case Runner.GameReply.Answered(raw) => match shotOutcome(Runner.bodyOfHttpText(raw)) {
                         case Ok(png) => match readBase64("${dir}/${png}") {
                             case Some(data) => (200, JObject(Map#{
@@ -178,6 +180,25 @@ mod Talk {
         }
 
     // ── 小物 ──────────────────────────────────────────────
+
+    /// 1 枚撮りで橋がゲームの答えを待つ秒数。起こしてすぐの最初の 1 枚は場面を組んで塗るので重い。
+    pub def shotWaitSecs(): Int32 = 60
+
+    /// 1 枚撮りの頼み。wait=<秒> は engine 0.51 の橋が読む（0.50 の橋は知らない引数を読み捨てて 10 秒で待つ）。
+    pub def shotRequest(): String = "POST /step?view=shot&wait=${shotWaitSecs()}"
+
+    /// 起こしている 1 本を待っている時の答え（waitingJson の starting に段と経過秒を足す）。
+    pub def bootingJson(stage: Headless.BootStage, elapsedSecs: Int64, failures: Int32): Json =
+        let stageName = match stage {
+            case Headless.BootStage.BuildingJar  => "jar"
+            case Headless.BootStage.StartingGame => "boot"
+        };
+        match waitingJson("starting", Headless.bootingMessage(stage, elapsedSecs, failures), Nil) {
+            case JObject(fields) => JObject(fields
+                |> Map.insert("stage", JString(stageName))
+                |> Map.insert("elapsed", JNumber(JsonCodec.intToBd(Int64.clampToInt32(min = 0, max = Int32.maxValue(), elapsedSecs)))))
+            case other => other
+        }
 
     /// 窓なしのゲームを待っている・落ちた時の答え（headless は starting / stalled / failed）。
     pub def waitingJson(phase: String, message: String, log: List[String]): Json =
