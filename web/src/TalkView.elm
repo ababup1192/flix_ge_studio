@@ -1105,13 +1105,17 @@ viewGraph model =
 viewRead : Model -> Html Msg
 viewRead model =
     let
+        -- このファイルのノード(書いた順)。始めるのはカーソルのあるノード、無ければ最初のノード
         titles =
-            Dict.keys model.program.nodes
+            model.nodes |> List.filter (\n -> n.file == model.path) |> List.sortBy .line |> List.map .title
 
         here =
             targetAt model.path model.nodes model.cursor
                 |> Maybe.map .node
                 |> Maybe.withDefault (List.head titles |> Maybe.withDefault "")
+
+        started =
+            model.reading |> Maybe.map .node
 
         startFrom =
             model.reading |> Maybe.map (\_ -> "最初から読み直す") |> Maybe.withDefault "▶ ここから読む"
@@ -1176,10 +1180,12 @@ viewRead model =
 
          else
             [ div [ HA.class "flex items-center gap-2" ]
-                [ span [ HA.class "text-[11px] text-ink-faint" ] [ text ("始めるノード: " ++ here) ]
-                , button [ HA.class "talk-read-start d-btn d-btn-xs", HE.onClick (ReadStarted here) ] [ text startFrom ]
-                , span [ HA.class "ml-auto text-[10px] text-ink-faint" ] [ text "変数は一覧の値から。台詞を押すとその時の値で撮ります" ]
+                [ span [ HA.class "shrink-0 whitespace-nowrap text-[11px] text-ink-faint" ] [ text "始めるノード" ]
+                , select [ HA.class "talk-read-node d-select d-select-xs font-mono", HE.onInput ReadStarted ]
+                    (List.map (\t -> option [ HA.value t, HA.selected (t == here) ] [ text t ]) titles)
+                , button [ HA.class "talk-read-start d-btn d-btn-xs shrink-0", HE.onClick (ReadStarted (Maybe.withDefault here started)) ] [ text startFrom ]
                 ]
+            , div [ HA.class "text-[10px] text-ink-faint" ] [ text "変数は右の一覧の値から始めます。台詞を押すと、その行をその時の値で撮ります" ]
             , div [ HA.class "min-h-0 flex-1 overflow-auto" ]
                 (case model.reading of
                     Just reading ->
@@ -1199,7 +1205,7 @@ viewPaneSwitch model =
             button
                 [ HA.classList
                     [ ( "talk-pane d-btn d-btn-xs", True )
-                    , ( "d-btn-active", model.pane == pane )
+                    , ( "d-btn-active bg-accent/30 text-ink", model.pane == pane )
                     ]
                 , HE.onClick (PaneChosen pane)
                 ]

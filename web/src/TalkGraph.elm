@@ -99,7 +99,8 @@ build file all =
     { placed = placed
     , edges = edges
     , width = (placed |> List.map .x |> List.maximum |> Maybe.withDefault 0) + boxW + gapX + 80
-    , height = (placed |> List.map .y |> List.maximum |> Maybe.withDefault 0) + boxH + gapY
+    -- 下に回る戻りの線の分も空けておく
+    , height = (placed |> List.map .y |> List.maximum |> Maybe.withDefault 0) + boxH + gapY + 60
     }
 
 
@@ -236,6 +237,10 @@ view config graph =
         find title =
             graph.placed |> List.filter (\p -> p.node.title == title) |> List.head
 
+        -- 戻る線が通る高さ(いちばん下の箱の下)
+        floor =
+            (graph.placed |> List.map .y |> List.maximum |> Maybe.withDefault 0) + boxH
+
         dash kind =
             case kind of
                 OptionLink ->
@@ -249,16 +254,8 @@ view config graph =
                 Between from to kind ->
                     case ( find from, find to ) of
                         ( Just a, Just b ) ->
-                            let
-                                ( x1, y1 ) =
-                                    ( a.x + boxW, a.y + boxH / 2 )
-
-                                ( x2, y2 ) =
-                                    ( b.x, b.y + boxH / 2 )
-                            in
                             [ Svg.path
-                                ([ SA.d
-                                    ("M" ++ num x1 ++ " " ++ num y1 ++ " C" ++ num (x1 + 40) ++ " " ++ num y1 ++ " " ++ num (x2 - 40) ++ " " ++ num y2 ++ " " ++ num x2 ++ " " ++ num y2)
+                                ([ SA.d (edgePath floor a b)
                                  , SA.fill "none"
                                  , SA.stroke "currentColor"
                                  , SA.strokeOpacity "0.55"
@@ -298,12 +295,13 @@ view config graph =
                     , SA.width (num boxW)
                     , SA.height (num boxH)
                     , SA.rx "4"
-                    , SA.fill
+                    -- 箱は塗りつぶす(後ろを通る線を透かさない)
+                    , SA.style
                         (if config.here == Just p.node.title then
-                            "rgb(99 102 241 / 0.35)"
+                            "fill: rgb(58 60 112)"
 
                          else
-                            "rgb(255 255 255 / 0.06)"
+                            "fill: var(--color-panel)"
                         )
                     , SA.stroke "currentColor"
                     , SA.strokeOpacity "0.4"
@@ -315,9 +313,9 @@ view config graph =
     in
     Svg.svg
         [ SA.class "talk-graph block text-ink"
-        , SA.width (num (graph.width + 20))
+        , SA.width (num (graph.width + gapX))
         , SA.height (num (graph.height + 20))
-        , SA.viewBox ("-10 -10 " ++ num (graph.width + 20) ++ " " ++ num (graph.height + 20))
+        , SA.viewBox (num (-gapX / 2 - 10) ++ " -10 " ++ num (graph.width + gapX) ++ " " ++ num (graph.height + 20))
         ]
         (Svg.defs []
             [ Svg.marker [ SA.id "talk-arrow", SA.viewBox "0 0 8 8", SA.refX "8", SA.refY "4", SA.markerWidth "7", SA.markerHeight "7", SA.orient "auto" ]
@@ -326,6 +324,47 @@ view config graph =
             :: List.concatMap edge graph.edges
             ++ List.map box graph.placed
         )
+
+
+{-| 線の道。先が右にあれば元の右辺から先の左辺へ曲線で。左か同じ段(戻る jump)なら、箱を横切らないよう
+段と段の間の通り道を使う: 元の右の通り道を下りて図のいちばん下(floor)の下を左へ渡り、
+先の左の通り道を上って先の左辺へ入る。
+-}
+edgePath : Float -> Placed -> Placed -> String
+edgePath floor a b =
+    if b.x > a.x then
+        let
+            ( x1, y1 ) =
+                ( a.x + boxW, a.y + boxH / 2 )
+
+            ( x2, y2 ) =
+                ( b.x, b.y + boxH / 2 )
+        in
+        "M" ++ num x1 ++ " " ++ num y1 ++ " C" ++ num (x1 + 40) ++ " " ++ num y1 ++ " " ++ num (x2 - 40) ++ " " ++ num y2 ++ " " ++ num x2 ++ " " ++ num y2
+
+    else
+        let
+            ( x1, y1 ) =
+                ( a.x + boxW, a.y + boxH / 2 + 6 )
+
+            ( x2, y2 ) =
+                ( b.x, b.y + boxH / 2 + 6 )
+
+            right =
+                x1 + gapX / 2 - 6
+
+            left =
+                x2 - gapX / 2 + 6
+
+            bottom =
+                floor + 16
+        in
+        "M" ++ num x1 ++ " " ++ num y1
+            ++ " L" ++ num right ++ " " ++ num y1
+            ++ " L" ++ num right ++ " " ++ num bottom
+            ++ " L" ++ num left ++ " " ++ num bottom
+            ++ " L" ++ num left ++ " " ++ num y2
+            ++ " L" ++ num x2 ++ " " ++ num y2
 
 
 num : Float -> String
