@@ -27,6 +27,9 @@ type Effect
     | ZoomViewport { id : String, anchorFx : Float, ratio : Float }
       -- タイムラインの「全体へ戻る」— 横スクロールを左端へ
     | ResetViewport { id : String }
+      -- 欄を縦にその位置まで送る(会話のノードの図で箱を押した後、台本の欄をその行へ)。
+      -- 面の切り替えの描き直しを待ってから送る
+    | ScrollTo { id : String, top : Float }
       -- トースト通知の消灯予約。seq と message は「その通知がまだ最新の物か」を
       -- 発火時に確かめる照合キー(古いタイマーが新しい通知を消さない)
     | ExpireNotice { seq : Int, message : String, afterMs : Float }
@@ -118,6 +121,11 @@ perform caps effect =
 
         ResetViewport info ->
             Browser.Dom.setViewportOf info.id 0 0
+                |> Task.attempt (\_ -> caps.scrolled)
+
+        ScrollTo info ->
+            Process.sleep 30
+                |> Task.andThen (\_ -> Browser.Dom.setViewportOf info.id 0 info.top)
                 |> Task.attempt (\_ -> caps.scrolled)
 
         ExpireNotice info ->

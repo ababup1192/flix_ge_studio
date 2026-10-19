@@ -8790,6 +8790,22 @@ runTalkOut out model =
         TalkView.OutGoto t ->
             ( model, send "talkGoto" (target t) )
 
+        TalkView.OutScrollToLine line ->
+            -- 行が欄の上から 4 行目あたりに来るように送る(行の高さは本文と溝で同じ)
+            ( model, Effect.ScrollTo { id = "talk-editor", top = toFloat (max 0 (line - 4) * TalkView.lineHeight) } )
+
+        TalkView.OutBatch outs ->
+            List.foldl
+                (\o ( m, fx ) ->
+                    let
+                        ( m1, fx1 ) =
+                            runTalkOut o m
+                    in
+                    ( m1, Effect.batch [ fx, fx1 ] )
+                )
+                ( model, Effect.none )
+                outs
+
         TalkView.OutRetryLater seq ->
             -- 窓なしのゲームを起こしている間は 3 秒おきに頼み直す(段と経過秒はサーバの答えに乗る)
             ( model, Effect.TalkRetry { seq = seq, afterMs = 3000 } )

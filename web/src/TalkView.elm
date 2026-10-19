@@ -28,6 +28,7 @@ module TalkView exposing
     , gotVocab
     , init
     , lineAt
+    , lineHeight
     , retryFired
     , shotAnswerDecoder
     , targetAt
@@ -290,6 +291,8 @@ type Out
     | OutGoto Target
     | OutRetryLater Int
     | OutRestart Target
+    | OutScrollToLine Int
+    | OutBatch (List Out)
 
 
 
@@ -496,7 +499,9 @@ update msg model =
             -- 図の箱を押した: そのノードの title: の行へカーソルを置いて台本に戻り、撮る
             case model.nodes |> List.filter (\n -> n.title == title && n.file == model.path) |> List.head of
                 Just node ->
+                    -- 台本の欄もその行まで送る(図から戻った時に、押したノードが見えているように)
                     askCursor False { model | cursor = node.line, pane = ScriptPane, picker = PickerClosed }
+                        |> Tuple.mapSecond (\out -> OutBatch [ out, OutScrollToLine node.line ])
 
                 Nothing ->
                     ( { model | pane = ScriptPane }, OutNone )
@@ -1302,7 +1307,7 @@ viewEditor model =
                         )
                 )
     in
-    div [ HA.class "talk-editor relative min-h-0 flex-1 overflow-auto rounded-md border border-edge bg-well" ]
+    div [ HA.id "talk-editor", HA.class "talk-editor relative min-h-0 flex-1 overflow-auto rounded-md border border-edge bg-well" ]
         [ div [ HA.class "relative flex", HA.style "min-height" "100%" ]
             [ div
                 [ HA.class "shrink-0 select-none border-r border-edge px-2 py-2 text-right font-mono text-[11px] text-ink-faint" ]

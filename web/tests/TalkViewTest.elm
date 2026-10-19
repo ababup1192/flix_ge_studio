@@ -193,11 +193,11 @@ varsSuite =
 graphSuite : Test
 graphSuite =
     describe "ノードの図"
-        [ test "箱を押すとそのノードの行へカーソルを置いて台本に戻り、撮る" <|
+        [ test "箱を押すとそのノードの行へカーソルを置いて台本に戻り、欄をその行まで送って撮る" <|
             \_ ->
                 press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.GraphNodePicked "clock" ] opened
                     |> Tuple.mapFirst (\m -> ( m.pane, m.cursor ))
-                    |> Expect.equal ( ( TalkView.ScriptPane, 36 ), OutShot (clock 36) )
+                    |> Expect.equal ( ( TalkView.ScriptPane, 36 ), OutBatch [ OutShot (clock 36), OutScrollToLine 36 ] )
         , test "読み進める欄の台詞を押すと、その行をその時の変数の値で撮る" <|
             \_ ->
                 let

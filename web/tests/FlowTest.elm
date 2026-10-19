@@ -85,6 +85,9 @@ simulate effect =
         Effect.ResetViewport _ ->
             SimulatedEffect.Cmd.none
 
+        Effect.ScrollTo _ ->
+            SimulatedEffect.Cmd.none
+
         Effect.NoFx ->
             SimulatedEffect.Cmd.none
 
