@@ -34,6 +34,7 @@ import EntryTable
 import FileVerbs
 import FormHelp
 import GalleryView
+import VideoView
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -94,6 +95,12 @@ type Screen
     | NoServer
     | Picker
     | Editing
+
+
+{-| ギャラリーの中の 2 つの面。場面 = gallery/ の絵・動画 = debug/video/ の mp4。 -}
+type GalleryPane
+    = ScenesPane
+    | VideosPane
 
 
 {-| 上部ナビの現在地。アトリエ = 既存の Doc エディタ一式(3 ペイン)。
@@ -498,6 +505,10 @@ type alias Model =
 
     -- ギャラリータブ(描き出した場面の絵の一覧)
     , gallery : GalleryView.Model
+
+    -- ギャラリーの「動画」の面(撮った動画の一覧)と、いま出している面
+    , videos : VideoView.Model
+    , galleryPane : GalleryPane
 
     -- 「ゲームのログ」モーダル(Nothing = 閉じている、Just = 表示中の行)。
     -- ターミナルを開けない人(特に Windows)が、遊んでいる間のログを画面だけで
@@ -962,6 +973,8 @@ init _ =
         , changesAvailable = True
         , changesModal = Nothing
         , gallery = GalleryView.init
+        , videos = VideoView.init
+        , galleryPane = ScenesPane
         , gameLogView = Nothing
         , atelier = Atelier.init
         , miniPlayerOpen = False
@@ -1286,6 +1299,8 @@ type Msg
     | ChangesNextClicked
     | ChangesModalClosed
     | GalleryMsg GalleryView.Msg
+    | VideosMsg VideoView.Msg
+    | GalleryPaneClicked GalleryPane
     | GameLogViewOpened
     | GameLogViewClosed
     | GameLogViewRefreshClicked
@@ -1455,6 +1470,36 @@ update msg model =
 
                 GalleryView.OutRefresh ->
                     ( m1, requestInfo "galleryScenes" )
+
+        VideosMsg vmsg ->
+            let
+                ( videos, out ) =
+                    VideoView.update vmsg model.videos
+
+                m1 =
+                    { model | videos = videos }
+            in
+            case out of
+                VideoView.OutNone ->
+                    ( m1, Effect.none )
+
+                VideoView.OutRefresh ->
+                    ( m1, requestInfo "videos" )
+
+                VideoView.OutFetchSfx name path ->
+                    request "videoSfx" (E.object [ ( "name", E.string name ), ( "path", E.string path ) ]) m1
+
+                VideoView.OutRerun name ->
+                    request "videoRerun" (E.object [ ( "name", E.string name ) ]) m1
+
+        GalleryPaneClicked pane ->
+            -- 開くたび取り直す(外で動画を撮っていても最新が出る)
+            case pane of
+                ScenesPane ->
+                    ( { model | galleryPane = pane, gallery = GalleryView.loading model.gallery }, requestInfo "galleryScenes" )
+
+                VideosPane ->
+                    ( { model | galleryPane = pane, videos = VideoView.loading model.videos }, requestInfo "videos" )
 
         GameLogViewOpened ->
             ( { model | gameLogView = Just [] }, requestInfo "gameLogView" )
@@ -6579,6 +6624,41 @@ handleOkByKind env model =
                 Err _ ->
                     ( { model | gallery = GalleryView.listFailed model.gallery }, Effect.none )
 
+        "videos" ->
+            case D.decodeValue VideoView.listDecoder env.body of
+                Ok listing ->
+                    ( { model | videos = VideoView.gotList listing model.videos }, Effect.none )
+
+                Err _ ->
+                    ( { model | videos = VideoView.listFailed model.videos }, Effect.none )
+
+        "videoSfx" ->
+            case D.decodeValue (D.map2 Tuple.pair (D.field "name" D.string) (D.field "text" D.string)) env.body of
+                Ok ( name, body ) ->
+                    ( { model | videos = VideoView.gotSfx name body model.videos }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "videoRerun" ->
+            case
+                D.decodeValue
+                    (D.map3 (\name ok why -> ( name, ok, why ))
+                        (D.field "name" D.string)
+                        (D.field "ok" D.bool)
+                        (D.oneOf [ D.field "reason" D.string, D.succeed "" ])
+                    )
+                    env.body
+            of
+                Ok ( name, True, _ ) ->
+                    ( { model | videos = VideoView.gotRerun name (Ok ()) model.videos }, Effect.none )
+
+                Ok ( name, False, why ) ->
+                    ( { model | videos = VideoView.gotRerun name (Err why) model.videos }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
         "atelierCandidates" ->
             case D.decodeValue Atelier.candidatesDecoder env.body of
                 Ok candidates ->
@@ -6873,6 +6953,7 @@ handleOkByKind env model =
                                     , changesAvailable = True
                                     , changesModal = Nothing
                                     , gallery = GalleryView.init
+                                    , videos = VideoView.init
 
                                     -- ミニプレイヤーは前のプロジェクトの残骸を持ち越さない —
                                     -- 場面一覧・ピン・知らせ・目盛り・拡大が残ると、次の取得までの間
@@ -8261,6 +8342,14 @@ handleErrByKind env message model =
             -- 口を持たないサーバ(404)。ギャラリータブに案内だけ出す(fail-open)
             ( { model | gallery = GalleryView.listFailed model.gallery }, Effect.none )
 
+        "videos" ->
+            -- 口を持たないサーバ(404)。動画の面に案内だけ出す(fail-open)
+            ( { model | videos = VideoView.listFailed model.videos }, Effect.none )
+
+        "videoSfx" ->
+            -- 音の印が出ないだけ(再生はできる)
+            ( model, Effect.none )
+
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
             -- 調整(エディタ)は生きる(fail-open)
@@ -8477,6 +8566,43 @@ closeIfLoading modal =
         modal
 
 
+{-| ギャラリー: 上に「場面 / 動画」の切り替え、下にその面。 -}
+viewGallery : Model -> Html Msg
+viewGallery model =
+    let
+        paneButton pane label =
+            button
+                [ HA.classList
+                    [ ( "gallery-pane cursor-pointer rounded-sm px-2 py-0.5 text-xs", True )
+                    , ( "bg-white/15 text-ink", model.galleryPane == pane )
+                    , ( "text-ink-faint hover:text-ink-soft", model.galleryPane /= pane )
+                    ]
+                , HE.onClick (GalleryPaneClicked pane)
+                ]
+                [ text label ]
+    in
+    div [ HA.class "flex min-h-0 flex-1 flex-col" ]
+        [ div [ HA.class "flex gap-1 px-6 pt-4" ]
+            [ paneButton ScenesPane "場面"
+            , paneButton VideosPane "動画"
+            ]
+        , case model.galleryPane of
+            ScenesPane ->
+                Html.map GalleryMsg
+                    (GalleryView.view
+                        { serverBase = model.serverBase, root = model.root }
+                        model.gallery
+                    )
+
+            VideosPane ->
+                Html.map VideosMsg
+                    (VideoView.view
+                        { serverBase = model.serverBase, projectKey = Api.projectKey model.root }
+                        model.videos
+                    )
+        ]
+
+
 {-| GET /gallery/list の gallery 節から場面名だけ引く(ミニプレイヤーの場面チップと
 ラフ比較用)。節が欠けたサーバでも空で通す(fail-open)。
 -}
@@ -8513,9 +8639,16 @@ gotoTab tab model =
 
         GalleryTab ->
             -- 開くたび取り直す。外で make render-all が走っていても最新が出る
-            ( { model | tab = GalleryTab, gallery = GalleryView.loading model.gallery }
-            , requestInfo "galleryScenes"
-            )
+            case model.galleryPane of
+                ScenesPane ->
+                    ( { model | tab = GalleryTab, gallery = GalleryView.loading model.gallery }
+                    , requestInfo "galleryScenes"
+                    )
+
+                VideosPane ->
+                    ( { model | tab = GalleryTab, videos = VideoView.loading model.videos }
+                    , requestInfo "videos"
+                    )
 
         AtelierTab ->
             -- 開くたび入口へ戻す(提案からの直行はこの後にセクションを開く)。
@@ -8594,13 +8727,7 @@ view model =
                         viewShell model (viewHome model)
 
                     GalleryTab ->
-                        viewShell model
-                            (Html.map GalleryMsg
-                                (GalleryView.view
-                                    { serverBase = model.serverBase, root = model.root }
-                                    model.gallery
-                                )
-                            )
+                        viewShell model (viewGallery model)
 
                     AtelierTab ->
                         -- 入口からアセット / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ

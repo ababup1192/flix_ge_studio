@@ -446,7 +446,7 @@ mod Runner {
             runTarget(state, dir, "render", Nil, _ -> checked_ecast(()))
         } else {
             appendLine(state, "[runner] 走行中のゲームに描き出しを頼みます (POST 127.0.0.1:${port}/render?async=1)");
-            let reply = requestGame(port, "POST /render?async=1");
+            let reply = requestGame(port, "POST /render?async=1", "");
             let accepted = match reply {
                 case GameReply.Answered(raw) => acceptedJobOf(bodyOfHttpText(raw))
                 case _                       => None
@@ -496,7 +496,7 @@ mod Runner {
     // 「走っています」で断られるのは、make render で描いていたときと同じ。
     def awaitRemoteBake(state: State, port: Int32, job: Int64, deadlineNs: Int64): Unit \ IO =
         Thread.sleep(2000i64);
-        let status = match requestGame(port, "GET /render") {
+        let status = match requestGame(port, "GET /render", "") {
             case GameReply.Answered(raw) => Ok(renderStatusOf(bodyOfHttpText(raw)))
             case other                   => Err(reasonOf(other))
         };
@@ -542,13 +542,14 @@ mod Runner {
     def headLineOf(body: String): String =
         String.lines(body) |> List.head |> Option.getWithDefault("(空の応答)")
 
-    /// ゲームの命令口へ 1 発 ("POST /render" のように メソッドとパス)。生の HTTP 応答テキストを返す。
+    /// ゲームの命令口へ 1 発 ("POST /render" のように メソッドとパス。body は本文 — /step・/flow の flow を送る。無ければ "")。
+    /// 生の HTTP 応答テキストを返す。
     /// 接続 2 秒・読み取り 15 秒で見切る (命令口自身がループ無応答を 10 秒で 503 にするので、
     /// それより長く待ってから諦める)。素の Socket なのは、依存もキャストも増やさず
     /// 「1 行書いて全部読む」だけで足りるため (応答は Content-Length 付き + Connection: close)。
     /// 繋ぐ段と読む段を分けて返すのは、接続の時間切れ (描いていない) と読み取りの時間切れ
     /// (描いている途中) が同じ SocketTimeoutException で来るため。
-    def requestGame(port: Int32, request: String): GameReply \ IO =
+    pub def requestGame(port: Int32, request: String, body: String): GameReply \ IO =
         let socket = new Socket();
         let connected =
             try {
@@ -562,8 +563,10 @@ mod Runner {
             case None         =>
                 try {
                     socket.setSoTimeout(15000);
-                    let text = "${request} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                    socket.getOutputStream().write(text.getBytes("UTF-8"));
+                    let payload = body.getBytes("UTF-8");
+                    let head = "${request} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Array.length(payload)}\r\nConnection: close\r\n\r\n";
+                    socket.getOutputStream().write(head.getBytes("UTF-8"));
+                    socket.getOutputStream().write(payload);
                     socket.getOutputStream().flush();
                     let bytes = socket.getInputStream().readAllBytes();
                     GameReply.Answered(new JavaString(bytes, "UTF-8"))

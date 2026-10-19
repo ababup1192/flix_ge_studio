@@ -255,6 +255,27 @@ export function realApi(base: string): Api {
         case "galleryScenes":
           // ギャラリータブ 1 枚ぶん(絵 + 場面の説明のラベル + リファレンス差分)
           return getJson(`${base}/gallery/scenes`);
+        case "videos":
+          // ギャラリーの動画の面(debug/video/ の一覧と撮れたかの判定)
+          return getJson(`${base}/videos`);
+        case "videoSfx": {
+          // 再生の帯の上に出す音の印の元(sfx.txt の中身をそのまま)。名前を添えて返す
+          const { name, path } = payload as { name: string; path: string };
+          const res = await fetchWithin(`${base}/videos/file?path=${encodeURIComponent(path)}`, {}, QUICK_MS);
+          if (!res.ok) await raiseHttpError(res, path);
+          return { name, text: await res.text() };
+        }
+        case "videoRerun": {
+          // 起動中のゲームへ flow を流し直す。断られても投げずに理由を返す(カードに出す)
+          const { name } = payload as { name: string };
+          const res = await fetchWithin(`${base}/videos/rerun`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          }, BAKE_MS);
+          const body = await res.json().catch(() => ({}));
+          return { name, ok: res.ok && body?.ok === true, reason: body?.error?.message ?? body?.reason ?? `HTTP ${res.status}` };
+        }
         case "annotationsList":
           // 注釈チケットの一覧(読むだけ)
           return getJson(`${base}/annotations/list`);

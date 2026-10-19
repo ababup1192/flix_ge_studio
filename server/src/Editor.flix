@@ -270,6 +270,19 @@ mod Editor {
             // 化け、再起動後の焼き産物が二度と出ない。
             case ("HEAD", "/gallery/image") => withProject(selection, exchange, dir ->
                 handleGalleryImage(dir, params, exchange))
+            // ギャラリーの「動画」のタブ: debug/video/ の一覧と撮れたかの判定（判定は engine の bin/fge videos status）
+            case ("GET", "/videos") => withProject(selection, exchange, dir ->
+                sendJson(200, Videos.listJson(dir), exchange))
+            // 動画・最後の画面・sfx.txt を配る。video 要素がシークで Range を頼むので 206 で返す
+            case ("GET", "/videos/file") => withProject(selection, exchange, dir ->
+                handleVideoFile(dir, params, exchange))
+            case ("HEAD", "/videos/file") => withProject(selection, exchange, dir ->
+                handleVideoFile(dir, params, exchange))
+            // その動画を撮った flow を起動中のゲームへ流し直す（ビルドしない・ゲームの POST /flow）
+            case ("POST", "/videos/rerun") => withProject(selection, exchange, dir -> {
+                let (status, json) = Videos.rerun(dir, Game.portOf(game#ports, dir), readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->
                 handleGallerySound(dir, params, exchange))
             // 前回の焼きのフレーム数の復元(dir はフレーム別 PNG の置き場)
@@ -878,6 +891,54 @@ mod Editor {
                 sendBytes(kind, bytes, exchange)
             }
             case None => sendJson(404, errorJson("image not found"), exchange)
+        }
+
+    /// GET /videos/file?path=debug/video/… — 動画・最後の画面・sfx.txt。Range（bytes=a-b）なら 206 で
+    /// その範囲だけ返す（Safari の video 要素は 206 を返さない配信だと再生しない・シークできない）。
+    /// 許していないパス・無いファイルは 404、ファイルの外を指した Range は 416。
+    def handleVideoFile(dir: String, params: Map[String, String], exchange: HttpExchange): Unit \ IO =
+        let path = Map.getWithDefault("path", "", params);
+        let file = new JFile("${dir}/${path}");
+        if (not Videos.isServable(path) or not file.isFile())
+            sendJson(404, errorJson("video file not found"), exchange)
+        else {
+            applyCors(exchange);
+            let size = file.length();
+            let headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", Videos.contentTypeOf(path));
+            headers.set("Accept-Ranges", "bytes");
+            let rangeHeader = exchange.getRequestHeaders().getFirst("Range");
+            let range = Videos.rangeOf(if (Object.isNull(rangeHeader)) None else Some(rangeHeader), size);
+            let isHead = exchange.getRequestMethod() == "HEAD";
+            match range {
+                case Videos.Range.Unsatisfiable => {
+                    headers.set("Content-Range", "bytes */${size}");
+                    exchange.sendResponseHeaders(416, -1i64);
+                    exchange.close()
+                }
+                case Videos.Range.Whole =>
+                    if (isHead) { exchange.sendResponseHeaders(200, -1i64); exchange.close() }
+                    else {
+                        let bytes = Files.readAllBytes(file.toPath());
+                        exchange.sendResponseHeaders(200, size);
+                        let out = exchange.getResponseBody();
+                        out.write(bytes);
+                        out.close()
+                    }
+                case Videos.Range.Part(offset, upTo) => {
+                    headers.set("Content-Range", "bytes ${offset}-${upTo}/${size}");
+                    let length = upTo - offset + 1i64;
+                    if (isHead) { exchange.sendResponseHeaders(206, -1i64); exchange.close() }
+                    else {
+                        let bytes = Files.readAllBytes(file.toPath());
+                        exchange.sendResponseHeaders(206, length);
+                        let out = exchange.getResponseBody();
+                        out.write(bytes, Int64.tryToInt32(offset) |> Option.getWithDefault(0),
+                                  Int64.tryToInt32(length) |> Option.getWithDefault(0));
+                        out.close()
+                    }
+                }
+            }
         }
 
     /// GET /atelier/preview?file=… — 候補/スロットのプレビュー PNG のバイト列。
