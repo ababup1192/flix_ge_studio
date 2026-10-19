@@ -360,7 +360,7 @@ mod Runner {
         discard env.remove("DEVELOPER_DIR");
         discard env.remove("SDKROOT");
         let jarEnv = match viaJar {
-            case Some(_) => SharedJar.envFor(exec#javaExe, EngineTasks.isMac(), task)
+            case Some(_) => SharedJar.jarEnv(exec#javaExe)
             case None    => Nil
         };
         foreach (envVar <- EngineTasks.envOf(task) ::: jarEnv ::: envVars) {

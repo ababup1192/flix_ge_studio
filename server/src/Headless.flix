@@ -18,7 +18,8 @@
 //     どちらかは debug/headless.log と jar を作る鍵（build/headless/.lock）から毎回決め直す（Launch には写さない）
 //   - ゲーム（窓あり）が起動の途中なら起こさない（コンパイルと JVM のメモリの山を重ねない。Game.isStarting）
 //   - 続けて落ちる時は起こし直さない（頼まれるたびに JVM とコンパイルを量産しない）。数えた回数は ready で 0 に戻る
-//   - メモリの上限は -Xmx1g（HEADLESS_JAVA_OPTS）・放っておかれたら自分で終わる（HEADLESS_IDLE_SECS）。
+//   - 放っておかれたら自分で終わる（HEADLESS_IDLE_SECS）。メモリの上限（以前の -Xmx1g）は付けない —
+//     HEADLESS_JAVA_OPTS は jar の指紋に入るので、共通 jar を作る時・プレイと同じ組にそろえる（SharedJar.jarEnv）
 //     そうして消えた時（Running から終わった時）は次の頼みで黙って立て直す
 //   - 窓なしのゲームは実機でない扱い（セーブ・表示中の Doc の名乗り・遊んだ記録を書かない。engine 側の決まり）
 // ログは <ゲーム>/debug/headless.log。何をするかは純粋な decide / decideRestart / afterExit が決め、
@@ -307,8 +308,12 @@ mod Headless {
             discard env.remove("SDKROOT");
             discard env.put("HEADLESS_PORT", "${port}");
             discard env.put("HEADLESS_IDLE_SECS", "600");
-            discard env.put("HEADLESS_JAVA_OPTS", "-Xmx1g");
-            discard env.put("JAVA", EngineTasks.javaExe());
+            // JAVA と HEADLESS_JAVA_OPTS は共通 jar を作る時・プレイと同じ組（SharedJar.jarEnv）。
+            // 違う組で呼ぶと engine の jar の指紋が変わり、プレビューのたびに jar を作り直す
+            foreach (pair <- SharedJar.jarEnv(EngineTasks.javaExe())) {
+                let (name, value) = pair;
+                discard env.put(name, value)
+            };
             let proc = pb.start();
             discard (state#procs).put(dir, proc);
             let code = proc.waitFor();

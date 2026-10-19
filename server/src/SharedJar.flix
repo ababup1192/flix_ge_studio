@@ -10,10 +10,11 @@
 //                               └─ 作っている間に保存 ──▶ BuildingThenAgain ──済んだ──▶ Building（もう 1 回）
 //     engine の headless-run に作るだけの口が無い（古い版）・Windows ──▶ Unsupported（今までどおり flix run）
 //
-// engine の口（仮の名前。engine 側の名前が決まったらここだけ直す）:
-//   headless-run --build-only          … jar が古ければ作るだけ（新しければすぐ終わる）。終了 0 = jar がある
-//   headless-run --window <入口>       … 窓ありで流す（入口 main は根の def main）
-//   headless-run <入口>                … 窓なしで流す（今までの形）
+// engine の口（engine-gaps c397c425 の bin/headless-run）:
+//   headless-run --build-only          … jar が古ければ作るだけ（新しければすぐ終わる）。終了 0 = jar がある・3 = 作れなかった
+//   headless-run --window <入口>       … 窓ありで流す（入口 main はファイル直下の def main。macOS の -XstartOnFirstThread は自分で付ける）
+//   headless-run <入口>                … 窓なしで流す（今までの形。常駐が「GL が要る」124 と答えた時は自分で窓ありに流し直す）
+// jar の指紋には JAVA と HEADLESS_JAVA_OPTS の字も入るので、Studio から呼ぶ時は必ず jarEnv の同じ組を渡す。
 // 口があるかは headless-run の本文にその字があるかで見る（古い版に知らない旗を渡すと、
 // 旗を入口の名前と読んで flix run のコンパイルを始めてしまうため、渡す前に確かめる）。
 //
@@ -124,11 +125,14 @@ mod SharedJar {
             case _ => None
         }
 
-    /// jar で流す時の環境変数: 流す java と、flix run の時と同じ出力の文字コードの旗
-    /// （HEADLESS_JAVA_OPTS は headless-run の既定の旗の後ろに付く）。macOS の窓ありは -XstartOnFirstThread も。
-    pub def envFor(javaExe: String, isMac: Bool, task: EngineTasks.Task): List[(String, String)] =
-        let window = if (isMac and not EngineTasks.isHeadless(task)) "-XstartOnFirstThread " else "";
-        ("JAVA", javaExe) :: ("HEADLESS_JAVA_OPTS", "${window}-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8") :: Nil
+    /// headless-run へ渡す環境変数。Studio から呼ぶ 3 つ（裏で作る --build-only・プレイと描き出し・
+    /// 会話のプレビューの窓なしのゲーム）は必ずこの同じ組を渡す。
+    // WhyNot: 仕事ごとに HEADLESS_JAVA_OPTS を変えない（会話のプレビューだけ -Xmx1g・窓ありだけ
+    // -XstartOnFirstThread など）。engine の jar の指紋（bin/fge resident manifest）は src・lib に加えて
+    // JAVA と HEADLESS_JAVA_OPTS の字も混ぜるので、旗が違う 2 本が交互に来ると、そのたびに jar を作り直す
+    // （1〜2 分）。窓ありの旗は headless-run --window が自分で付ける。
+    pub def jarEnv(javaExe: String): List[(String, String)] =
+        ("JAVA", javaExe) :: ("HEADLESS_JAVA_OPTS", "") :: Nil
 
     /// 画面に出す様子（state: idle / building / ready / failed / unsupported・elapsed は作り始めてからの秒）。
     pub def statusJson(now: Int64, build: Build): Json =
@@ -229,7 +233,10 @@ mod SharedJar {
             let env = pb.environment();
             discard env.remove("DEVELOPER_DIR");
             discard env.remove("SDKROOT");
-            discard env.put("JAVA", EngineTasks.javaExe());
+            foreach (pair <- jarEnv(EngineTasks.javaExe())) {
+                let (name, value) = pair;
+                discard env.put(name, value)
+            };
             pb.start().waitFor()
         } catch {
             case _: Exception => -1

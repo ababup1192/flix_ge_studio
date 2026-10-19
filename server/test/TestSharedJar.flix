@@ -83,4 +83,10 @@ mod TestSharedJar {
     @Test
     def testDebugNeedsWindowFlag(): Unit \ Assert =
         Assert.assertEq(expected = None, SharedJar.routeOf(Some("--build-only"), false, Task.Debug))
+
+    /// headless-run へ渡す旗の組は 1 つ（jar の指紋に JAVA と HEADLESS_JAVA_OPTS が入るので、仕事ごとに変えると
+    /// 呼ぶたびに jar を作り直す）。窓ありの旗も足さない（--window が自分で付ける）。
+    @Test
+    def testJarEnvIsOneSet(): Unit \ Assert =
+        Assert.assertEq(expected = ("JAVA", "/j/java") :: ("HEADLESS_JAVA_OPTS", "") :: Nil, SharedJar.jarEnv("/j/java"))
 }
