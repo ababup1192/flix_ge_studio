@@ -8702,6 +8702,10 @@ runTalkOut out model =
         TalkView.OutShot t ->
             ( model, send "talkShot" (target t) )
 
+        TalkView.OutRestart t ->
+            -- 落ちた・長く起きない窓なしのゲームを起こし直してから頼む(答えは talkShot と同じ形)
+            ( model, send "talkShot" (( "restart", E.bool True ) :: target t) )
+
         TalkView.OutGoto t ->
             ( model, send "talkGoto" (target t) )
 

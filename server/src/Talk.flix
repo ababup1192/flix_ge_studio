@@ -3,7 +3,8 @@
 //   GET  /talk/files            会話のシナリオ（*.yarn）の一覧と、窓なしのゲームの入口があるか
 //   POST /talk/build {path, text?}  text があれば保存してから、そのフォルダを bin/fge yarn build --json で組む
 //                                （誤りは行番号と近い名前の案つき・ノードの一覧。text が無ければ check で読むだけ）
-//   POST /talk/shot  {node, line}   窓なしのゲームで `start talk node=… line=…` を組んで 1 枚撮る（PNG を base64 で）
+//   POST /talk/shot  {node, line, restart?}  窓なしのゲームで `start talk node=… line=…` を組んで 1 枚撮る（PNG を base64 で）
+//                                （restart:true = 落ちた・長く起きない窓なしのゲームを起こし直してから頼む）
 //   POST /talk/goto  {node, line}   起動中のゲームをその行へ飛ばす（POST /start?name=talk&…）
 //
 // .yarn を読むのはゲームの bin/fge（Go）だけ。Studio は文法を持たない。絵もゲームが描く（Studio は描かない）。
@@ -118,15 +119,21 @@ mod Talk {
 
     // ── POST /talk/shot ───────────────────────────────────
 
-    /// 窓なしのゲームで 1 枚撮る。起こしている最中は ok:false・starting:true（画面は少し後に頼み直す）。
+    /// 窓なしのゲームで 1 枚撮る。撮れない間は ok:false と headless（窓なしのゲームの様子）:
+    ///   "starting" … 起こしている（画面は少し後に頼み直す）
+    ///   "stalled"  … 起こしてから長く ready にならない（頼み直しは続ける。log に末尾）
+    ///   "failed"   … ready にならずに落ちた（続けては起こさない。log に末尾。restart:true で起こし直す）
+    /// body の restart:true は「もう一度起こす」のボタン（落ちた・長く起きない 1 本だけを起こし直す）。
     pub def shot(headless: Headless.State, game: Game.Runtime, dir: String, body: String): (Int32, Json) \ IO =
         let (node, line) = targetOf(body);
+        let restart = DocJson.parse(body) |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.exists(obj -> JsonCodec.boolOr("restart", false, obj));
         if (not isNodeName(node) or line < 1) (400, failJson("node（ノードの名前）と line（1 以上）が要ります"))
-        else match Headless.ensure(headless, game, dir) {
+        else match (if (restart) Headless.restart(headless, game, dir) else Headless.ensure(headless, game, dir)) {
             case Headless.Readiness.Unsupported(why) => (200, failJson(why))
-            case Headless.Readiness.Starting(why) =>
-                (200, JObject(Map#{ "ok" => JBool(false), "starting" => JBool(true),
-                                    "error" => JObject(Map#{ "message" => JString(why) }) }))
+            case Headless.Readiness.Starting(why)    => (200, waitingJson("starting", why, Nil))
+            case Headless.Readiness.Stalled(why, log) => (200, waitingJson("stalled", why, log))
+            case Headless.Readiness.Failed(why, log)  => (200, waitingJson("failed", why, log))
             case Headless.Readiness.Ready(port) =>
                 match Runner.requestGame(port, "POST /step?view=shot", startLine(node, line)) {
                     case Runner.GameReply.Answered(raw) => match shotOutcome(Runner.bodyOfHttpText(raw)) {
@@ -171,6 +178,15 @@ mod Talk {
         }
 
     // ── 小物 ──────────────────────────────────────────────
+
+    /// 窓なしのゲームを待っている・落ちた時の答え（headless は starting / stalled / failed）。
+    pub def waitingJson(phase: String, message: String, log: List[String]): Json =
+        JObject(Map#{
+            "ok"       => JBool(false),
+            "headless" => JString(phase),
+            "log"      => JArray(log |> List.map(JString) |> List.toVector),
+            "error"    => JObject(Map#{ "message" => JString(message) })
+        })
 
     def failJson(message: String): Json =
         JObject(Map#{ "ok" => JBool(false), "error" => JObject(Map#{ "message" => JString(message) }) })
