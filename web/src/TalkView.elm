@@ -23,6 +23,7 @@ module TalkView exposing
     , gotFiles
     , gotGoto
     , gotShot
+    , gotProgram
     , gotTree
     , gotVocab
     , init
@@ -62,7 +63,8 @@ ok:false で返り、前の絵を Held で出したまま誤りの行を示す�
 選ぶとその行のタグを書き換えて保存し、撮り直す。打って書くやり方はそのまま。
 
 左の面は Pane の 1 つで持つ: 台本(ScriptPane)か、ノードの図(GraphPane。箱と jump・選択肢の矢印。
-押すとその台本の行へ戻る)。図は組んだ木(dialogue.json)から描く。
+押すとその台本の行へ戻る)か、読み進める欄(ReadPane。選択肢を選びながら台詞を順に出す。TalkRun)。
+図と欄は組んだ木(dialogue.json)から作る。欄の台詞を押すと、その行をその時の変数の値で撮る。
 
 変数の一覧は組んだ木(dialogue.json)の `<<declare>>` を並べ、値を変えるとその値で撮り直す
 (engine 0.51 の始まりの引数 `$名前=値`。変えた値は overrides に持ち、初めの値に戻すと消える)。
@@ -79,6 +81,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import TalkGraph
+import TalkRun
 import TalkTags
 import TalkTree
 
@@ -177,6 +180,7 @@ type Picker
 type Pane
     = ScriptPane
     | GraphPane
+    | ReadPane
 
 
 type alias Model =
@@ -221,6 +225,10 @@ type alias Model =
     -- プレビューで値を変えた変数(名前 → 値の字。初めの値と同じなら持たない)
     , overrides : Dict String String
     , pane : Pane
+
+    -- 読み進める欄(組んだ木を流す物と、流している 1 回。まだ流していなければ Nothing)
+    , program : TalkRun.Program
+    , reading : Maybe TalkRun.Reading
     }
 
 
@@ -247,6 +255,8 @@ init =
     , tree = TalkTree.empty
     , overrides = Dict.empty
     , pane = ScriptPane
+    , program = TalkRun.emptyProgram
+    , reading = Nothing
     }
 
 
@@ -267,6 +277,9 @@ type Msg
     | VarsResetAll
     | PaneChosen Pane
     | GraphNodePicked String
+    | ReadStarted String
+    | ReadChosen Int
+    | ReadLinePicked Int
 
 
 type Out
@@ -488,6 +501,39 @@ update msg model =
                 Nothing ->
                     ( { model | pane = ScriptPane }, OutNone )
 
+        ReadStarted node ->
+            ( { model | reading = Just (TalkRun.start model.program (TalkRun.overridesFrom model.program model.overrides) node) }, OutNone )
+
+        ReadChosen i ->
+            ( { model | reading = Maybe.map (TalkRun.choose model.program i) model.reading }, OutNone )
+
+        ReadLinePicked line ->
+            -- 欄の台詞を押した: その行をその時の変数の値で撮る(変数の一覧にも出る。欄はそのまま)
+            case model.reading of
+                Just reading ->
+                    askCursor True
+                        { model
+                            | cursor = line
+                            , overrides =
+                                model.tree.variables
+                                    |> List.filterMap
+                                        (\v ->
+                                            TalkRun.valueOf v.name reading
+                                                |> Maybe.andThen
+                                                    (\now ->
+                                                        if now == v.value then
+                                                            Nothing
+
+                                                        else
+                                                            Just ( v.name, TalkTree.valueText now )
+                                                    )
+                                        )
+                                    |> Dict.fromList
+                        }
+
+                Nothing ->
+                    ( model, OutNone )
+
         VarsResetAll ->
             if Dict.isEmpty model.overrides then
                 ( model, OutNone )
@@ -568,6 +614,12 @@ gotTree result model =
         | tree = tree
         , overrides = Dict.filter (\name _ -> List.any (\v -> v.name == name) tree.variables) model.overrides
     }
+
+
+{-| 流す物(組んだ木)が届いた。組み直したら読み進めている欄は畳む(古い木の続きを流さない)。 -}
+gotProgram : TalkRun.Program -> Model -> Model
+gotProgram program model =
+    { model | program = program, reading = Nothing }
 
 
 {-| 語彙が届いた(読めなければ Nothing のまま。ダイアログを開く時に理由を出す)。 -}
@@ -885,7 +937,7 @@ view model =
                 ScriptPane ->
                     viewLineTags model
 
-                GraphPane ->
+                _ ->
                     text ""
             , case model.pane of
                 ScriptPane ->
@@ -893,6 +945,9 @@ view model =
 
                 GraphPane ->
                     viewGraph model
+
+                ReadPane ->
+                    viewRead model
             , viewProblems model
             ]
         , div [ HA.class "flex min-h-0 w-[48%] flex-col gap-2" ]
@@ -1039,6 +1094,99 @@ viewGraph model =
         ]
 
 
+{-| 読み進める欄: 始めるノードを選んで流し、台詞を順に出す。選択肢で止まり、押すと続きへ。
+台詞を押すとその行をその時の変数の値で撮る。
+-}
+viewRead : Model -> Html Msg
+viewRead model =
+    let
+        titles =
+            Dict.keys model.program.nodes
+
+        here =
+            targetAt model.path model.nodes model.cursor
+                |> Maybe.map .node
+                |> Maybe.withDefault (List.head titles |> Maybe.withDefault "")
+
+        startFrom =
+            model.reading |> Maybe.map (\_ -> "最初から読み直す") |> Maybe.withDefault "▶ ここから読む"
+
+        entry e =
+            case e of
+                TalkRun.Said said ->
+                    button
+                        [ HA.class "talk-read-line block w-full cursor-pointer rounded-sm px-1.5 py-0.5 text-left hover:bg-white/10"
+                        , HA.title (String.fromInt said.line ++ " 行目をこの時の変数の値で撮る")
+                        , HE.onClick (ReadLinePicked said.line)
+                        ]
+                        [ if said.speaker == "" then
+                            text ""
+
+                          else
+                            span [ HA.class "mr-1 font-mono text-ink-soft" ] [ text (said.speaker ++ ":") ]
+                        , span [ HA.class "text-ink" ] [ text said.text ]
+                        ]
+
+                TalkRun.Commanded c ->
+                    div [ HA.class "px-1.5 font-mono text-[10px] text-ink-faint" ] [ text c.text ]
+
+                TalkRun.Chose c ->
+                    div [ HA.class "px-1.5 text-[11px] text-accent" ] [ text ("→ " ++ c.text) ]
+
+                TalkRun.Entered node ->
+                    div [ HA.class "mt-1 px-1.5 font-mono text-[10px] text-ink-faint" ] [ text ("— " ++ node ++ " —") ]
+
+        status reading =
+            case reading.status of
+                TalkRun.Choosing choices ->
+                    div [ HA.class "mt-1 flex flex-col gap-0.5" ]
+                        (List.indexedMap
+                            (\i c ->
+                                button
+                                    [ HA.class "talk-read-choice d-btn d-btn-xs justify-start"
+                                    , HA.disabled (not c.available)
+                                    , HA.title
+                                        (if c.available then
+                                            "選ぶ"
+
+                                         else
+                                            "条件が偽なので選べません(行末の <<if>>)"
+                                        )
+                                    , HE.onClick (ReadChosen i)
+                                    ]
+                                    [ text c.text ]
+                            )
+                            choices
+                        )
+
+                TalkRun.Ended ->
+                    div [ HA.class "mt-1 px-1.5 text-[11px] text-ink-faint" ] [ text "(終わり)" ]
+
+                TalkRun.Broken why ->
+                    div [ HA.class "mt-1 px-1.5 text-[11px] text-red-300" ] [ text why ]
+    in
+    div [ HA.class "talk-read-pane flex min-h-0 flex-1 flex-col gap-1 rounded-md border border-edge bg-well p-2 text-[12px]" ]
+        (if Dict.isEmpty model.program.nodes then
+            [ div [ HA.class "text-xs text-ink-faint" ] [ text "まだ組まれていません(保存すると dialogue.json が書かれ、ここで読めます)" ] ]
+
+         else
+            [ div [ HA.class "flex items-center gap-2" ]
+                [ span [ HA.class "text-[11px] text-ink-faint" ] [ text ("始めるノード: " ++ here) ]
+                , button [ HA.class "talk-read-start d-btn d-btn-xs", HE.onClick (ReadStarted here) ] [ text startFrom ]
+                , span [ HA.class "ml-auto text-[10px] text-ink-faint" ] [ text "変数は一覧の値から。台詞を押すとその時の値で撮ります" ]
+                ]
+            , div [ HA.class "min-h-0 flex-1 overflow-auto" ]
+                (case model.reading of
+                    Just reading ->
+                        List.map entry reading.log ++ [ status reading ]
+
+                    Nothing ->
+                        [ div [ HA.class "text-xs text-ink-faint" ] [ text "カーソルのあるノードから読みます(台本の面でカーソルを動かして選ぶ)" ] ]
+                )
+            ]
+        )
+
+
 viewPaneSwitch : Model -> Html Msg
 viewPaneSwitch model =
     let
@@ -1052,7 +1200,7 @@ viewPaneSwitch model =
                 ]
                 [ text label ]
     in
-    div [ HA.class "d-join" ] [ tab ScriptPane "台本", tab GraphPane "図" ]
+    div [ HA.class "d-join" ] [ tab ScriptPane "台本", tab GraphPane "図", tab ReadPane "読む" ]
 
 
 viewHead : Model -> Html Msg

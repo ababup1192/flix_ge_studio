@@ -34,6 +34,7 @@ import EntryTable
 import FileVerbs
 import FormHelp
 import GalleryView
+import TalkRun
 import TalkTags
 import TalkTree
 import TalkView
@@ -6702,14 +6703,23 @@ handleOkByKind env model =
             )
 
         "talkTree" ->
+            let
+                content =
+                    D.decodeValue (D.field "content" D.string) env.body
+            in
             ( { model
                 | talk =
-                    TalkView.gotTree
-                        (D.decodeValue (D.field "content" D.string) env.body
-                            |> Result.andThen (D.decodeString TalkTree.decoder)
-                            |> Result.mapError D.errorToString
-                        )
-                        model.talk
+                    model.talk
+                        |> TalkView.gotTree
+                            (content
+                                |> Result.andThen (D.decodeString TalkTree.decoder)
+                                |> Result.mapError D.errorToString
+                            )
+                        |> TalkView.gotProgram
+                            (content
+                                |> Result.andThen (D.decodeString TalkRun.programDecoder)
+                                |> Result.withDefault TalkRun.emptyProgram
+                            )
               }
             , Effect.none
             )

@@ -198,6 +198,32 @@ graphSuite =
                 press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.GraphNodePicked "clock" ] opened
                     |> Tuple.mapFirst (\m -> ( m.pane, m.cursor ))
                     |> Expect.equal ( ( TalkView.ScriptPane, 36 ), OutShot (clock 36) )
+        , test "読み進める欄の台詞を押すと、その行をその時の変数の値で撮る" <|
+            \_ ->
+                let
+                    program =
+                        { nodes =
+                            Dict.fromList
+                                [ ( "clock"
+                                  , []
+                                  )
+                                ]
+                        , declared = Dict.fromList [ ( "$gold", TalkTree.Number 0 ), ( "$met", TalkTree.Flag False ) ]
+                        }
+
+                    m0 =
+                        TalkView.gotProgram program withVars
+
+                    ( m1, _ ) =
+                        TalkView.update (TalkView.ReadStarted "clock") m0
+
+                    -- 流した後に $gold が 3 になった所を押した、と置く
+                    m2 =
+                        { m1 | reading = Maybe.map (\r -> { r | vars = Dict.insert "$gold" (TalkTree.Number 3) r.vars }) m1.reading }
+                in
+                TalkView.update (TalkView.ReadLinePicked 41) m2
+                    |> Tuple.mapFirst TalkView.varsOf
+                    |> Expect.equal ( [ ( "$gold", "3" ) ], OutShot (clock 41) )
         , test "図を見ている間は ⌘E でダイアログを開かない" <|
             \_ ->
                 press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.TagPickRequested "face" ] tagged
