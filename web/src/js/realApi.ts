@@ -271,12 +271,13 @@ export function realApi(base: string): Api {
         case "talkShot": {
           // 窓なしのゲームで 1 枚。頼んだ場面を答えに添える(画面が古い答えを捨てる照合キー)。
           // 繋がらない・時間切れも投げずに ok:false で返す(投げると頼みが返らず「撮っています…」のまま)
-          const { node, line } = payload as { node: string; line: number };
+          // restart:true は「もう一度起こす」(落ちた窓なしのゲームを起こし直してから頼む)
+          const { node, line, restart } = payload as { node: string; line: number; restart?: boolean };
           try {
             const res = await fetchWithin(`${base}/talk/shot`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ node, line }),
+              body: JSON.stringify({ node, line, restart: restart === true }),
             }, QUICK_MS);
             const body = await res.json().catch(() => ({ ok: false, error: { message: `HTTP ${res.status}` } }));
             return { ...body, node, line };

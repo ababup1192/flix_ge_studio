@@ -1,5 +1,14 @@
 # NOTES
 
+## 次やること（2026-10-19・studioheadless: 窓なしのゲームが落ちたのを覚える）
+
+1. 済み: `Headless` が 1 本の今を `Launch`（Idle / Booting / Running / Crashed）の 1 つで持つ。ready 前に終わったら理由（終了コード）と
+   headless.log の末尾を残し、1 回目は黙って起こし直す・続けて 2 回落ちたら起こさずに理由を答える。3 分起きなければ Stalled。
+   画面は理由・ログの末尾・「もう一度起こす」（`/talk/shot` の restart:true。押すたびに 1 本だけ）を出す
+2. engine の bin/headless-run の穴: jar を作り直した回、`.vocab` の入口が無いゲームは 185 行の `grep` が空振りして
+   `set -e`+`pipefail` で黙って exit 1（ready の前に終わる）。engine 側で直す（`|| true`）
+3. **人の目で確かめる**: .app で会話のタブの落ちた時の表示とボタン（dev は API で確かめた。ブラウザでは見ていない）
+
 ## 次やること（2026-10-19・studiotalk: 会話の画面とギャラリーの動画）
 
 1. 済み: ギャラリーの「動画」の面（`GET /videos` = 道具の `bin/fge videos status --json`・Range つきの `/videos/file`・

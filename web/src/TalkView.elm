@@ -1,5 +1,6 @@
 module TalkView exposing
-    ( Model
+    ( Headless(..)
+    , Model
     , Msg(..)
     , Node
     , Out(..)
@@ -37,6 +38,9 @@ Studio は自分で描かない。右の絵は窓なしのゲーム(ゲーム自
     動いた。答えが来たら最後の行だけ頼む — 打鍵ごとに窓なしのゲームへ積まない)
   - Shown … 見せ方。Blank / Shown(今の行の絵)/ Held(前の絵のまま。理由つき — 台本が壊れている・
     ゲームを起こしている最中)
+
+窓なしのゲームの様子は Headless の 1 つで持つ(旗を重ねない)。起こしている間・長く起きない間は
+3 秒おきに頼み直し、落ちた時は頼み直さずに理由とログの末尾と「もう一度起こす」を出す。
 
 答えの Target が今の頼みと違えば捨てる(ファイルを開き直した後に、前のファイルの答えが届いても混ぜない)。
 
@@ -85,11 +89,35 @@ type alias Problem =
     { file : String, line : Int, msg : String }
 
 
-{-| 撮った答え。Starting = 窓なしのゲームを起こしている(少し後に頼み直す)。 -}
+{-| 撮った答え。
+
+  - ShotStarting … 窓なしのゲームを起こしている(少し後に頼み直す)
+  - ShotStalled … 起こしてから長く ready にならない(頼み直しは続ける。ログの末尾つき)
+  - ShotCrashed … ready にならずに落ちた(サーバは続けて起こさない。ログの末尾つき)
+  - ShotFailed … それ以外の撮れなかった理由(台本・繋がらない等)
+
+-}
 type ShotAnswer
     = ShotOk String
     | ShotStarting String
+    | ShotStalled String (List String)
+    | ShotCrashed String (List String)
     | ShotFailed String
+
+
+{-| 窓なしのゲームの様子(画面が知っている限り)。
+
+  - HeadlessOk … 撮れた・まだ何も聞いていない
+  - HeadlessBooting … 起こしている(頼み直し中)
+  - HeadlessStalled … 長く起きない(頼み直し中。ログの末尾と「もう一度起こす」を出す)
+  - HeadlessCrashed … 落ちた(頼み直さない。ログの末尾と「もう一度起こす」を出す)
+
+-}
+type Headless
+    = HeadlessOk
+    | HeadlessBooting
+    | HeadlessStalled (List String)
+    | HeadlessCrashed (List String)
 
 
 type alias Model =
@@ -110,6 +138,9 @@ type alias Model =
     , cursor : Int
     , request : Request
     , shown : Shown
+
+    -- 窓なしのゲームの様子(頼み直すか・ボタンを出すかの元)
+    , headless : Headless
 
     -- 絵が無い時に出す一言(Blank の理由)・保存や飛ばした結果の一言
     , note : String
@@ -136,6 +167,7 @@ init =
     , cursor = 1
     , request = Idle
     , shown = Blank
+    , headless = HeadlessOk
     , note = ""
     , status = ""
     , retrySeq = 0
@@ -150,6 +182,7 @@ type Msg
     | SaveClicked
     | NodeClicked Node
     | GotoClicked
+    | RestartClicked
 
 
 type Out
@@ -159,6 +192,7 @@ type Out
     | OutShot Target
     | OutGoto Target
     | OutRetryLater Int
+    | OutRestart Target
 
 
 
@@ -268,6 +302,18 @@ update msg model =
                 Nothing ->
                     ( { model | status = "この行はどのノードの中でもありません" }, OutNone )
 
+        RestartClicked ->
+            -- 頼んでいる最中は押せない(ボタンも出さない)。答えは ShotStarting で返り、頼み直しが続く
+            case ( model.request, targetAt model.path model.nodes model.cursor ) of
+                ( Idle, Just t ) ->
+                    ( { model | request = InFlight t, headless = HeadlessBooting, status = "" }, OutRestart t )
+
+                ( Idle, Nothing ) ->
+                    ( { model | status = "カーソルを会話の行に置いてから起こしてください" }, OutNone )
+
+                _ ->
+                    ( model, OutNone )
+
 
 moveCaret : Int -> Model -> ( Model, Out )
 moveCaret offset model =
@@ -368,10 +414,16 @@ gotShot t answer model =
         apply m =
             case answer of
                 ShotOk png ->
-                    ( { m | shown = Shown { target = t, png = png }, note = "" }, OutNone )
+                    ( { m | shown = Shown { target = t, png = png }, note = "", headless = HeadlessOk }, OutNone )
 
                 ShotStarting why ->
-                    ( hold why { m | retrySeq = m.retrySeq + 1 }, OutRetryLater (m.retrySeq + 1) )
+                    retryLater (hold why { m | headless = HeadlessBooting })
+
+                ShotStalled why log ->
+                    retryLater (hold why { m | headless = HeadlessStalled log })
+
+                ShotCrashed why log ->
+                    ( hold why { m | headless = HeadlessCrashed log }, OutNone )
 
                 ShotFailed why ->
                     ( hold why m, OutNone )
@@ -400,14 +452,27 @@ gotShot t answer model =
             ( model, OutNone )
 
 
-{-| 頼み直しの予約が来た(古い予約は捨てる)。 -}
+{-| 少し後に頼み直す予約(前の予約は照合キーで捨てられる)。 -}
+retryLater : Model -> ( Model, Out )
+retryLater model =
+    ( { model | retrySeq = model.retrySeq + 1 }, OutRetryLater (model.retrySeq + 1) )
+
+
+{-| 頼み直しの予約が来た(古い予約は捨てる)。カーソルがノードの外なら頼まずに予約だけ続ける
+(予約を落とすと、窓なしのゲームが起きても「起こしています」のまま止まる)。
+-}
 retryFired : Int -> Model -> ( Model, Out )
 retryFired seq model =
     if seq /= model.retrySeq || model.request /= Idle then
         ( model, OutNone )
 
     else
-        askCursor True model
+        case targetAt model.path model.nodes model.cursor of
+            Just t ->
+                ask True t model
+
+            Nothing ->
+                retryLater model
 
 
 {-| 起動中のゲームへ飛ばした結果。 -}
@@ -469,16 +534,24 @@ shotAnswerDecoder =
                     D.map ShotOk (D.field "png" D.string)
 
                 else
-                    D.map2
-                        (\starting why ->
-                            if starting then
-                                ShotStarting why
+                    D.map3
+                        (\phase why log ->
+                            case phase of
+                                "starting" ->
+                                    ShotStarting why
 
-                            else
-                                ShotFailed why
+                                "stalled" ->
+                                    ShotStalled why log
+
+                                "failed" ->
+                                    ShotCrashed why log
+
+                                _ ->
+                                    ShotFailed why
                         )
-                        (D.oneOf [ D.field "starting" D.bool, D.succeed False ])
+                        (D.oneOf [ D.field "headless" D.string, D.succeed "" ])
                         (D.oneOf [ D.at [ "error", "message" ] D.string, D.succeed "撮れませんでした" ])
+                        (D.oneOf [ D.field "log" (D.list D.string), D.succeed [] ])
             )
 
 
@@ -753,6 +826,43 @@ viewPreview model =
                         [ div [ HA.class "talk-held rounded-sm bg-amber-500/20 px-2 py-1 text-[11px] text-ink" ] [ text why ]
                         , picture shot True
                         ]
+        , viewHeadlessTrouble model
         , div [ HA.class "text-[11px] text-ink-faint" ]
             [ text "右の絵はゲームが窓なしで描いた本物の画面です(起動中のゲームは動かしません)。保存すると撮り直します。" ]
         ]
+
+
+{-| 窓なしのゲームが長く起きない・落ちた時: ログの末尾と「もう一度起こす」。理由の一言は上の Blank / Held に出ている。 -}
+viewHeadlessTrouble : Model -> Html Msg
+viewHeadlessTrouble model =
+    let
+        trouble log label =
+            div [ HA.class "talk-headless flex flex-col gap-1" ]
+                [ if List.isEmpty log then
+                    text ""
+
+                  else
+                    Html.pre [ HA.class "talk-headless-log max-h-48 overflow-auto whitespace-pre-wrap rounded-sm bg-well px-2 py-1 font-mono text-[10px] text-ink-soft" ]
+                        [ text (String.join "\n" log) ]
+                , div [ HA.class "flex items-center gap-2" ]
+                    [ button
+                        [ HA.class "talk-restart d-btn d-btn-xs"
+                        , HA.disabled (model.request /= Idle)
+                        , HA.title "窓なしのゲームを止めて、もう一度起こします(1 本だけ。また落ちたら理由に戻ります)"
+                        , HE.onClick RestartClicked
+                        ]
+                        [ text "もう一度起こす" ]
+                    , span [ HA.class "text-[11px] text-ink-faint" ] [ text label ]
+                    ]
+                ]
+    in
+    case model.headless of
+        HeadlessStalled log ->
+            trouble log "待ち続けています(debug/headless.log)"
+
+        HeadlessCrashed log ->
+            trouble log "落ちたので、押すまで起こしません(debug/headless.log)"
+
+        _ ->
+            text ""
+
