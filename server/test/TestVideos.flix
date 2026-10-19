@@ -70,4 +70,10 @@ mod TestVideos {
             Util.Json.Json.JObject(Map#{"name" => Util.Json.Json.JString("b")})})});
         Assert.assertEq(expected = ("e2e/a.flow", "", ""),
             (Videos.flowOf("a", listing), Videos.flowOf("b", listing), Videos.flowOf("c", listing)))
+
+    /// 道具を試す順: Studio の engine を先に、置き場の engine は新しい版から（同じ物は 2 回試さない）。
+    @Test
+    def testToolCandidatesNewestFirst(): Unit \ Assert =
+        Assert.assertEq(expected = List#{"/e/0.45.0", "/e/0.49.0", "/e/0.45.10", "/e/0.45.9"},
+            Videos.toolCandidates("/e/0.45.0", List#{"/e/0.45.9", "/e/0.49.0", "/e/0.45.0", "/e/0.45.10"}))
 }

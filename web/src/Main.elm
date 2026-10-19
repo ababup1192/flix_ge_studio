@@ -34,6 +34,7 @@ import EntryTable
 import FileVerbs
 import FormHelp
 import GalleryView
+import TalkView
 import VideoView
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes as HA
@@ -110,6 +111,8 @@ type Tab
     = HomeTab
     | AtelierTab
     | GalleryTab
+      -- 会話 = .yarn を書きながら、カーソルの行の本物のゲームの画面を見る
+    | TalkTab
       -- 拡張プラグイン(iframe で開く追加画面)。値はプラグイン id。
       -- 入口は左レールの「プラグイン」節(上部ナビはプラグインが増えると伸びるため使わない)
     | PluginTab String
@@ -509,6 +512,9 @@ type alias Model =
     -- ギャラリーの「動画」の面(撮った動画の一覧)と、いま出している面
     , videos : VideoView.Model
     , galleryPane : GalleryPane
+
+    -- 会話の画面(.yarn と、窓なしのゲームが撮ったカーソルの行の 1 枚)
+    , talk : TalkView.Model
 
     -- 「ゲームのログ」モーダル(Nothing = 閉じている、Just = 表示中の行)。
     -- ターミナルを開けない人(特に Windows)が、遊んでいる間のログを画面だけで
@@ -975,6 +981,7 @@ init _ =
         , gallery = GalleryView.init
         , videos = VideoView.init
         , galleryPane = ScenesPane
+        , talk = TalkView.init
         , gameLogView = Nothing
         , atelier = Atelier.init
         , miniPlayerOpen = False
@@ -1300,6 +1307,8 @@ type Msg
     | ChangesModalClosed
     | GalleryMsg GalleryView.Msg
     | VideosMsg VideoView.Msg
+    | TalkMsg TalkView.Msg
+    | TalkRetried Int
     | GalleryPaneClicked GalleryPane
     | GameLogViewOpened
     | GameLogViewClosed
@@ -1491,6 +1500,20 @@ update msg model =
 
                 VideoView.OutRerun name ->
                     request "videoRerun" (E.object [ ( "name", E.string name ) ]) m1
+
+        TalkMsg tmsg ->
+            let
+                ( talk, out ) =
+                    TalkView.update tmsg model.talk
+            in
+            runTalkOut out { model | talk = talk }
+
+        TalkRetried seq ->
+            let
+                ( talk, out ) =
+                    TalkView.retryFired seq model.talk
+            in
+            runTalkOut out { model | talk = talk }
 
         GalleryPaneClicked pane ->
             -- 開くたび取り直す(外で動画を撮っていても最新が出る)
@@ -6624,6 +6647,77 @@ handleOkByKind env model =
                 Err _ ->
                     ( { model | gallery = GalleryView.listFailed model.gallery }, Effect.none )
 
+        "talkFiles" ->
+            case D.decodeValue TalkView.filesDecoder env.body of
+                Ok got ->
+                    let
+                        ( talk, out ) =
+                            TalkView.gotFiles got model.talk
+                    in
+                    runTalkOut out { model | talk = talk }
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "talkRead" ->
+            case D.decodeValue (D.map2 Tuple.pair (D.field "path" D.string) (D.field "content" D.string)) env.body of
+                Ok ( path, body ) ->
+                    let
+                        ( talk, out ) =
+                            TalkView.gotFile path body model.talk
+                    in
+                    runTalkOut out { model | talk = talk }
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "talkBuild" ->
+            case D.decodeValue TalkView.buildDecoder env.body of
+                Ok report ->
+                    let
+                        ( talk, out ) =
+                            TalkView.gotBuild report model.talk
+                    in
+                    runTalkOut out { model | talk = talk }
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "talkShot" ->
+            case
+                D.decodeValue
+                    (D.map3 (\node line answer -> ( { node = node, line = line }, answer ))
+                        (D.field "node" D.string)
+                        (D.field "line" D.int)
+                        TalkView.shotAnswerDecoder
+                    )
+                    env.body
+            of
+                Ok ( t, answer ) ->
+                    let
+                        ( talk, out ) =
+                            TalkView.gotShot t answer model.talk
+                    in
+                    runTalkOut out { model | talk = talk }
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "talkGoto" ->
+            let
+                result =
+                    case D.decodeValue (D.field "ok" D.bool) env.body of
+                        Ok True ->
+                            Ok ()
+
+                        _ ->
+                            Err
+                                (D.decodeValue (D.at [ "error", "message" ] D.string) env.body
+                                    |> Result.withDefault "飛ばせませんでした"
+                                )
+            in
+            ( { model | talk = TalkView.gotGoto result model.talk }, Effect.none )
+
         "videos" ->
             case D.decodeValue VideoView.listDecoder env.body of
                 Ok listing ->
@@ -6954,6 +7048,7 @@ handleOkByKind env model =
                                     , changesModal = Nothing
                                     , gallery = GalleryView.init
                                     , videos = VideoView.init
+                                    , talk = TalkView.init
 
                                     -- ミニプレイヤーは前のプロジェクトの残骸を持ち越さない —
                                     -- 場面一覧・ピン・知らせ・目盛り・拡大が残ると、次の取得までの間
@@ -8350,6 +8445,13 @@ handleErrByKind env message model =
             -- 音の印が出ないだけ(再生はできる)
             ( model, Effect.none )
 
+        "talkFiles" ->
+            -- 口を持たないサーバ。一覧が空のまま(画面が案内を出す)
+            ( model, Effect.none )
+
+        "talkRead" ->
+            ( { model | talk = TalkView.gotGoto (Err ("開けませんでした — " ++ message)) model.talk }, Effect.none )
+
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
             -- 調整(エディタ)は生きる(fail-open)
@@ -8566,6 +8668,48 @@ closeIfLoading modal =
         modal
 
 
+{-| 会話の画面の頼みを封筒へ(読み取り専用の口と同じく id 0。応答は kind で受ける)。 -}
+runTalkOut : TalkView.Out -> Model -> ( Model, Effect )
+runTalkOut out model =
+    let
+        send kind fields =
+            Effect.SendApi { id = 0, kind = kind, payload = E.object fields }
+
+        target t =
+            [ ( "node", E.string t.node ), ( "line", E.int t.line ) ]
+    in
+    case out of
+        TalkView.OutNone ->
+            ( model, Effect.none )
+
+        TalkView.OutRead path ->
+            ( model, send "talkRead" [ ( "path", E.string path ) ] )
+
+        TalkView.OutBuild path text ->
+            ( model
+            , send "talkBuild"
+                (( "path", E.string path )
+                    :: (case text of
+                            Just body ->
+                                [ ( "text", E.string body ) ]
+
+                            Nothing ->
+                                []
+                       )
+                )
+            )
+
+        TalkView.OutShot t ->
+            ( model, send "talkShot" (target t) )
+
+        TalkView.OutGoto t ->
+            ( model, send "talkGoto" (target t) )
+
+        TalkView.OutRetryLater seq ->
+            -- 窓なしのゲームを起こしている間は 3 秒おきに頼み直す(初回は jar を作るので 1〜2 分)
+            ( model, Effect.TalkRetry { seq = seq, afterMs = 3000 } )
+
+
 {-| ギャラリー: 上に「場面 / 動画」の切り替え、下にその面。 -}
 viewGallery : Model -> Html Msg
 viewGallery model =
@@ -8636,6 +8780,10 @@ gotoTab tab model =
                        )
                 )
             )
+
+        TalkTab ->
+            -- 開くたびシナリオの一覧を取り直す(開いているファイルと絵はそのまま)
+            ( { model | tab = TalkTab }, requestInfo "talkFiles" )
 
         GalleryTab ->
             -- 開くたび取り直す。外で make render-all が走っていても最新が出る
@@ -8728,6 +8876,9 @@ view model =
 
                     GalleryTab ->
                         viewShell model (viewGallery model)
+
+                    TalkTab ->
+                        viewShell model (Html.map TalkMsg (TalkView.view model.talk))
 
                     AtelierTab ->
                         -- 入口からアセット / 調整 / 広げる / アーカイブへ。調整は従来の Doc エディタ
@@ -9091,6 +9242,7 @@ viewNavTabs tab =
         [ item HomeTab "ホーム"
         , item AtelierTab "アトリエ"
         , item GalleryTab "ギャラリー"
+        , item TalkTab "会話"
         ]
 
 
@@ -15687,6 +15839,7 @@ main =
             , searchDebounced = SearchDebounced
             , framePeeked = FramePeeked
             , wakePolled = WakePolled
+            , talkRetried = TalkRetried
             , scrolled = TimelineScrolled
             }
     in

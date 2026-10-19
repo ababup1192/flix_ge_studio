@@ -77,6 +77,8 @@ mod Editor {
         let changes = Changes.make();
         // 常駐する焼き係（ゲーム自身のコードで音を作る係）の世話係。
         let bakeHost = BakeHost.make();
+        // 会話のプレビューに使う窓なしのゲーム（プロジェクトごとに 1 本・頼まれた時だけ起こす）
+        let headless = Headless.make();
         // 焼き係を「起こしている最中」の覚え書き(取り次ぎの並行スレッドが重ねて起こさないため)。
         let launchGuard = BakeProxy.makeGuard();
         let webRoot = webRootFromEnv();
@@ -85,7 +87,7 @@ mod Editor {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, scaffold, engineUpdate, changes, bakeHost, launchGuard, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, engineUpdate, changes, bakeHost, headless, launchGuard, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -129,7 +131,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, engineUpdate: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, engineUpdate: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, headless: Headless.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -270,6 +272,21 @@ mod Editor {
             // 化け、再起動後の焼き産物が二度と出ない。
             case ("HEAD", "/gallery/image") => withProject(selection, exchange, dir ->
                 handleGalleryImage(dir, params, exchange))
+            // 会話の画面: .yarn の一覧・保存して組む（誤りとノード）・窓なしのゲームで 1 枚・起動中のゲームをその行へ
+            case ("GET", "/talk/files") => withProject(selection, exchange, dir ->
+                sendJson(200, Talk.filesJson(dir), exchange))
+            case ("POST", "/talk/build") => withProject(selection, exchange, dir -> {
+                let (status, json) = Talk.build(dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/talk/shot") => withProject(selection, exchange, dir -> {
+                let (status, json) = Talk.shot(headless, game, dir, readBody(exchange));
+                sendJson(status, json, exchange)
+            })
+            case ("POST", "/talk/goto") => withProject(selection, exchange, dir -> {
+                let (status, json) = Talk.goto(Game.livePort(game, dir), readBody(exchange));
+                sendJson(status, json, exchange)
+            })
             // ギャラリーの「動画」のタブ: debug/video/ の一覧と撮れたかの判定（判定は engine の bin/fge videos status）
             case ("GET", "/videos") => withProject(selection, exchange, dir ->
                 sendJson(200, Videos.listJson(dir), exchange))
@@ -280,7 +297,7 @@ mod Editor {
                 handleVideoFile(dir, params, exchange))
             // その動画を撮った flow を起動中のゲームへ流し直す（ビルドしない・ゲームの POST /flow）
             case ("POST", "/videos/rerun") => withProject(selection, exchange, dir -> {
-                let (status, json) = Videos.rerun(dir, Game.portOf(game#ports, dir), readBody(exchange));
+                let (status, json) = Videos.rerun(dir, Game.livePort(game, dir), readBody(exchange));
                 sendJson(status, json, exchange)
             })
             case ("GET", "/gallery/sound") => withProject(selection, exchange, dir ->

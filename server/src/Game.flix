@@ -59,6 +59,24 @@ mod Game {
         let value = ports.get(dir);
         portFromRecord(if (Object.isNull(value)) None else Some(value))
 
+    /// dir のゲームの命令口。Studio が起こした (覚えている) 物を先に、無ければ書き残し
+    /// (~/.flix_ge_studio/games.json) から生きている物を引く — make debug や VS Code から
+    /// DEBUG=true で起こしたゲームは、命令口が空いたポートを自分で取ってそこへ書き置く (engine 0.49.0)。
+    /// パスは実パスで比べる (symlink の作業場でも同じゲームと分かるように)。
+    pub def livePort(runtime: Runtime, dir: String): Option[Int32] \ IO =
+        match portOf(runtime#ports, dir) {
+            case Some(port) => Some(port)
+            case None =>
+                let want = canonical(dir);
+                loadRegistry()
+                    |> List.filter(entry -> canonical(entry#dir) == want and (Int64.fromString(entry#pid) |> Option.exists(pidAlive)))
+                    |> List.last
+                    |> Option.flatMap(entry -> Int32.fromString(entry#port))
+        }
+
+    def canonical(path: String): String \ IO =
+        try { new JFile(path).getCanonicalPath() } catch { case _: Exception => path }
+
     /// dir の覚え書きを消す (ゲームの停止・命令口の不調を検知したとき)。
     pub def forgetPort(ports: Ports, dir: String): Unit \ IO =
         discard ports.remove(dir);

@@ -12,6 +12,7 @@ mod Videos {
     use fge::{DocJson, JsonCodec}
 
     import java.lang.ProcessBuilder
+    import java.lang.System
     import java.lang.Throwable
     import java.io.{File => JFile}
     import java.io.BufferedReader
@@ -25,6 +26,18 @@ mod Videos {
 
     /// 動画の置き場（ゲームの根から）。道具の videos.Dir と同じ。
     pub def videoDir(): String = "debug/video"
+
+    /// 版の名前を数の並びとして比べる（"0.49.0" > "0.45.10" > "0.45.9"。読めない欄は 0）。
+    pub def versionKey(name: String): List[Int32] =
+        String.splitOn(substr = ".", name) |> List.map(part -> Int32.fromString(part) |> Option.getWithDefault(0))
+
+    /// 道具を試す順: Studio の engine → 置き場の engine を新しい版から。
+    // WhyNot: Studio の engine の道具だけに頼らない — Studio が同梱する engine はゲームの master の版に
+    // そろえるので（README の「リリースの手順」）、ゲームより先に videos を持つ新しい engine が置き場に
+    // あっても使えないままになる。判定は道具の版によらず同じ JSON の形。
+    pub def toolCandidates(current: String, installed: List[String]): List[String] =
+        let keyOf = dir -> versionKey(String.splitOn(substr = "/", dir) |> List.last |> Option.getWithDefault(dir));
+        current :: (installed |> List.sortWith((a, b) -> keyOf(b) <=> keyOf(a)) |> List.filter(dir -> dir != current))
 
     /// 道具を呼ぶ引数。
     pub def statusArgs(tool: String, dir: String): List[String] =
@@ -145,19 +158,32 @@ mod Videos {
 
     /// GET /videos の本文。
     pub def listJson(dir: String): Json \ IO =
-        let tool = EngineUpdate.toolPath(EngineHome.dir(), EngineTasks.isWindows());
         let here = new JFile("${dir}/${videoDir()}").isDirectory();
-        if (not new JFile(tool).canExecute())
-            unavailableJson("engine の道具が見当たりません（${tool}）", here)
-        else {
-            let (code, lines) = runIn(dir, statusArgs(tool, dir));
-            match answerOf(lines, here) {
-                case Some(json) if code == 0 => json
-                case _ =>
-                    let said = lines |> List.head |> Option.getWithDefault("(出力なし)");
-                    unavailableJson("この engine の道具には videos がありません（engine 0.49.0 から）: ${said}", here)
-            }
+        let home = System.getProperty("user.home");
+        let installed = EngineStore.versionsDir(home) |> listDirs |> List.filter(EngineStore.isVersionName)
+            |> List.map(name -> EngineStore.versionDir(home, name));
+        let tools = toolCandidates(EngineHome.dir(), installed)
+            |> List.map(engine -> EngineUpdate.toolPath(engine, EngineTasks.isWindows()))
+            |> List.filter(tool -> new JFile(tool).canExecute());
+        firstAnswer(dir, here, tools, "")
+
+    /// 道具を順に試し、最初に JSON で答えた物を返す。どれも答えなければ理由。
+    def firstAnswer(dir: String, here: Bool, tools: List[String], said: String): Json \ IO =
+        match tools {
+            case Nil =>
+                unavailableJson("動画の一覧を読める engine の道具がありません（engine 0.49.0 の bin/fge videos が要ります）${if (said == "") "" else ": " + said}", here)
+            case tool :: rest =>
+                let (code, lines) = runIn(dir, statusArgs(tool, dir));
+                match answerOf(lines, here) {
+                    case Some(json) if code == 0 => json
+                    case _ => firstAnswer(dir, here, rest, lines |> List.head |> Option.getWithDefault(said))
+                }
         }
+
+    def listDirs(path: String): List[String] \ IO =
+        let entries = new JFile(path).listFiles();
+        if (Object.isNull(entries)) Nil
+        else Array.toList(entries) |> List.filter(f -> f.isDirectory()) |> List.map(f -> f.getName())
 
     /// 道具を dir で流し、終わりの番号と出力の行を返す。
     def runIn(dir: String, args: List[String]): (Int32, List[String]) \ IO =

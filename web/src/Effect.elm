@@ -43,6 +43,8 @@ type Effect
     | FramePeek { seq : Int, afterMs : Float }
       -- 焼き係が立ち上がるのを訊き直す間(初回のコンパイルは数分かかる)
     | WakePoll { seq : Int, afterMs : Float }
+      -- 会話のプレビュー: 窓なしのゲームが立ち上がるのを待って頼み直す間。seq は古い予約の照合キー
+    | TalkRetry { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -81,6 +83,7 @@ perform :
     , searchDebounced : Int -> msg
     , framePeeked : Int -> msg
     , wakePolled : Int -> msg
+    , talkRetried : Int -> msg
     , scrolled : msg
     }
     -> Effect
@@ -136,6 +139,10 @@ perform caps effect =
         FramePeek info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.framePeeked info.seq)
+
+        TalkRetry info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.talkRetried info.seq)
 
         WakePoll info ->
             Process.sleep info.afterMs

@@ -255,6 +255,37 @@ export function realApi(base: string): Api {
         case "galleryScenes":
           // ギャラリータブ 1 枚ぶん(絵 + 場面の説明のラベル + リファレンス差分)
           return getJson(`${base}/gallery/scenes`);
+        case "talkFiles":
+          // 会話の画面: シナリオ(*.yarn)の一覧と、窓なしのゲームの入口があるか
+          return getJson(`${base}/talk/files`);
+        case "talkRead":
+          // 会話の画面で開くシナリオの中身(編集画面と同じ GET /file)
+          return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
+        case "talkBuild":
+          // 保存して組む(text が無ければ読むだけ)。誤りは 200 の ok:false が契約。
+          // 繋がらない時も投げずに ok:false で返す(画面の「組んでいます…」を畳むため)
+          return sendJson("POST", `${base}/talk/build`, payload).catch((e: unknown) => ({
+            ok: false,
+            error: { message: String(e) },
+          }));
+        case "talkShot": {
+          // 窓なしのゲームで 1 枚。頼んだ場面を答えに添える(画面が古い答えを捨てる照合キー)。
+          // 繋がらない・時間切れも投げずに ok:false で返す(投げると頼みが返らず「撮っています…」のまま)
+          const { node, line } = payload as { node: string; line: number };
+          try {
+            const res = await fetchWithin(`${base}/talk/shot`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ node, line }),
+            }, QUICK_MS);
+            const body = await res.json().catch(() => ({ ok: false, error: { message: `HTTP ${res.status}` } }));
+            return { ...body, node, line };
+          } catch (e) {
+            return { ok: false, error: { message: String(e) }, node, line };
+          }
+        }
+        case "talkGoto":
+          return sendJson("POST", `${base}/talk/goto`, payload);
         case "videos":
           // ギャラリーの動画の面(debug/video/ の一覧と撮れたかの判定)
           return getJson(`${base}/videos`);
