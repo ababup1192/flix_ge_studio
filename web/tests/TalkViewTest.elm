@@ -190,11 +190,29 @@ varsSuite =
         ]
 
 
+graphSuite : Test
+graphSuite =
+    describe "ノードの図"
+        [ test "箱を押すとそのノードの行へカーソルを置いて台本に戻り、撮る" <|
+            \_ ->
+                press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.GraphNodePicked "clock" ] opened
+                    |> Tuple.mapFirst (\m -> ( m.pane, m.cursor ))
+                    |> Expect.equal ( ( TalkView.ScriptPane, 36 ), OutShot (clock 36) )
+        , test "図を見ている間は ⌘E でダイアログを開かない" <|
+            \_ ->
+                press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.TagPickRequested "face" ] tagged
+                    |> Tuple.first
+                    |> .picker
+                    |> Expect.equal PickerClosed
+        ]
+
+
 suite : Test
 suite =
     describe "TalkView"
         [ pickerSuite
         , varsSuite
+        , graphSuite
         , test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
             \_ ->
                 ( TalkView.targetAt path nodes 40, TalkView.targetAt path nodes 7, TalkView.targetAt path nodes 3 )

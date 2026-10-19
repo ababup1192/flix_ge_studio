@@ -5,6 +5,7 @@ module TalkView exposing
     , Msg(..)
     , Node
     , Out(..)
+    , Pane(..)
     , Pick
     , Picker(..)
     , Problem
@@ -60,6 +61,9 @@ ok:false で返り、前の絵を Held で出したまま誤りの行を示す�
 選ぶダイアログ(Picker。開閉と選択中を 1 つで持つ)からも書ける。値は台本の語彙(vocab.json)から取り、
 選ぶとその行のタグを書き換えて保存し、撮り直す。打って書くやり方はそのまま。
 
+左の面は Pane の 1 つで持つ: 台本(ScriptPane)か、ノードの図(GraphPane。箱と jump・選択肢の矢印。
+押すとその台本の行へ戻る)。図は組んだ木(dialogue.json)から描く。
+
 変数の一覧は組んだ木(dialogue.json)の `<<declare>>` を並べ、値を変えるとその値で撮り直す
 (engine 0.51 の始まりの引数 `$名前=値`。変えた値は overrides に持ち、初めの値に戻すと消える)。
 
@@ -74,6 +78,7 @@ import Html exposing (Html, button, div, img, input, option, select, span, text,
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
+import TalkGraph
 import TalkTags
 import TalkTree
 
@@ -168,6 +173,12 @@ type Picker
     | PickerOpen Pick (List String) Int
 
 
+{-| 左の面: 台本を書く / ノードの図を見る。 -}
+type Pane
+    = ScriptPane
+    | GraphPane
+
+
 type alias Model =
     { files : List String
 
@@ -209,6 +220,7 @@ type alias Model =
 
     -- プレビューで値を変えた変数(名前 → 値の字。初めの値と同じなら持たない)
     , overrides : Dict String String
+    , pane : Pane
     }
 
 
@@ -234,6 +246,7 @@ init =
     , picker = PickerClosed
     , tree = TalkTree.empty
     , overrides = Dict.empty
+    , pane = ScriptPane
     }
 
 
@@ -252,6 +265,8 @@ type Msg
     | VarEdited String String
     | VarReset String
     | VarsResetAll
+    | PaneChosen Pane
+    | GraphNodePicked String
 
 
 type Out
@@ -395,7 +410,12 @@ update msg model =
                     ( model, OutNone )
 
         TagPickRequested key ->
-            ( openPicker key model, OutNone )
+            -- 図を見ている間は開かない(ダイアログは台本の面にある)
+            if model.pane == ScriptPane then
+                ( openPicker key model, OutNone )
+
+            else
+                ( model, OutNone )
 
         PickerKeyed key ->
             case model.picker of
@@ -455,6 +475,18 @@ update msg model =
 
         VarReset name ->
             askCursor True { model | overrides = Dict.remove name model.overrides }
+
+        PaneChosen pane ->
+            ( { model | pane = pane, picker = PickerClosed }, OutNone )
+
+        GraphNodePicked title ->
+            -- 図の箱を押した: そのノードの title: の行へカーソルを置いて台本に戻り、撮る
+            case model.nodes |> List.filter (\n -> n.title == title && n.file == model.path) |> List.head of
+                Just node ->
+                    askCursor False { model | cursor = node.line, pane = ScriptPane, picker = PickerClosed }
+
+                Nothing ->
+                    ( { model | pane = ScriptPane }, OutNone )
 
         VarsResetAll ->
             if Dict.isEmpty model.overrides then
@@ -849,8 +881,18 @@ view model =
         [ div [ HA.class "flex min-h-0 min-w-0 flex-1 flex-col gap-2" ]
             [ viewHead model
             , viewNodes model
-            , viewLineTags model
-            , viewEditor model
+            , case model.pane of
+                ScriptPane ->
+                    viewLineTags model
+
+                GraphPane ->
+                    text ""
+            , case model.pane of
+                ScriptPane ->
+                    viewEditor model
+
+                GraphPane ->
+                    viewGraph model
             , viewProblems model
             ]
         , div [ HA.class "flex min-h-0 w-[48%] flex-col gap-2" ]
@@ -975,6 +1017,44 @@ viewPicker model =
                 )
 
 
+{-| ノードの図(このファイルのノードの箱と矢印)。木がまだ無ければ案内だけ。 -}
+viewGraph : Model -> Html Msg
+viewGraph model =
+    let
+        graph =
+            TalkGraph.build model.path model.tree.nodes
+    in
+    div [ HA.class "talk-graph-pane relative min-h-0 flex-1 overflow-auto rounded-md border border-edge bg-well p-2" ]
+        [ if List.isEmpty graph.placed then
+            div [ HA.class "text-xs text-ink-faint" ] [ text "このファイルのノードがまだ組まれていません(保存すると dialogue.json が書かれ、図が出ます)" ]
+
+          else
+            TalkGraph.view
+                { here = targetAt model.path model.nodes model.cursor |> Maybe.map .node
+                , onPick = \node -> GraphNodePicked node.title
+                }
+                graph
+        , div [ HA.class "mt-1 text-[10px] text-ink-faint" ]
+            [ text "実線 = <<jump>> / 点線 = 選択肢の行き先 / ○ = 別のファイルのノード。箱を押すとその台本へ(並びはヘッダの position:、無ければ jump の段)" ]
+        ]
+
+
+viewPaneSwitch : Model -> Html Msg
+viewPaneSwitch model =
+    let
+        tab pane label =
+            button
+                [ HA.classList
+                    [ ( "talk-pane d-btn d-btn-xs", True )
+                    , ( "d-btn-active", model.pane == pane )
+                    ]
+                , HE.onClick (PaneChosen pane)
+                ]
+                [ text label ]
+    in
+    div [ HA.class "d-join" ] [ tab ScriptPane "台本", tab GraphPane "図" ]
+
+
 viewHead : Model -> Html Msg
 viewHead model =
     div [ HA.class "flex items-center gap-2" ]
@@ -988,6 +1068,7 @@ viewHead model =
                 , HE.onInput FilePicked
                 ]
                 (List.map (\f -> option [ HA.value f, HA.selected (f == model.path) ] [ text f ]) model.files)
+        , viewPaneSwitch model
         , if model.text /= model.saved then
             span [ HA.class "text-[11px] text-ink-faint" ] [ text "● 未保存" ]
 
