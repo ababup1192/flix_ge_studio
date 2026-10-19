@@ -31,7 +31,7 @@ mod Videos {
     pub def versionKey(name: String): List[Int32] =
         String.splitOn(substr = ".", name) |> List.map(part -> Int32.fromString(part) |> Option.getWithDefault(0))
 
-    /// 道具を試す順: Studio の engine → 置き場の engine を新しい版から。
+    /// 道具を試す順（ゲーム自身の bin/fge-go の後）: Studio の engine → 置き場の engine を新しい版から。
     // WhyNot: Studio の engine の道具だけに頼らない — Studio が同梱する engine はゲームの master の版に
     // そろえるので（README の「リリースの手順」）、ゲームより先に videos を持つ新しい engine が置き場に
     // あっても使えないままになる。判定は道具の版によらず同じ JSON の形。
@@ -162,8 +162,10 @@ mod Videos {
         let home = System.getProperty("user.home");
         let installed = EngineStore.versionsDir(home) |> listDirs |> List.filter(EngineStore.isVersionName)
             |> List.map(name -> EngineStore.versionDir(home, name));
-        let tools = toolCandidates(EngineHome.dir(), installed)
-            |> List.map(engine -> EngineUpdate.toolPath(engine, EngineTasks.isWindows()))
+        // ゲーム自身の bin/fge-go（ゲームの engine の版）を先に試す。
+        let own = EngineUpdate.toolPath(dir, EngineTasks.isWindows());
+        let tools = own :: (toolCandidates(EngineHome.dir(), installed)
+            |> List.map(engine -> EngineUpdate.toolPath(engine, EngineTasks.isWindows())))
             |> List.filter(tool -> new JFile(tool).canExecute());
         firstAnswer(dir, here, tools, "")
 
