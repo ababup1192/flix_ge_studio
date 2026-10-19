@@ -1038,11 +1038,12 @@ viewLineTags model =
                     [ text (String.fromInt model.cursor ++ " 行目" ++ (line.speaker |> Maybe.map (\s -> " · " ++ s) |> Maybe.withDefault "")) ]
                     :: List.map chip keys
                     ++ others
-                    ++ [ viewPicker model ]
                 )
 
 
-{-| 選ぶダイアログ(チップの下に開く小さな一覧)。 -}
+{-| 選ぶダイアログ(選んでいる行のすぐ下に開く小さな一覧。行そのものは隠さない)。
+台本の欄の中に置くので、欄を送ると行と一緒に動く。
+-}
 viewPicker : Model -> Html Msg
 viewPicker model =
     case model.picker of
@@ -1051,7 +1052,8 @@ viewPicker model =
 
         PickerOpen pick values at ->
             div
-                [ HA.class "talk-picker absolute left-0 top-full z-20 mt-1 flex min-w-48 flex-col gap-0.5 rounded-md border border-edge bg-raised p-1 shadow-lg"
+                [ HA.class "talk-picker absolute left-10 z-20 flex min-w-48 flex-col gap-0.5 rounded-md border border-edge bg-raised p-1 shadow-lg"
+                , HA.style "top" (String.fromInt (8 + lineHeight * pick.line + 2) ++ "px")
                 , HA.attribute "role" "listbox"
                 ]
                 (div [ HA.class "flex items-center gap-2 px-1.5 pb-1 text-[11px] text-ink-faint" ]
@@ -1362,6 +1364,7 @@ viewEditor model =
                                 [ text p.msg ]
                         )
                         marked
+                    ++ [ viewPicker model ]
                 )
             ]
         ]
