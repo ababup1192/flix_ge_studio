@@ -1,5 +1,13 @@
 # NOTES
 
+## 次やること（2026-10-19・studiotalk: 会話の画面とギャラリーの動画）
+
+1. 済み: ギャラリーの「動画」の面（`GET /videos` = 道具の `bin/fge videos status --json`・Range つきの `/videos/file`・
+   `/videos/rerun`）と「会話」のタブ（`/talk/*`・窓なしのゲームの世話係 `Headless`）。engine 0.49.0 の口に頼る
+2. engine-version は 0.46.0 のまま（ゲームの master にそろえる決まり）。動画の判定は「ゲームの bin/fge-go → Studio の engine →
+   置き場の新しい engine」の順で道具を試すので、0.49.0 を置き場に入れれば（engine の更新の帯）0.46 のゲームでも出る
+3. **人の目で確かめる**: .app で WKWebView が mp4 を再生できるか（dev の Chrome では 206 で再生・シークを確かめた）
+
 ## 次やること（2026-08-19・Play の JVM 旗）
 
 1. Play ボタン（Task.Debug）だけ `-XX:+UseZGC -Xmx2g` で起動するようにした
