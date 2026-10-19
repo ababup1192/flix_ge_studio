@@ -266,6 +266,9 @@ export function realApi(base: string): Api {
         case "talkRead":
           // 会話の画面で開くシナリオの中身(編集画面と同じ GET /file)
           return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
+        case "talkTree":
+          // 組んだ会話の木(dialogue.json。変数の一覧とノードの図)。中身は GET /file と同じ形
+          return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
         case "talkVocab":
           // 台本の語彙(vocab.json。表情・背景を選ぶダイアログの値)。中身は GET /file と同じ形
           return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
@@ -280,12 +283,18 @@ export function realApi(base: string): Api {
           // 窓なしのゲームで 1 枚。頼んだ場面を答えに添える(画面が古い答えを捨てる照合キー)。
           // 繋がらない・時間切れも投げずに ok:false で返す(投げると頼みが返らず「撮っています…」のまま)
           // restart:true は「もう一度起こす」(落ちた窓なしのゲームを起こし直してから頼む)
-          const { node, line, restart } = payload as { node: string; line: number; restart?: boolean };
+          // vars は変数の一覧で値を変えた物({名前: 値の字}。始まりの引数 $名前=値 で撮る)
+          const { node, line, restart, vars } = payload as {
+            node: string;
+            line: number;
+            restart?: boolean;
+            vars?: Record<string, string>;
+          };
           try {
             const res = await fetchWithin(`${base}/talk/shot`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ node, line, restart: restart === true }),
+              body: JSON.stringify({ node, line, restart: restart === true, vars: vars ?? {} }),
             }, SHOT_MS);
             const body = await res.json().catch(() => ({ ok: false, error: { message: `HTTP ${res.status}` } }));
             return { ...body, node, line };

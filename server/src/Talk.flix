@@ -44,6 +44,38 @@ mod Talk {
     /// 始まりの行（窓なしのゲームの flow・起動中のゲームの /start と同じ）。
     pub def startLine(node: String, line: Int32): String = "start talk node=${node} line=${line}"
 
+    /// 変数の値を決めて始める 1 行（engine 0.51 の始まり `talk node= line= $名前=値`。ゲームの始まり talk が
+    /// YarnStorage.withArgs で宣言の型に読む。宣言の無い名前・読めない値はゲームが理由つきで断る）。
+    pub def startLineWith(node: String, line: Int32, vars: List[(String, String)]): String =
+        vars |> List.foldLeft((acc, pair) -> {
+            let (name, value) = pair;
+            "${acc} ${dollar(name)}=${value}"
+        }, startLine(node, line))
+
+    /// 本文の vars（{名前: 値の字}）を始まりの引数に読む。名前は変数の名前の字・値は空白と改行を含まない字だけ
+    /// （flow の 1 行は空白で区切るので、空白を含む字は渡せない）。無ければ空。
+    pub def varsOf(vars: Map[String, Json]): Result[String, List[(String, String)]] =
+        Map.toList(vars) |> List.foldRight((pair, acc) -> forM (
+            soFar <- acc;
+            value <- {
+                let (name, json) = pair;
+                match JsonCodec.expectString(json) {
+                    case Some(_) if not isVarName(name) => Err("変数の名前に使えない字です: ${name}")
+                    case Some(text) if text == "" or String.exists(c -> Char.isWhitespace(c), text) =>
+                        Err("変数 ${dollar(name)} の値に空白は渡せません（プレビューの始まりは空白で区切るため）: '${text}'")
+                    case Some(text) => Ok(text)
+                    case None       => Err("変数 ${dollar(name)} の値は字で渡します")
+                }
+            }
+        ) yield (fst(pair), value) :: soFar, Ok(Nil))
+
+    /// $ を前に付けた変数の名前（台本と始まりの引数の書き方）。
+    def dollar(name: String): String = "$" + name
+
+    /// 変数の名前（$ の後ろ）に使える字か。
+    pub def isVarName(name: String): Bool =
+        name != "" and String.forAll(c -> Char.isLetterOrDigit(c) or c == '_', name)
+
     /// 起動中のゲームへの /start の 1 行。
     pub def gotoRequest(node: String, line: Int32): String = "POST /start?name=talk&node=${node}&line=${line}"
 
@@ -125,19 +157,29 @@ mod Talk {
     ///   "stalled"  … 起こしてから長く ready にならない（頼み直しは続ける。log に末尾）
     ///   "failed"   … ready にならずに落ちた（続けては起こさない。log に末尾。restart:true で起こし直す）
     /// body の restart:true は「もう一度起こす」のボタン（落ちた・長く起きない 1 本だけを起こし直す）。
+    /// body の vars（{名前: 値の字}）は変数の値を決めて撮る（変数の一覧で値を変えた時。engine 0.51 の始まりの引数）。
     pub def shot(headless: Headless.State, game: Game.Runtime, dir: String, body: String): (Int32, Json) \ IO =
         let (node, line) = targetOf(body);
         let restart = DocJson.parse(body) |> Option.flatMap(JsonCodec.expectObject)
             |> Option.exists(obj -> JsonCodec.boolOr("restart", false, obj));
+        let vars = DocJson.parse(body) |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.flatMap(Map.get("vars")) |> Option.flatMap(JsonCodec.expectObject)
+            |> Option.getWithDefault(Map.empty()) |> varsOf;
         if (not isNodeName(node) or line < 1) (400, failJson("node（ノードの名前）と line（1 以上）が要ります"))
-        else match (if (restart) Headless.restart(headless, game, dir) else Headless.ensure(headless, game, dir)) {
+        else match vars {
+            case Err(why) => (200, failJson(why))
+            case Ok(args) => shotWith(headless, game, dir, node, line, args, restart)
+        }
+
+    def shotWith(headless: Headless.State, game: Game.Runtime, dir: String, node: String, line: Int32, args: List[(String, String)], restart: Bool): (Int32, Json) \ IO =
+        match (if (restart) Headless.restart(headless, game, dir) else Headless.ensure(headless, game, dir)) {
             case Headless.Readiness.Unsupported(why) => (200, failJson(why))
             case Headless.Readiness.Booting(stage, secs, failures) => (200, bootingJson(stage, secs, failures))
             case Headless.Readiness.Starting(why)    => (200, waitingJson("starting", why, Nil))
             case Headless.Readiness.Stalled(why, log) => (200, waitingJson("stalled", why, log))
             case Headless.Readiness.Failed(why, log)  => (200, waitingJson("failed", why, log))
             case Headless.Readiness.Ready(port) =>
-                match Runner.requestGameWithin(port, shotRequest(), (shotWaitSecs() + 5) * 1000, startLine(node, line)) {
+                match Runner.requestGameWithin(port, shotRequest(), (shotWaitSecs() + 5) * 1000, startLineWith(node, line, args)) {
                     case Runner.GameReply.Answered(raw) => match shotOutcome(Runner.bodyOfHttpText(raw)) {
                         case Ok(png) => match readBase64("${dir}/${png}") {
                             case Some(data) => (200, JObject(Map#{

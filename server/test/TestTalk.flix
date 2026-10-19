@@ -52,4 +52,19 @@ mod TestTalk {
             expected = (Some(JString("starting")), Some(JString("jar")),
                         Some(JNumber(JsonCodec.intToBd(37)))),
             fieldsOf(Talk.bootingJson(Headless.BootStage.BuildingJar, 37i64, 0)))
+
+    /// 変数の値を決めて撮る時は、始まりの行の後ろに $名前=値 を並べる（engine 0.51 の始まりの引数）。
+    @Test
+    def testStartLineWithVars(): Unit \ Assert =
+        Assert.assertEq(expected = ("start talk node=op line=3 $gold=5 $met=true", "start talk node=op line=3"),
+            (Talk.startLineWith("op", 3, ("gold", "5") :: ("met", "true") :: Nil), Talk.startLineWith("op", 3, Nil)))
+
+    /// 本文の vars は字の値だけ受け、空白を含む字・変数の名前でない字は理由つきで断る（始まりの 1 行は空白で区切る）。
+    @Test
+    def testVarsOfRefusesSpacesAndBadNames(): Unit \ Assert =
+        let ok = Talk.varsOf(Map#{"gold" => JString("5")});
+        let spaced = Talk.varsOf(Map#{"name" => JString("a b")});
+        let badName = Talk.varsOf(Map#{"a b" => JString("1")});
+        Assert.assertEq(expected = (Ok(("gold", "5") :: Nil), false, false),
+            (ok, Result.isOk(spaced), Result.isOk(badName)))
 }

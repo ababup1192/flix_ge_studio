@@ -22,6 +22,7 @@ module TalkView exposing
     , gotFiles
     , gotGoto
     , gotShot
+    , gotTree
     , gotVocab
     , init
     , lineAt
@@ -30,6 +31,7 @@ module TalkView exposing
     , targetAt
     , update
     , view
+    , varsOf
     , vocabPathOf
     )
 
@@ -58,17 +60,22 @@ ok:false で返り、前の絵を Held で出したまま誤りの行を示す�
 選ぶダイアログ(Picker。開閉と選択中を 1 つで持つ)からも書ける。値は台本の語彙(vocab.json)から取り、
 選ぶとその行のタグを書き換えて保存し、撮り直す。打って書くやり方はそのまま。
 
+変数の一覧は組んだ木(dialogue.json)の `<<declare>>` を並べ、値を変えるとその値で撮り直す
+(engine 0.51 の始まりの引数 `$名前=値`。変えた値は overrides に持ち、初めの値に戻すと消える)。
+
 「この行へ飛ばす」だけが起動中のゲームを動かす(遊んでいる World をその行の場面へ差し替える)。
 
 サーバ往復は Main の仕事(Out で頼む)。
 
 -}
 
-import Html exposing (Html, button, div, img, option, select, span, text, textarea)
+import Dict exposing (Dict)
+import Html exposing (Html, button, div, img, input, option, select, span, text, textarea)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
 import TalkTags
+import TalkTree
 
 
 {-| 撮る場面: ノードと .yarn の行(1 始まり)。 -}
@@ -196,6 +203,12 @@ type alias Model =
     -- 台本の語彙(.yarn と同じフォルダの vocab.json。まだ読めていなければ Nothing)
     , vocab : Maybe TalkTags.Vocab
     , picker : Picker
+
+    -- 組んだ木(dialogue.json。変数の一覧とノードの図の元)
+    , tree : TalkTree.Tree
+
+    -- プレビューで値を変えた変数(名前 → 値の字。初めの値と同じなら持たない)
+    , overrides : Dict String String
     }
 
 
@@ -219,6 +232,8 @@ init =
     , saving = Nothing
     , vocab = Nothing
     , picker = PickerClosed
+    , tree = TalkTree.empty
+    , overrides = Dict.empty
     }
 
 
@@ -234,6 +249,9 @@ type Msg
     | PickerKeyed String
     | PickerChosen String
     | PickerDismissed
+    | VarEdited String String
+    | VarReset String
+    | VarsResetAll
 
 
 type Out
@@ -417,6 +435,34 @@ update msg model =
         PickerDismissed ->
             ( { model | picker = PickerClosed }, OutNone )
 
+        VarEdited name value ->
+            let
+                initial =
+                    model.tree.variables
+                        |> List.filter (\v -> v.name == name)
+                        |> List.head
+                        |> Maybe.map (.value >> TalkTree.valueText)
+            in
+            askCursor True
+                { model
+                    | overrides =
+                        if Just value == initial then
+                            Dict.remove name model.overrides
+
+                        else
+                            Dict.insert name value model.overrides
+                }
+
+        VarReset name ->
+            askCursor True { model | overrides = Dict.remove name model.overrides }
+
+        VarsResetAll ->
+            if Dict.isEmpty model.overrides then
+                ( model, OutNone )
+
+            else
+                askCursor True { model | overrides = Dict.empty }
+
 
 {-| カーソルの行のタグ key を選ぶダイアログを開く。開けない時は理由を status に出す。
 選択中は今の値(無ければ先頭)。
@@ -469,6 +515,27 @@ choose pick value model =
 
     else
         update SaveClicked m1
+
+
+{-| 撮る時に渡す変数の値(値を変えた物だけ。宣言から消えた名前は渡さない — ゲームが断るため)。 -}
+varsOf : Model -> List ( String, String )
+varsOf model =
+    model.overrides
+        |> Dict.toList
+        |> List.filter (\( name, _ ) -> List.any (\v -> v.name == name) model.tree.variables)
+
+
+{-| 組んだ木が届いた(読めなければ空)。宣言から消えた変数の値は捨てる。 -}
+gotTree : Result String TalkTree.Tree -> Model -> Model
+gotTree result model =
+    let
+        tree =
+            Result.withDefault TalkTree.empty result
+    in
+    { model
+        | tree = tree
+        , overrides = Dict.filter (\name _ -> List.any (\v -> v.name == name) tree.variables) model.overrides
+    }
 
 
 {-| 語彙が届いた(読めなければ Nothing のまま。ダイアログを開く時に理由を出す)。 -}
@@ -1157,8 +1224,71 @@ viewPreview model =
                         , picture shot True
                         ]
         , viewHeadlessTrouble model
+        , viewVariables model
         , div [ HA.class "text-[11px] text-ink-faint" ]
             [ text "右の絵はゲームが窓なしで描いた本物の画面です(起動中のゲームは動かしません)。保存すると撮り直します。" ]
+        ]
+
+
+{-| 変数の一覧(`<<declare>>` の名前・初めの値・プレビューの値)。値を変えるとその値で撮り直す。 -}
+viewVariables : Model -> Html Msg
+viewVariables model =
+    if List.isEmpty model.tree.variables then
+        text ""
+
+    else
+        div [ HA.class "talk-vars flex flex-col gap-1" ]
+            [ div [ HA.class "flex items-center gap-2" ]
+                [ span [ HA.class "text-xs font-semibold text-ink" ] [ text "変数" ]
+                , span [ HA.class "text-[11px] text-ink-faint" ] [ text "値を変えると、その値で撮り直します(台本は変えません)" ]
+                , if Dict.isEmpty model.overrides then
+                    text ""
+
+                  else
+                    button [ HA.class "talk-vars-reset d-btn d-btn-ghost d-btn-xs ml-auto", HE.onClick VarsResetAll ] [ text "全部を初めの値に" ]
+                ]
+            , Html.table [ HA.class "w-full text-[11px]" ]
+                [ Html.tbody []
+                    (List.map (viewVariable model) model.tree.variables)
+                ]
+            ]
+
+
+viewVariable : Model -> TalkTree.Variable -> Html Msg
+viewVariable model var =
+    let
+        initial =
+            TalkTree.valueText var.value
+
+        current =
+            Dict.get var.name model.overrides |> Maybe.withDefault initial
+
+        changed =
+            Dict.member var.name model.overrides
+
+        field =
+            case var.value of
+                TalkTree.Flag _ ->
+                    select [ HA.class "talk-var d-select d-select-xs font-mono", HE.onInput (VarEdited var.name) ]
+                        (List.map (\v -> option [ HA.value v, HA.selected (v == current) ] [ text v ]) [ "true", "false" ])
+
+                TalkTree.Number _ ->
+                    input [ HA.class "talk-var d-input d-input-xs w-24 font-mono", HA.type_ "number", HA.value current, HE.onInput (VarEdited var.name) ] []
+
+                TalkTree.Text _ ->
+                    input [ HA.class "talk-var d-input d-input-xs w-40 font-mono", HA.value current, HE.onInput (VarEdited var.name) ] []
+    in
+    Html.tr [ HA.classList [ ( "bg-accent/10", changed ) ] ]
+        [ Html.td [ HA.class "py-0.5 pr-2 font-mono text-ink", HA.title (var.file ++ ":" ++ String.fromInt var.line) ] [ text ("$" ++ var.name) ]
+        , Html.td [ HA.class "py-0.5 pr-2 font-mono text-ink-faint" ] [ text ("初め " ++ initial) ]
+        , Html.td [ HA.class "py-0.5 pr-2" ] [ field ]
+        , Html.td [ HA.class "py-0.5" ]
+            [ if changed then
+                button [ HA.class "d-btn d-btn-ghost d-btn-xs", HA.title "初めの値に戻す", HE.onClick (VarReset var.name) ] [ text "↺" ]
+
+              else
+                text ""
+            ]
         ]
 
 

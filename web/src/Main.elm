@@ -35,6 +35,7 @@ import FileVerbs
 import FormHelp
 import GalleryView
 import TalkTags
+import TalkTree
 import TalkView
 import VideoView
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
@@ -6700,14 +6701,31 @@ handleOkByKind env model =
             , Effect.none
             )
 
+        "talkTree" ->
+            ( { model
+                | talk =
+                    TalkView.gotTree
+                        (D.decodeValue (D.field "content" D.string) env.body
+                            |> Result.andThen (D.decodeString TalkTree.decoder)
+                            |> Result.mapError D.errorToString
+                        )
+                        model.talk
+              }
+            , Effect.none
+            )
+
         "talkBuild" ->
             case D.decodeValue TalkView.buildDecoder env.body of
                 Ok report ->
                     let
                         ( talk, out ) =
                             TalkView.gotBuild report model.talk
+
+                        ( m1, fx ) =
+                            runTalkOut out { model | talk = talk }
                     in
-                    runTalkOut out { model | talk = talk }
+                    -- 組み直した木(変数の一覧・ノードの図)も読み直す
+                    ( m1, Effect.batch [ fx, Effect.SendApi { id = 0, kind = "talkTree", payload = E.object [ ( "path", E.string (TalkTree.treePathOf model.talk.path) ) ] } ] )
 
                 Err _ ->
                     ( model, Effect.none )
@@ -8486,6 +8504,10 @@ handleErrByKind env message model =
         "talkRead" ->
             ( { model | talk = TalkView.gotGoto (Err ("開けませんでした — " ++ message)) model.talk }, Effect.none )
 
+        "talkTree" ->
+            -- 木がまだ無い(一度も組んでいない)。変数の一覧とノードの図を出さないだけ
+            ( { model | talk = TalkView.gotTree (Err message) model.talk }, Effect.none )
+
         "talkVocab" ->
             -- 語彙が無い(ゲームが make talk-vocab を書いていない)。ダイアログを開く時に理由を出す
             ( { model | talk = TalkView.gotVocab (Err message) model.talk }, Effect.none )
@@ -8715,6 +8737,10 @@ runTalkOut out model =
 
         target t =
             [ ( "node", E.string t.node ), ( "line", E.int t.line ) ]
+
+        -- 変数の一覧で値を変えた物(始まりの引数 $名前=値 で撮る)
+        vars =
+            ( "vars", E.object (TalkView.varsOf model.talk |> List.map (\( name, value ) -> ( name, E.string value ))) )
     in
     case out of
         TalkView.OutNone ->
@@ -8726,6 +8752,7 @@ runTalkOut out model =
             , Effect.batch
                 [ send "talkRead" [ ( "path", E.string path ) ]
                 , send "talkVocab" [ ( "path", E.string (TalkView.vocabPathOf path) ) ]
+                , send "talkTree" [ ( "path", E.string (TalkTree.treePathOf path) ) ]
                 ]
             )
 
@@ -8744,11 +8771,11 @@ runTalkOut out model =
             )
 
         TalkView.OutShot t ->
-            ( model, send "talkShot" (target t) )
+            ( model, send "talkShot" (vars :: target t) )
 
         TalkView.OutRestart t ->
             -- 落ちた・長く起きない窓なしのゲームを起こし直してから頼む(答えは talkShot と同じ形)
-            ( model, send "talkShot" (( "restart", E.bool True ) :: target t) )
+            ( model, send "talkShot" (( "restart", E.bool True ) :: vars :: target t) )
 
         TalkView.OutGoto t ->
             ( model, send "talkGoto" (target t) )

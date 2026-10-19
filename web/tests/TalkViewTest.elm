@@ -12,7 +12,9 @@ module TalkViewTest exposing (suite)
 import Expect
 import Test exposing (Test, describe, test)
 import Json.Decode as D
+import Dict
 import TalkTags
+import TalkTree
 import TalkView exposing (Boot(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
 
 
@@ -143,10 +145,56 @@ pickerSuite =
         ]
 
 
+{-| 変数が 2 つ宣言された木が届いた所(カーソルは clock の 40 行目・何も頼んでいない)。 -}
+withVars : TalkView.Model
+withVars =
+    TalkView.gotTree
+        (Ok
+            { variables =
+                [ { name = "gold", value = TalkTree.Number 0, file = path, line = 2 }
+                , { name = "met", value = TalkTree.Flag False, file = path, line = 3 }
+                ]
+            , nodes = []
+            }
+        )
+        { opened | cursor = 40 }
+
+
+varsSuite : Test
+varsSuite =
+    describe "変数の一覧"
+        [ test "値を変えると覚えて、今の行を撮り直す" <|
+            \_ ->
+                TalkView.update (TalkView.VarEdited "gold" "5") withVars
+                    |> Tuple.mapFirst TalkView.varsOf
+                    |> Expect.equal ( [ ( "gold", "5" ) ], OutShot (clock 40) )
+        , test "初めの値に戻したら持たない(渡さない)" <|
+            \_ ->
+                press [ TalkView.VarEdited "met" "true", TalkView.VarEdited "met" "false" ] withVars
+                    |> Tuple.first
+                    |> TalkView.varsOf
+                    |> Expect.equal []
+        , test "全部を初めの値に戻す(変えていなければ撮り直さない)" <|
+            \_ ->
+                ( press [ TalkView.VarEdited "gold" "5", TalkView.VarsResetAll ] withVars |> Tuple.first |> .overrides |> Dict.isEmpty
+                , TalkView.update TalkView.VarsResetAll withVars |> Tuple.second
+                )
+                    |> Expect.equal ( True, OutNone )
+        , test "組み直して宣言から消えた変数の値は捨てる" <|
+            \_ ->
+                press [ TalkView.VarEdited "gold" "5" ] withVars
+                    |> Tuple.first
+                    |> TalkView.gotTree (Ok { variables = [], nodes = [] })
+                    |> TalkView.varsOf
+                    |> Expect.equal []
+        ]
+
+
 suite : Test
 suite =
     describe "TalkView"
         [ pickerSuite
+        , varsSuite
         , test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
             \_ ->
                 ( TalkView.targetAt path nodes 40, TalkView.targetAt path nodes 7, TalkView.targetAt path nodes 3 )
