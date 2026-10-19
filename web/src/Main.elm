@@ -42,6 +42,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Html.Keyed
 import Html.Lazy as HL
+import JarBuild
 import Journey
 import Json.Decode as D
 import Json.Encode as E
@@ -494,6 +495,9 @@ type alias Model =
     -- 上部ナビ。ホームの中身は Journey が持つ(Main は配線だけ)
     , tab : Tab
     , journey : Journey.Model
+
+    -- 共通 jar の様子(作っている間は 3 秒・平時は 15 秒おきに聞き直し、上の帯に出す)
+    , jarBuild : JarBuild.JarBuild
 
     -- アノテーションチケット(ゲーム内 F8 で切ったアノテーションに一言を添えて AI へ運ぶウィンドウ)
     , tickets : Tickets.Model
@@ -975,6 +979,7 @@ init _ =
         { screen = Booting
         , tab = HomeTab
         , journey = Journey.init
+        , jarBuild = JarBuild.JarUnknown
         , tickets = Tickets.init
         , changesBaking = False
         , changesAvailable = True
@@ -1320,6 +1325,7 @@ type Msg
     | AtelierOverlayTick
     | AtelierBakePollTick
     | LaunchPollTick
+    | JarPollTick
     | RunnerPollTick
     | MiniPlayerToggled
     | MiniSceneClicked (Maybe String)
@@ -1646,6 +1652,10 @@ update msg model =
             -- サーバがプレビューを焼いている間だけ購読が生きている(Atelier.isBaking
             -- が判定)。baking=false が届いた取得がそのまま「最終の取り直し」になる
             ( model, requestInfo "atelierCandidates" )
+
+        JarPollTick ->
+            -- 開いている間ずっと(作っている間は 3 秒・平時は 15 秒。subscriptions が判定)
+            ( model, requestInfo "jarStatus" )
 
         LaunchPollTick ->
             -- ゲーム起動待ちの間だけ購読が生きている(isLaunchPolling が判定)。
@@ -6453,6 +6463,11 @@ handleOkByKind env model =
             , requestInfo "engineVersion"
             )
 
+        "jarStatus" ->
+            ( { model | jarBuild = D.decodeValue JarBuild.decoder env.body |> Result.withDefault JarBuild.JarUnknown }
+            , Effect.none
+            )
+
         "journeyState" ->
             case D.decodeValue Journey.stateDecoder env.body of
                 Ok state ->
@@ -7054,6 +7069,7 @@ handleOkByKind env model =
                                     | screen = Editing
                                     , tab = HomeTab
                                     , journey = Journey.init
+                                    , jarBuild = JarBuild.JarUnknown
 
                                     -- 前のプロジェクトのチケットを持ち越さない(混線防止)
                                     , tickets = Tickets.init
@@ -8391,6 +8407,10 @@ handleErrByKind env message model =
             -- この口を持たないサーバ(404 等)。バージョンを出さないだけ(fail-open)
             ( model, Effect.none )
 
+        "jarStatus" ->
+            -- 口を持たないサーバ。帯に何も出さない(聞き直しも止まる)
+            ( { model | jarBuild = JarBuild.JarUnknown }, Effect.none )
+
         "engineVersionOnly" ->
             ( model, Effect.none )
 
@@ -8973,6 +8993,7 @@ viewTopbarRow model extras =
             , viewNavTabs model.tab
             ]
          , viewPlayButton model
+         , viewJarBuild model
          , div [ HA.class "flex flex-1 items-center justify-end gap-2" ]
             [ viewEngineVersion model
             , EngineUpdate.view
@@ -9004,6 +9025,28 @@ viewEngineVersion model =
 
         Nothing ->
             text ""
+
+
+{-| 共通 jar を作っている・作れなかった時の一言(プレイの隣。押した時に待つ理由が見える)。 -}
+viewJarBuild : Model -> Html Msg
+viewJarBuild model =
+    case JarBuild.label model.jarBuild of
+        "" ->
+            text ""
+
+        line ->
+            span
+                [ HA.class "jar-build shrink-0 text-[11px] text-ink-faint"
+                , HA.title
+                    (case model.jarBuild of
+                        JarBuild.JarFailed log ->
+                            String.join "\n" ("debug/jar-build.log の末尾:" :: log)
+
+                        _ ->
+                            "プレイ・描き出し・会話のプレビューが使う jar を裏で作っています。押した時は作り終えるのを待ってから流れます"
+                    )
+                ]
+                [ text line ]
 
 
 {-| topbar のプレイ/停止 (Unity のセンター Play と同じ置き場・Godot と同じ語彙)。
@@ -15771,6 +15814,22 @@ subscriptions model =
                                 D.fail "他のキーは素通し"
                         )
                 )
+
+          else
+            Sub.none
+
+        -- 共通 jar の様子を追う。作っている間は 3 秒・平時は 15 秒(保存や Studio の外の直しで
+        -- サーバが作り直し始めたのを拾う。聞くたびにサーバは要れば作り始める)。
+        -- WhyNot: 起動・保存の応答の封筒に足さない — 各フロー試験がその並びを固定している
+        , if model.screen == Editing then
+            Time.every
+                (if JarBuild.isBuilding model.jarBuild then
+                    3000
+
+                 else
+                    15000
+                )
+                (\_ -> JarPollTick)
 
           else
             Sub.none

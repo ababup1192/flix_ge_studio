@@ -110,6 +110,9 @@ export function realApi(base: string): Api {
           // いま使っている engine のバージョン。プロジェクト未選択でも返る。
           // Only は差し替えの後の引き直し(帯を出し直さないための別名)。
           return getJson(`${base}/engine/version`);
+        case "jarStatus":
+          // 共通 jar の様子(作っている・済んだ・作れなかった)。聞くたびにサーバが要れば作り始める
+          return getJson(`${base}/jar/status`);
         case "engineUpdateCheck":
           // 新しい engine が出ているか。サーバが GitHub を叩くので数秒かかる
           return getJson(`${base}/engine/update/check`);

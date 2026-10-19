@@ -79,6 +79,8 @@ mod Editor {
         let bakeHost = BakeHost.make();
         // 会話のプレビューに使う窓なしのゲーム（プロジェクトごとに 1 本・頼まれた時だけ起こす）
         let headless = Headless.make();
+        // 共通 jar を裏で先に作っておく係（開いた時・src を保存した後。プレイ・描き出し・会話のプレビューが使い回す）
+        let sharedJar = SharedJar.make();
         // 焼き係を「起こしている最中」の覚え書き(取り次ぎの並行スレッドが重ねて起こさないため)。
         let launchGuard = BakeProxy.makeGuard();
         let webRoot = webRootFromEnv();
@@ -87,7 +89,7 @@ mod Editor {
             def handle(_this: HttpHandler, exchange: HttpExchange): Unit \ IO =
                 // 想定外の失敗でもサーバは落とさず、500 の JSON で理由を返して次のリクエストを受け続ける。
                 try {
-                    dispatch(selection, caches, runner, game, scaffold, engineUpdate, changes, bakeHost, headless, launchGuard, webRoot, exchange)
+                    dispatch(selection, caches, runner, game, scaffold, engineUpdate, changes, bakeHost, headless, sharedJar, launchGuard, webRoot, exchange)
                 } catch {
                     // Throwable で受ける — Flix の bug!/unreachable は Exception でなく Error で飛ぶ
                     // (例: 依存側 ProjectLoader が欠けたキーで bug! する)。取りこぼすと応答が
@@ -131,7 +133,7 @@ mod Editor {
 
     /// メソッドとパスで各エンドポイントへ振り分ける。API のパスが先に並び、
     /// どれにも当たらない GET はビルド済みエディタ画面の静的ファイルとして探す。
-    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, engineUpdate: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, headless: Headless.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
+    def dispatch(selection: Projects.Selection, caches: Caches.Caches, runner: Runner.State, game: Game.Runtime, scaffold: Runner.State, engineUpdate: Runner.State, changes: Changes.State, bakeHost: BakeHost.State, headless: Headless.State, sharedJar: SharedJar.State, launchGuard: BakeProxy.Guard, webRoot: Option[String], exchange: HttpExchange): Unit \ IO =
         let methodName = exchange.getRequestMethod();
         let uri = exchange.getRequestURI();
         let path = uri.getPath();
@@ -194,7 +196,7 @@ mod Editor {
                 sendJson(status, json, exchange)
             })
             case ("GET", "/file")      => withProject(selection, exchange, dir -> handleReadFile(dir, params, exchange))
-            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, game, readBody(exchange), exchange))
+            case ("PUT", "/file")      => withProject(selection, exchange, dir -> handleWriteFile(dir, changes, runner, game, sharedJar, readBody(exchange), exchange))
             // ファイルそのものへの動詞 (新規 / 複製 / 名前を変える / 消す)。
             // 中身の編集 (PUT /file) と分けてある — 触る物が「中身」か「入れ物」かで
             // 失敗の意味も守り (上書きしない・外へ出さない) も違うため。
@@ -324,9 +326,14 @@ mod Editor {
             })
             // 旅路を見るたびに検査が 1 目盛り進む (自動焼き・自動追随は Changes の仕事)。
             case ("GET", "/journey/state") => withProject(selection, exchange, dir -> {
+                // 開いた時（ホームが最初に頼む）に共通 jar を裏で作り始める。以後は 60 秒おきに確かめ直す
+                discard SharedJar.look(sharedJar, dir);
                 discard Changes.pump(changes, runner, game, dir);
                 sendJson(200, NextStep.stateJson(game, dir, Changes.unseenCount(changes, dir)), exchange)
             })
+            // 共通 jar の様子（作っている間は画面が 3 秒おきに頼む）。様子見で要れば作り始める
+            case ("GET", "/jar/status") => withProject(selection, exchange, dir ->
+                sendJson(200, SharedJar.look(sharedJar, dir), exchange))
             case ("GET", "/journey/changes") => withProject(selection, exchange, dir ->
                 sendJson(200, Changes.pump(changes, runner, game, dir), exchange))
             case ("POST", "/journey/changes/seen") => withProject(selection, exchange, dir -> {
@@ -840,7 +847,7 @@ mod Editor {
     /// 見た目に効き得るアセットの保存は、成功した瞬間に検査 (Changes.pump) を蹴る —
     /// 次のポーリング (約8秒) を待たずに焼きが始まる。焼き自体は裏で走るので、
     /// この応答が焼きの完了を待つことはない。
-    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, game: Game.Runtime, bodyText: String, exchange: HttpExchange): Unit \ IO =
+    def handleWriteFile(dir: String, changes: Changes.State, runner: Runner.State, game: Game.Runtime, sharedJar: SharedJar.State, bodyText: String, exchange: HttpExchange): Unit \ IO =
         let parsed = DocJson.parse(bodyText) |> Option.flatMap(JsonCodec.expectObject);
         let fields = parsed
             |> Option.flatMap(obj -> forM (
@@ -867,6 +874,8 @@ mod Editor {
                 else match FileIndex.writeInside(str = content, dir, relPath) {
                     case Err(message) => sendJson(400, errorJson(message), exchange)
                     case Ok(_)        => {
+                        // src などを直したら共通 jar を裏で作り直す（作っている最中なら、済んだ後にもう 1 回）
+                        SharedJar.saved(sharedJar, dir, relPath);
                         // fail-open: 検査の起動失敗は保存の失敗ではない — 応答は保存成功のまま返す。
                         // baking は「検査を蹴れたか」— web はこれを見てスピナーを即出す
                         // (次のポーリングを待つ8秒の気づき遅れをなくす)。

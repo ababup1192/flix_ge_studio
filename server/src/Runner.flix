@@ -343,8 +343,11 @@ mod Runner {
 
     /// タスクを 1 プロセス走らせ、出力を 1 行ずつログへ流し、終了コードを返す
     /// (走行権や終了記録はいじらない — 呼び手が束ねる)。
+    /// 共通 jar で流せる仕事（engine の headless-run に作るだけの口がある版）は headless-run で流す
+    /// （jar が古ければ作り終えるのを待ってから。SharedJar）。流せなければ今までどおり flix run。
     def runProcess(state: State, dir: String, exec: EngineTasks.Exec, task: EngineTasks.Task, envVars: List[(String, String)], onStart: Process -> Unit \ IO): Int32 \ IO =
-        let argList = EngineTasks.argv(exec, EngineTasks.isMac(), task);
+        let viaJar = SharedJar.argvFor(task);
+        let argList = viaJar |> Option.getWithDefault(EngineTasks.argv(exec, EngineTasks.isMac(), task));
         // 起動コマンドはログにも残す — 遠くの機械 (特に Windows) で「どの java が
         // どの旗で走ったか」を、ログを見るだけで答え合わせできるように。
         appendLine(state, "[runner] 起動: ${String.intercalate(" ", argList)}");
@@ -356,7 +359,11 @@ mod Runner {
         let env = pb.environment();
         discard env.remove("DEVELOPER_DIR");
         discard env.remove("SDKROOT");
-        foreach (envVar <- EngineTasks.envOf(task) ::: envVars) {
+        let jarEnv = match viaJar {
+            case Some(_) => SharedJar.envFor(exec#javaExe, EngineTasks.isMac(), task)
+            case None    => Nil
+        };
+        foreach (envVar <- EngineTasks.envOf(task) ::: jarEnv ::: envVars) {
             let (name, value) = envVar;
             discard env.put(name, value)
         };
