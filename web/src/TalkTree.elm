@@ -28,7 +28,7 @@ type Value
     | Text String
 
 
-{-| `<<declare $名前 = 初めの値>>` の 1 つ。 -}
+{-| `<<declare $名前 = 初めの値>>` の 1 つ(name は $ から書く: "$gold"。始まりの引数もこの名前で渡す)。 -}
 type alias Variable =
     { name : String, value : Value, file : String, line : Int }
 

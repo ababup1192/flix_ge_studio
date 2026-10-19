@@ -57,14 +57,14 @@ mod TestTalk {
     @Test
     def testStartLineWithVars(): Unit \ Assert =
         Assert.assertEq(expected = ("start talk node=op line=3 $gold=5 $met=true", "start talk node=op line=3"),
-            (Talk.startLineWith("op", 3, ("gold", "5") :: ("met", "true") :: Nil), Talk.startLineWith("op", 3, Nil)))
+            (Talk.startLineWith("op", 3, ("$gold", "5") :: ("$met", "true") :: Nil), Talk.startLineWith("op", 3, Nil)))
 
-    /// 本文の vars は字の値だけ受け、空白を含む字・変数の名前でない字は理由つきで断る（始まりの 1 行は空白で区切る）。
+    /// 本文の vars は字の値だけ受け、空白を含む字・$ から書かない名前は理由つきで断る（始まりの 1 行は空白で区切る）。
     @Test
     def testVarsOfRefusesSpacesAndBadNames(): Unit \ Assert =
-        let ok = Talk.varsOf(Map#{"gold" => JString("5")});
-        let spaced = Talk.varsOf(Map#{"name" => JString("a b")});
-        let badName = Talk.varsOf(Map#{"a b" => JString("1")});
-        Assert.assertEq(expected = (Ok(("gold", "5") :: Nil), false, false),
+        let ok = Talk.varsOf(Map#{"$gold" => JString("5")});
+        let spaced = Talk.varsOf(Map#{"$name" => JString("a b")});
+        let badName = Talk.varsOf(Map#{"gold" => JString("1")});
+        Assert.assertEq(expected = (Ok(("$gold", "5") :: Nil), false, false),
             (ok, Result.isOk(spaced), Result.isOk(badName)))
 }

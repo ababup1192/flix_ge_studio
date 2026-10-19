@@ -1360,7 +1360,7 @@ viewVariable model var =
                     input [ HA.class "talk-var d-input d-input-xs w-40 font-mono", HA.value current, HE.onInput (VarEdited var.name) ] []
     in
     Html.tr [ HA.classList [ ( "bg-accent/10", changed ) ] ]
-        [ Html.td [ HA.class "py-0.5 pr-2 font-mono text-ink", HA.title (var.file ++ ":" ++ String.fromInt var.line) ] [ text ("$" ++ var.name) ]
+        [ Html.td [ HA.class "py-0.5 pr-2 font-mono text-ink", HA.title (var.file ++ ":" ++ String.fromInt var.line) ] [ text var.name ]
         , Html.td [ HA.class "py-0.5 pr-2 font-mono text-ink-faint" ] [ text ("初め " ++ initial) ]
         , Html.td [ HA.class "py-0.5 pr-2" ] [ field ]
         , Html.td [ HA.class "py-0.5" ]

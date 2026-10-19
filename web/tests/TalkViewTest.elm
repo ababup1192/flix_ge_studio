@@ -151,8 +151,8 @@ withVars =
     TalkView.gotTree
         (Ok
             { variables =
-                [ { name = "gold", value = TalkTree.Number 0, file = path, line = 2 }
-                , { name = "met", value = TalkTree.Flag False, file = path, line = 3 }
+                [ { name = "$gold", value = TalkTree.Number 0, file = path, line = 2 }
+                , { name = "$met", value = TalkTree.Flag False, file = path, line = 3 }
                 ]
             , nodes = []
             }
@@ -165,24 +165,24 @@ varsSuite =
     describe "変数の一覧"
         [ test "値を変えると覚えて、今の行を撮り直す" <|
             \_ ->
-                TalkView.update (TalkView.VarEdited "gold" "5") withVars
+                TalkView.update (TalkView.VarEdited "$gold" "5") withVars
                     |> Tuple.mapFirst TalkView.varsOf
-                    |> Expect.equal ( [ ( "gold", "5" ) ], OutShot (clock 40) )
+                    |> Expect.equal ( [ ( "$gold", "5" ) ], OutShot (clock 40) )
         , test "初めの値に戻したら持たない(渡さない)" <|
             \_ ->
-                press [ TalkView.VarEdited "met" "true", TalkView.VarEdited "met" "false" ] withVars
+                press [ TalkView.VarEdited "$met" "true", TalkView.VarEdited "$met" "false" ] withVars
                     |> Tuple.first
                     |> TalkView.varsOf
                     |> Expect.equal []
         , test "全部を初めの値に戻す(変えていなければ撮り直さない)" <|
             \_ ->
-                ( press [ TalkView.VarEdited "gold" "5", TalkView.VarsResetAll ] withVars |> Tuple.first |> .overrides |> Dict.isEmpty
+                ( press [ TalkView.VarEdited "$gold" "5", TalkView.VarsResetAll ] withVars |> Tuple.first |> .overrides |> Dict.isEmpty
                 , TalkView.update TalkView.VarsResetAll withVars |> Tuple.second
                 )
                     |> Expect.equal ( True, OutNone )
         , test "組み直して宣言から消えた変数の値は捨てる" <|
             \_ ->
-                press [ TalkView.VarEdited "gold" "5" ] withVars
+                press [ TalkView.VarEdited "$gold" "5" ] withVars
                     |> Tuple.first
                     |> TalkView.gotTree (Ok { variables = [], nodes = [] })
                     |> TalkView.varsOf

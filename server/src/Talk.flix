@@ -49,10 +49,10 @@ mod Talk {
     pub def startLineWith(node: String, line: Int32, vars: List[(String, String)]): String =
         vars |> List.foldLeft((acc, pair) -> {
             let (name, value) = pair;
-            "${acc} ${dollar(name)}=${value}"
+            "${acc} ${name}=${value}"
         }, startLine(node, line))
 
-    /// 本文の vars（{名前: 値の字}）を始まりの引数に読む。名前は変数の名前の字・値は空白と改行を含まない字だけ
+    /// 本文の vars（{$名前: 値の字}）を始まりの引数に読む。名前は $ から書く変数の名前・値は空白と改行を含まない字だけ
     /// （flow の 1 行は空白で区切るので、空白を含む字は渡せない）。無ければ空。
     pub def varsOf(vars: Map[String, Json]): Result[String, List[(String, String)]] =
         Map.toList(vars) |> List.foldRight((pair, acc) -> forM (
@@ -62,19 +62,17 @@ mod Talk {
                 match JsonCodec.expectString(json) {
                     case Some(_) if not isVarName(name) => Err("変数の名前に使えない字です: ${name}")
                     case Some(text) if text == "" or String.exists(c -> Char.isWhitespace(c), text) =>
-                        Err("変数 ${dollar(name)} の値に空白は渡せません（プレビューの始まりは空白で区切るため）: '${text}'")
+                        Err("変数 ${name} の値に空白は渡せません（プレビューの始まりは空白で区切るため）: '${text}'")
                     case Some(text) => Ok(text)
-                    case None       => Err("変数 ${dollar(name)} の値は字で渡します")
+                    case None       => Err("変数 ${name} の値は字で渡します")
                 }
             }
         ) yield (fst(pair), value) :: soFar, Ok(Nil))
 
-    /// $ を前に付けた変数の名前（台本と始まりの引数の書き方）。
-    def dollar(name: String): String = "$" + name
-
-    /// 変数の名前（$ の後ろ）に使える字か。
+    /// 変数の名前か（台本と木と同じく $ から書く: $gold）。
     pub def isVarName(name: String): Bool =
-        name != "" and String.forAll(c -> Char.isLetterOrDigit(c) or c == '_', name)
+        String.startsWith(prefix = "$", name) and String.length(name) > 1
+            and String.forAll(c -> Char.isLetterOrDigit(c) or c == '_', String.dropLeft(1, name))
 
     /// 起動中のゲームへの /start の 1 行。
     pub def gotoRequest(node: String, line: Int32): String = "POST /start?name=talk&node=${node}&line=${line}"
