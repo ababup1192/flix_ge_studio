@@ -263,6 +263,9 @@ export function realApi(base: string): Api {
         case "talkRead":
           // 会話の画面で開くシナリオの中身(編集画面と同じ GET /file)
           return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
+        case "talkVocab":
+          // 台本の語彙(vocab.json。表情・背景を選ぶダイアログの値)。中身は GET /file と同じ形
+          return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
         case "talkBuild":
           // 保存して組む(text が無ければ読むだけ)。誤りは 200 の ok:false が契約。
           // 繋がらない時も投げずに ok:false で返す(画面の「組んでいます…」を畳むため)

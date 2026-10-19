@@ -12,7 +12,8 @@ module TalkViewTest exposing (suite)
 import Expect
 import Test exposing (Test, describe, test)
 import Json.Decode as D
-import TalkView exposing (Boot(..), Headless(..), Out(..), Request(..), ShotAnswer(..), Shown(..))
+import TalkTags
+import TalkView exposing (Boot(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
 
 
 path : String
@@ -54,10 +55,99 @@ clock line =
     { node = "clock", line = line }
 
 
+{-| タグを選ぶダイアログの下ごしらえ: 3 行目が girl の台詞(#face:happy)・語彙は表情 3 つと背景 1 つ。 -}
+tagged : TalkView.Model
+tagged =
+    let
+        body =
+            "title: op\n---\ngirl: できた！ #face:happy\n<<wait 1>>\n==="
+
+        init =
+            TalkView.init
+    in
+    { init
+        | path = path
+        , text = body
+        , saved = body
+        , nodes = [ { title = "op", file = path, line = 1 } ]
+        , cursor = 3
+        , vocab = Just { tags = [ ( "face", [ "neutral", "happy", "sad" ] ), ( "backdrop", [ "fight" ] ) ], speakerTags = [] }
+    }
+
+
+press : List TalkView.Msg -> TalkView.Model -> ( TalkView.Model, Out )
+press msgs model =
+    List.foldl (\msg ( m, _ ) -> TalkView.update msg m) ( model, OutNone ) msgs
+
+
+pickerSuite : Test
+pickerSuite =
+    describe "表情・背景を選ぶダイアログ"
+        [ test "開くと語彙の値を並べ、今の値を選んでおく" <|
+            \_ ->
+                press [ TalkView.TagPickRequested "face" ] tagged
+                    |> Tuple.first
+                    |> .picker
+                    |> Expect.equal (PickerOpen { line = 3, key = "face" } [ "neutral", "happy", "sad" ] 1)
+        , test "↑↓ は端で回り、Esc で閉じる(本文は変えない)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        press [ TalkView.TagPickRequested "face", TalkView.PickerKeyed "ArrowDown", TalkView.PickerKeyed "ArrowDown" ] tagged
+
+                    ( m2, out2 ) =
+                        press [ TalkView.PickerKeyed "Escape" ] m1
+                in
+                ( m1.picker, ( m2.picker, m2.text == tagged.text, out2 ) )
+                    |> Expect.equal ( PickerOpen { line = 3, key = "face" } [ "neutral", "happy", "sad" ] 0, ( PickerClosed, True, OutNone ) )
+        , test "Enter でその行のタグを書き換えて保存する(保存の答えで撮り直す)" <|
+            \_ ->
+                let
+                    ( m1, out ) =
+                        press [ TalkView.TagPickRequested "face", TalkView.PickerKeyed "ArrowDown", TalkView.PickerKeyed "Enter" ] tagged
+
+                    expected =
+                        "title: op\n---\ngirl: できた！ #face:sad\n<<wait 1>>\n==="
+                in
+                ( m1.picker, m1.text, out ) |> Expect.equal ( PickerClosed, expected, OutBuild path (Just expected) )
+        , test "背景が無い行には語彙の順で足す(押して選ぶのも同じ)" <|
+            \_ ->
+                press [ TalkView.TagPickRequested "backdrop", TalkView.PickerChosen "fight" ] tagged
+                    |> Tuple.first
+                    |> .text
+                    |> String.lines
+                    |> List.drop 2
+                    |> List.head
+                    |> Expect.equal (Just "girl: できた！ #face:happy #backdrop:fight")
+        , test "語彙が無い・タグを付けられない行では開かずに理由を出す" <|
+            \_ ->
+                let
+                    noVocab =
+                        press [ TalkView.TagPickRequested "face" ] { tagged | vocab = Nothing } |> Tuple.first
+
+                    command =
+                        press [ TalkView.TagPickRequested "face" ] { tagged | cursor = 4 } |> Tuple.first
+                in
+                ( ( noVocab.picker, noVocab.status /= "" ), ( command.picker, command.status /= "" ) )
+                    |> Expect.equal ( ( PickerClosed, True ), ( PickerClosed, True ) )
+        , test "別の行へ動いたら閉じる(選んだ値を前の行に書かない)" <|
+            \_ ->
+                press [ TalkView.TagPickRequested "face", TalkView.CaretMoved tagged.text 0 ] tagged
+                    |> Tuple.first
+                    |> .picker
+                    |> Expect.equal PickerClosed
+        , test "語彙はシナリオと同じフォルダの vocab.json" <|
+            \_ ->
+                ( TalkView.vocabPathOf "assets/talk/opening.yarn", TalkView.vocabPathOf "a.yarn" )
+                    |> Expect.equal ( "assets/talk/vocab.json", "vocab.json" )
+        ]
+
+
 suite : Test
 suite =
     describe "TalkView"
-        [ test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
+        [ pickerSuite
+        , test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
             \_ ->
                 ( TalkView.targetAt path nodes 40, TalkView.targetAt path nodes 7, TalkView.targetAt path nodes 3 )
                     |> Expect.equal ( Just (clock 40), Just { node = "arrival", line = 7 }, Nothing )

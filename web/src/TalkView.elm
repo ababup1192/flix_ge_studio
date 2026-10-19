@@ -5,6 +5,8 @@ module TalkView exposing
     , Msg(..)
     , Node
     , Out(..)
+    , Pick
+    , Picker(..)
     , Problem
     , Request(..)
     , Shot
@@ -20,6 +22,7 @@ module TalkView exposing
     , gotFiles
     , gotGoto
     , gotShot
+    , gotVocab
     , init
     , lineAt
     , retryFired
@@ -27,6 +30,7 @@ module TalkView exposing
     , targetAt
     , update
     , view
+    , vocabPathOf
     )
 
 {-| 会話の画面 — 左で会話のシナリオ(.yarn)を書き、右にカーソルの行の本物のゲームの画面を出す。
@@ -50,6 +54,10 @@ Studio は自分で描かない。右の絵は窓なしのゲーム(ゲーム自
 保存で組み直し(dialogue.json が書き変わる)、今の行を撮り直す。打っている途中の壊れた台本は
 ok:false で返り、前の絵を Held で出したまま誤りの行を示す。
 
+行のタグ(表情 #face・背景 #backdrop など)は、カーソルの行のチップか ⌘E(表情)/ ⌘B(背景)で
+選ぶダイアログ(Picker。開閉と選択中を 1 つで持つ)からも書ける。値は台本の語彙(vocab.json)から取り、
+選ぶとその行のタグを書き換えて保存し、撮り直す。打って書くやり方はそのまま。
+
 「この行へ飛ばす」だけが起動中のゲームを動かす(遊んでいる World をその行の場面へ差し替える)。
 
 サーバ往復は Main の仕事(Out で頼む)。
@@ -60,6 +68,7 @@ import Html exposing (Html, button, div, img, option, select, span, text, textar
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as D
+import TalkTags
 
 
 {-| 撮る場面: ノードと .yarn の行(1 始まり)。 -}
@@ -136,6 +145,22 @@ type Headless
     | HeadlessCrashed (List String)
 
 
+{-| ダイアログで選ぶ所: 本文の行(1 始まり)とタグのキー。 -}
+type alias Pick =
+    { line : Int, key : String }
+
+
+{-| 行のタグを選ぶダイアログ(開閉と選択中を旗で重ねない)。
+
+  - PickerClosed … 閉じている
+  - PickerOpen pick 値の並び 選択中の位置 … 開いている(↑↓ で動かし Enter で選ぶ・Esc で閉じる)
+
+-}
+type Picker
+    = PickerClosed
+    | PickerOpen Pick (List String) Int
+
+
 type alias Model =
     { files : List String
 
@@ -167,6 +192,10 @@ type alias Model =
 
     -- 保存して組んでいる最中の中身(答えが来たら saved になる)
     , saving : Maybe String
+
+    -- 台本の語彙(.yarn と同じフォルダの vocab.json。まだ読めていなければ Nothing)
+    , vocab : Maybe TalkTags.Vocab
+    , picker : Picker
     }
 
 
@@ -188,6 +217,8 @@ init =
     , status = ""
     , retrySeq = 0
     , saving = Nothing
+    , vocab = Nothing
+    , picker = PickerClosed
     }
 
 
@@ -199,6 +230,10 @@ type Msg
     | NodeClicked Node
     | GotoClicked
     | RestartClicked
+    | TagPickRequested String
+    | PickerKeyed String
+    | PickerChosen String
+    | PickerDismissed
 
 
 type Out
@@ -213,6 +248,17 @@ type Out
 
 
 -- 決まり(純粋)
+
+
+{-| シナリオと同じフォルダの語彙(ゲームの Talk.vocab が書く vocab.json)。 -}
+vocabPathOf : String -> String
+vocabPathOf path =
+    case String.indexes "/" path |> List.reverse |> List.head of
+        Just i ->
+            String.left i path ++ "/vocab.json"
+
+        Nothing ->
+            "vocab.json"
 
 
 {-| 本文の文字位置が何行目か(1 始まり)。 -}
@@ -330,6 +376,111 @@ update msg model =
                 _ ->
                     ( model, OutNone )
 
+        TagPickRequested key ->
+            ( openPicker key model, OutNone )
+
+        PickerKeyed key ->
+            case model.picker of
+                PickerOpen pick values at ->
+                    case key of
+                        "ArrowUp" ->
+                            ( { model | picker = PickerOpen pick values (modBy (List.length values) (at - 1)) }, OutNone )
+
+                        "ArrowDown" ->
+                            ( { model | picker = PickerOpen pick values (modBy (List.length values) (at + 1)) }, OutNone )
+
+                        "Enter" ->
+                            case values |> List.drop at |> List.head of
+                                Just value ->
+                                    choose pick value model
+
+                                Nothing ->
+                                    ( { model | picker = PickerClosed }, OutNone )
+
+                        "Escape" ->
+                            ( { model | picker = PickerClosed }, OutNone )
+
+                        _ ->
+                            ( model, OutNone )
+
+                PickerClosed ->
+                    ( model, OutNone )
+
+        PickerChosen value ->
+            case model.picker of
+                PickerOpen pick _ _ ->
+                    choose pick value model
+
+                PickerClosed ->
+                    ( model, OutNone )
+
+        PickerDismissed ->
+            ( { model | picker = PickerClosed }, OutNone )
+
+
+{-| カーソルの行のタグ key を選ぶダイアログを開く。開けない時は理由を status に出す。
+選択中は今の値(無ければ先頭)。
+-}
+openPicker : String -> Model -> Model
+openPicker key model =
+    case ( model.vocab, TalkTags.lineTagsAt model.text model.cursor ) of
+        ( Nothing, _ ) ->
+            { model | status = "台本の語彙(" ++ vocabPathOf model.path ++ ")を読めていません(ゲームの make talk-vocab で書けます)" }
+
+        ( _, Nothing ) ->
+            { model | status = "この行にはタグを付けられません(ノードの本文の台詞・地の文・選択肢の行で選べます)" }
+
+        ( Just vocab, Just line ) ->
+            case TalkTags.choicesFor vocab line.speaker key of
+                [] ->
+                    { model | status = "語彙に #" ++ key ++ " の値がありません(" ++ vocabPathOf model.path ++ ")" }
+
+                values ->
+                    let
+                        current =
+                            line.tags |> List.filter (\( k, _ ) -> k == key) |> List.head |> Maybe.map Tuple.second
+
+                        at =
+                            values
+                                |> List.indexedMap Tuple.pair
+                                |> List.filter (\( _, v ) -> Just v == current)
+                                |> List.head
+                                |> Maybe.map Tuple.first
+                                |> Maybe.withDefault 0
+                    in
+                    { model | picker = PickerOpen { line = model.cursor, key = key } values at, status = "" }
+
+
+{-| 選んだ値をその行に書き、保存して撮り直す(保存の最中なら書くだけ。未保存の印が残る)。 -}
+choose : Pick -> String -> Model -> ( Model, Out )
+choose pick value model =
+    let
+        order =
+            model.vocab |> Maybe.map TalkTags.tagKeys |> Maybe.withDefault []
+
+        body =
+            TalkTags.setTagAt order pick.line pick.key value model.text
+
+        m1 =
+            { model | text = body, picker = PickerClosed }
+    in
+    if body == model.text then
+        ( m1, OutNone )
+
+    else
+        update SaveClicked m1
+
+
+{-| 語彙が届いた(読めなければ Nothing のまま。ダイアログを開く時に理由を出す)。 -}
+gotVocab : Result String TalkTags.Vocab -> Model -> Model
+gotVocab result model =
+    case result of
+        Ok vocab ->
+            { model | vocab = Just vocab }
+
+        Err _ ->
+            { model | vocab = Nothing }
+
 
 moveCaret : Int -> Model -> ( Model, Out )
 moveCaret offset model =
@@ -341,7 +492,8 @@ moveCaret offset model =
         ( model, OutNone )
 
     else
-        askCursor False { model | cursor = line }
+        -- 別の行へ動いたらダイアログは閉じる(選んだ値を前の行に書かない)
+        askCursor False { model | cursor = line, picker = PickerClosed }
 
 
 {-| シナリオの一覧が届いた。まだ何も開いていなければ先頭を開く。 -}
@@ -626,16 +778,134 @@ lineHeight =
 
 view : Model -> Html Msg
 view model =
-    div [ HA.class "talk flex min-h-0 flex-1 gap-4 px-6 pb-6 pt-4" ]
+    div [ HA.class "talk flex min-h-0 flex-1 gap-4 px-6 pb-6 pt-4", HE.preventDefaultOn "keydown" (pickerKeyDecoder model.picker) ]
         [ div [ HA.class "flex min-h-0 min-w-0 flex-1 flex-col gap-2" ]
             [ viewHead model
             , viewNodes model
+            , viewLineTags model
             , viewEditor model
             , viewProblems model
             ]
         , div [ HA.class "flex min-h-0 w-[48%] flex-col gap-2" ]
             [ viewPreview model ]
         ]
+
+
+{-| 会話の画面のキー(本文の欄からも届く)。⌘E / Ctrl+E で表情・⌘B / Ctrl+B で背景を選ぶダイアログを開き、
+開いている間は ↑↓・Enter・Esc をダイアログが取る(本文のカーソルは動かさない・改行しない)。ほかは素通し。
+-}
+pickerKeyDecoder : Picker -> D.Decoder ( Msg, Bool )
+pickerKeyDecoder picker =
+    D.map3 (\key meta ctrl -> ( key, meta || ctrl ))
+        (D.field "key" D.string)
+        (D.field "metaKey" D.bool)
+        (D.field "ctrlKey" D.bool)
+        |> D.andThen
+            (\( key, modified ) ->
+                case ( picker, modified, String.toLower key ) of
+                    ( _, True, "e" ) ->
+                        D.succeed ( TagPickRequested "face", True )
+
+                    ( _, True, "b" ) ->
+                        D.succeed ( TagPickRequested "backdrop", True )
+
+                    ( PickerOpen _ _ _, False, _ ) ->
+                        if List.member key [ "ArrowUp", "ArrowDown", "Enter", "Escape" ] then
+                            D.succeed ( PickerKeyed key, True )
+
+                        else
+                            D.fail "ほかのキーは素通し"
+
+                    _ ->
+                        D.fail "ほかのキーは素通し"
+            )
+
+
+{-| カーソルの行の話し手とタグのチップ。語彙に値のあるキーは押すと選ぶダイアログ(その下に開く)。 -}
+viewLineTags : Model -> Html Msg
+viewLineTags model =
+    case TalkTags.lineTagsAt model.text model.cursor of
+        Nothing ->
+            text ""
+
+        Just line ->
+            let
+                keys =
+                    model.vocab |> Maybe.map TalkTags.tagKeys |> Maybe.withDefault []
+
+                valueOf key =
+                    line.tags |> List.filter (\( k, _ ) -> k == key) |> List.head |> Maybe.map Tuple.second
+
+                shortcut key =
+                    case key of
+                        "face" ->
+                            "(⌘E)"
+
+                        "backdrop" ->
+                            "(⌘B)"
+
+                        _ ->
+                            ""
+
+                chip key =
+                    button
+                        [ HA.class "talk-tag-chip cursor-pointer rounded-sm bg-white/5 px-1.5 font-mono text-[11px] text-ink-soft hover:bg-white/10"
+                        , HA.title (TalkTags.label key ++ "を選ぶ" ++ shortcut key)
+                        , HE.onClick (TagPickRequested key)
+                        ]
+                        [ text (TalkTags.label key ++ ": " ++ Maybe.withDefault "—" (valueOf key) ++ " ▾") ]
+
+                others =
+                    line.tags
+                        |> List.filter (\( k, _ ) -> not (List.member k keys))
+                        |> List.map
+                            (\( k, v ) ->
+                                span [ HA.class "rounded-sm px-1.5 font-mono text-[11px] text-ink-faint" ]
+                                    [ text ("#" ++ k ++ (if v == "" then "" else ":" ++ v)) ]
+                            )
+            in
+            div [ HA.class "talk-line-tags relative flex flex-wrap items-center gap-1" ]
+                (span [ HA.class "text-[11px] text-ink-faint" ]
+                    [ text (String.fromInt model.cursor ++ " 行目" ++ (line.speaker |> Maybe.map (\s -> " · " ++ s) |> Maybe.withDefault "")) ]
+                    :: List.map chip keys
+                    ++ others
+                    ++ [ viewPicker model ]
+                )
+
+
+{-| 選ぶダイアログ(チップの下に開く小さな一覧)。 -}
+viewPicker : Model -> Html Msg
+viewPicker model =
+    case model.picker of
+        PickerClosed ->
+            text ""
+
+        PickerOpen pick values at ->
+            div
+                [ HA.class "talk-picker absolute left-0 top-full z-20 mt-1 flex min-w-48 flex-col gap-0.5 rounded-md border border-edge bg-raised p-1 shadow-lg"
+                , HA.attribute "role" "listbox"
+                ]
+                (div [ HA.class "flex items-center gap-2 px-1.5 pb-1 text-[11px] text-ink-faint" ]
+                    [ text (TalkTags.label pick.key ++ "を選ぶ(" ++ String.fromInt pick.line ++ " 行目)")
+                    , span [ HA.class "ml-auto" ] [ text "↑↓ Enter · Esc" ]
+                    , button [ HA.class "talk-picker-close d-btn d-btn-ghost d-btn-xs", HE.onClick PickerDismissed ] [ text "×" ]
+                    ]
+                    :: List.indexedMap
+                        (\i value ->
+                            button
+                                [ HA.classList
+                                    [ ( "talk-picker-item cursor-pointer rounded-sm px-1.5 py-0.5 text-left font-mono text-[12px]", True )
+                                    , ( "bg-accent/30 text-ink", i == at )
+                                    , ( "text-ink-soft hover:bg-white/10", i /= at )
+                                    ]
+                                , HA.attribute "role" "option"
+                                , HA.attribute "aria-selected" (if i == at then "true" else "false")
+                                , HE.onClick (PickerChosen value)
+                                ]
+                                [ text value ]
+                        )
+                        values
+                )
 
 
 viewHead : Model -> Html Msg

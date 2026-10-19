@@ -34,6 +34,7 @@ import EntryTable
 import FileVerbs
 import FormHelp
 import GalleryView
+import TalkTags
 import TalkView
 import VideoView
 import Html exposing (Html, button, datalist, div, h1, h2, img, input, label, option, pre, select, span, table, tbody, td, text, textarea, th, thead, tr)
@@ -6671,6 +6672,19 @@ handleOkByKind env model =
                 Err _ ->
                     ( model, Effect.none )
 
+        "talkVocab" ->
+            ( { model
+                | talk =
+                    TalkView.gotVocab
+                        (D.decodeValue (D.field "content" D.string) env.body
+                            |> Result.andThen (D.decodeString TalkTags.vocabDecoder)
+                            |> Result.mapError D.errorToString
+                        )
+                        model.talk
+              }
+            , Effect.none
+            )
+
         "talkBuild" ->
             case D.decodeValue TalkView.buildDecoder env.body of
                 Ok report ->
@@ -8452,6 +8466,10 @@ handleErrByKind env message model =
         "talkRead" ->
             ( { model | talk = TalkView.gotGoto (Err ("開けませんでした — " ++ message)) model.talk }, Effect.none )
 
+        "talkVocab" ->
+            -- 語彙が無い(ゲームが make talk-vocab を書いていない)。ダイアログを開く時に理由を出す
+            ( { model | talk = TalkView.gotVocab (Err message) model.talk }, Effect.none )
+
         "atelierCandidates" ->
             -- エンドポイント未実装のサーバ(404 等)。候補ゾーンを出さないだけで
             -- 調整(エディタ)は生きる(fail-open)
@@ -8683,7 +8701,13 @@ runTalkOut out model =
             ( model, Effect.none )
 
         TalkView.OutRead path ->
-            ( model, send "talkRead" [ ( "path", E.string path ) ] )
+            -- 開くシナリオの中身と、同じフォルダの語彙(表情・背景を選ぶダイアログの値)
+            ( model
+            , Effect.batch
+                [ send "talkRead" [ ( "path", E.string path ) ]
+                , send "talkVocab" [ ( "path", E.string (TalkView.vocabPathOf path) ) ]
+                ]
+            )
 
         TalkView.OutBuild path text ->
             ( model
