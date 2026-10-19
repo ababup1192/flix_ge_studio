@@ -23,6 +23,8 @@ export function realApi(base: string): Api {
   // (180 秒)より長く待つ。
   const QUICK_MS = 20_000;
   const BAKE_MS = 200_000;
+  // 会話の 1 枚撮り: サーバは橋に wait=60 を渡し、65 秒まで待つ(起こしてすぐの最初の 1 枚が重い)。それより長く待つ
+  const SHOT_MS = 70_000;
   const fetchWithin = (url: string, init: RequestInit, ms: number): Promise<Response> => {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), ms);
@@ -278,7 +280,7 @@ export function realApi(base: string): Api {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ node, line, restart: restart === true }),
-            }, QUICK_MS);
+            }, SHOT_MS);
             const body = await res.json().catch(() => ({ ok: false, error: { message: `HTTP ${res.status}` } }));
             return { ...body, node, line };
           } catch (e) {

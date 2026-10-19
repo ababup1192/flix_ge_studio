@@ -8710,7 +8710,7 @@ runTalkOut out model =
             ( model, send "talkGoto" (target t) )
 
         TalkView.OutRetryLater seq ->
-            -- 窓なしのゲームを起こしている間は 3 秒おきに頼み直す(初回は jar を作るので 1〜2 分)
+            -- 窓なしのゲームを起こしている間は 3 秒おきに頼み直す(段と経過秒はサーバの答えに乗る)
             ( model, Effect.TalkRetry { seq = seq, afterMs = 3000 } )
 
 
