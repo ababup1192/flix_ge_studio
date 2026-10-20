@@ -311,33 +311,39 @@ suite =
                         caretTo 40 opened
 
                     ( m2, _ ) =
-                        TalkView.gotShot (clock 40) (ShotStarting "jar を作っています" (BootBuildingJar 37)) m1
+                        TalkView.gotShot (clock 40) (ShotStarting "jar を作っています" (BootBuildingJar { secs = 37, round = 1, last = Nothing })) m1
                 in
-                m2.headless |> Expect.equal (HeadlessBooting (BootBuildingJar 37))
+                m2.headless |> Expect.equal (HeadlessBooting (BootBuildingJar { secs = 37, round = 1, last = Nothing }))
         , test "starting の答えの stage と elapsed を段に読む(無ければ段の分からない待ち)" <|
             \_ ->
                 let
                     decode json =
                         D.decodeString TalkView.shotAnswerDecoder json
                 in
-                ( decode """{"ok":false,"headless":"starting","stage":"jar","elapsed":37,"error":{"message":"m"}}"""
+                ( decode """{"ok":false,"headless":"starting","stage":"jar","elapsed":37,"round":2,"lastBuildSeconds":95,"error":{"message":"m"}}"""
                 , decode """{"ok":false,"headless":"starting","stage":"boot","elapsed":3,"error":{"message":"m"}}"""
                 , decode """{"ok":false,"headless":"starting","error":{"message":"m"}}"""
                 )
                     |> Expect.equal
-                        ( Ok (ShotStarting "m" (BootBuildingJar 37))
+                        ( Ok (ShotStarting "m" (BootBuildingJar { secs = 37, round = 2, last = Just 95 }))
                         , Ok (ShotStarting "m" (BootStartingGame 3))
                         , Ok (ShotStarting "m" BootWaiting)
                         )
-        , test "見出しは jar を作る時だけ「1〜2 分」・起こしているだけなら「数秒」、頼み直しの合間も出す" <|
+        , test "見出しは目安を決め打ちしない(前回の秒数が分かる時だけ言う)・2 人目の作り手は「作り直しています(2 回目)」" <|
             \_ ->
-                ( TalkView.busyLabel False (HeadlessBooting (BootBuildingJar 37))
+                ( ( TalkView.busyLabel False (HeadlessBooting (BootBuildingJar { secs = 37, round = 1, last = Just 95 }))
+                  , TalkView.busyLabel False (HeadlessBooting (BootBuildingJar { secs = 37, round = 1, last = Nothing }))
+                  , TalkView.busyLabel False (HeadlessBooting (BootBuildingJar { secs = 4, round = 2, last = Nothing }))
+                  )
                 , TalkView.busyLabel False (HeadlessBooting (BootStartingGame 3))
                 , ( TalkView.busyLabel True HeadlessOk, TalkView.busyLabel False HeadlessOk )
                 )
                     |> Expect.equal
-                        ( "⏳ jar を作っています(1〜2 分)… 37 秒"
-                        , "⏳ 起こしています(数秒)… 3 秒"
+                        ( ( "⏳ jar を作っています… 37 秒(前回は 95 秒)"
+                          , "⏳ jar を作っています… 37 秒"
+                          , "⏳ jar を作り直しています(2 回目)… 4 秒"
+                          )
+                        , "⏳ 起こしています… 3 秒"
                         , ( "⏳ 撮っています…", "" )
                         )
         , test "長く起きない間は、ログの末尾を持って頼み直しを続ける" <|

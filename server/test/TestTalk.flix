@@ -41,17 +41,18 @@ mod TestTalk {
     def testShotRequestPassesWait(): Unit \ Assert =
         Assert.assertEq(expected = "POST /step?view=shot&wait=${Talk.shotWaitSecs()}", Talk.shotRequest())
 
-    /// 起こしている間の答えは starting のまま、段（jar / boot）と経過秒を足す（古い画面は starting と一言だけ読む）。
+    /// 起こしている間の答えは starting のまま、段（jar / boot）と経過秒、jar なら何回目と前回の秒数を足す（古い画面は starting と一言だけ読む）。
     @Test
     def testBootingJsonHasStageAndElapsed(): Unit \ Assert =
         let fieldsOf = json -> match json {
-            case JObject(fields) => (Map.get("headless", fields), Map.get("stage", fields), Map.get("elapsed", fields))
-            case _ => (None, None, None)
+            case JObject(fields) => (Map.get("headless", fields), Map.get("stage", fields), Map.get("elapsed", fields),
+                                     Map.get("round", fields), Map.get("lastBuildSeconds", fields))
+            case _ => (None, None, None, None, None)
         };
         Assert.assertEq(
-            expected = (Some(JString("starting")), Some(JString("jar")),
-                        Some(JNumber(JsonCodec.intToBd(37)))),
-            fieldsOf(Talk.bootingJson(Headless.BootStage.BuildingJar, 37i64, 0)))
+            expected = (Some(JString("starting")), Some(JString("jar")), Some(JNumber(JsonCodec.intToBd(37))),
+                        Some(JNumber(JsonCodec.intToBd(2))), Some(JNumber(JsonCodec.intToBd(95)))),
+            fieldsOf(Talk.bootingJson(Headless.BootStage.BuildingJar(2, Some(95i64)), 37i64, 0)))
 
     /// 変数の値を決めて撮る時は、始まりの行の後ろに $名前=値 を並べる（engine 0.51 の始まりの引数）。
     @Test

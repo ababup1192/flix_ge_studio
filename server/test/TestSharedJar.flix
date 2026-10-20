@@ -5,6 +5,7 @@
 //                    └─ 作っている間に保存 ─▶ BuildingThenAgain ─済んだ─▶ Building（もう 1 回）
 
 mod TestSharedJar {
+    use fge::JsonCodec
     use SharedJar.Build
     use EngineTasks.Task
 
@@ -89,4 +90,15 @@ mod TestSharedJar {
     @Test
     def testJarEnvIsOneSet(): Unit \ Assert =
         Assert.assertEq(expected = ("JAVA", "/j/java") :: ("HEADLESS_JAVA_OPTS", "") :: Nil, SharedJar.jarEnv("/j/java"))
+
+    /// 様子には前回 jar を作るのにかかった秒数を、分かる時だけ足す（目安を決め打ちしない）。
+    @Test
+    def testWithLastBuild(): Unit \ Assert =
+        let status = SharedJar.statusJson(5000i64, Build.Building(0i64));
+        let lastOf = json -> match json {
+            case Util.Json.Json.JObject(fields) => Map.get("lastBuildSeconds", fields)
+            case _ => None
+        };
+        Assert.assertEq(expected = (Some(Util.Json.Json.JNumber(JsonCodec.intToBd(95))), None),
+            (lastOf(SharedJar.withLastBuild(Some(95i64), status)), lastOf(SharedJar.withLastBuild(None, status))))
 }

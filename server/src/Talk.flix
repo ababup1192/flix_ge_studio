@@ -228,15 +228,18 @@ mod Talk {
     pub def shotRequest(): String = "POST /step?view=shot&wait=${shotWaitSecs()}"
 
     /// 起こしている 1 本を待っている時の答え（waitingJson の starting に段と経過秒を足す）。
+    /// jar を作っている時は round（何回目の作り手か）と、分かれば lastBuildSeconds（前回かかった秒数）も。
     pub def bootingJson(stage: Headless.BootStage, elapsedSecs: Int64, failures: Int32): Json =
-        let stageName = match stage {
-            case Headless.BootStage.BuildingJar  => "jar"
-            case Headless.BootStage.StartingGame => "boot"
+        let secs = n -> JNumber(JsonCodec.intToBd(Int64.clampToInt32(min = 0, max = Int32.maxValue(), n)));
+        let extra = match stage {
+            case Headless.BootStage.BuildingJar(round, last) =>
+                ("stage", JString("jar")) :: ("round", JNumber(JsonCodec.intToBd(round)))
+                    :: (last |> Option.map(n -> ("lastBuildSeconds", secs(n))) |> Option.toList)
+            case Headless.BootStage.StartingGame => ("stage", JString("boot")) :: Nil
         };
         match waitingJson("starting", Headless.bootingMessage(stage, elapsedSecs, failures), Nil) {
-            case JObject(fields) => JObject(fields
-                |> Map.insert("stage", JString(stageName))
-                |> Map.insert("elapsed", JNumber(JsonCodec.intToBd(Int64.clampToInt32(min = 0, max = Int32.maxValue(), elapsedSecs)))))
+            case JObject(fields) =>
+                JObject(List.foldLeft((acc, kv) -> Map.insert(fst(kv), snd(kv), acc), fields |> Map.insert("elapsed", secs(elapsedSecs)), extra))
             case other => other
         }
 

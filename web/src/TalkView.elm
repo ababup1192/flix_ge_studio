@@ -133,16 +133,16 @@ type ShotAnswer
     | ShotFailed String
 
 
-{-| 起こしている 1 本の段(サーバの stage と elapsed。秒は起こしてからの経過)。
+{-| 起こしている 1 本の段(サーバの stage と elapsed。秒はその段に入ってからの経過)。
 
   - BootWaiting … 段の分からない待ち(ゲームが起動の途中・古いサーバ・押した直後)
-  - BootBuildingJar 秒 … jar を作っている(src が変わった時だけ。1〜2 分)
-  - BootStartingGame 秒 … jar はあり、JVM を起こして最初の 1 枚を待っている(数秒)
+  - BootBuildingJar … jar を作っている(秒・何回目の作り手か・前回かかった秒数。前回が分からなければ目安を言わない)
+  - BootStartingGame 秒 … jar はあり、JVM を起こして最初の 1 枚を待っている
 
 -}
 type Boot
     = BootWaiting
-    | BootBuildingJar Int
+    | BootBuildingJar { secs : Int, round : Int, last : Maybe Int }
     | BootStartingGame Int
 
 
@@ -880,14 +880,16 @@ shotAnswerDecoder =
             )
 
 
-{-| 段(stage: "jar" / "boot")と経過秒(elapsed)。無い・知らない段は BootWaiting(古いサーバ・ゲームの起動待ち)。 -}
+{-| 段(stage: "jar" / "boot")と経過秒(elapsed)、jar なら何回目(round)と前回の秒数(lastBuildSeconds)。
+無い・知らない段は BootWaiting(古いサーバ・ゲームの起動待ち)。
+-}
 bootDecoder : D.Decoder Boot
 bootDecoder =
-    D.map2
-        (\stage elapsed ->
+    D.map4
+        (\stage elapsed round last ->
             case stage of
                 "jar" ->
-                    BootBuildingJar elapsed
+                    BootBuildingJar { secs = elapsed, round = round, last = last }
 
                 "boot" ->
                     BootStartingGame elapsed
@@ -897,19 +899,36 @@ bootDecoder =
         )
         (D.oneOf [ D.field "stage" D.string, D.succeed "" ])
         (D.oneOf [ D.field "elapsed" D.int, D.succeed 0 ])
+        (D.oneOf [ D.field "round" D.int, D.succeed 1 ])
+        (D.maybe (D.field "lastBuildSeconds" D.int))
 
 
-{-| 見出しの一言。起こしている間は頼み直しの合間も出す(jar を作る時だけ「1〜2 分」、起こしているだけなら「数秒」)。
+{-| 見出しの一言。起こしている間は頼み直しの合間も出す。かかる時間の目安は決め打ちせず、前回の秒数が分かる時だけ言う。
+2 人目の作り手からは「作り直しています(2 回目)」。
 撮っている最中だけ「撮っています」。どちらでもなければ出さない(空)。
 -}
 busyLabel : Bool -> Headless -> String
 busyLabel inFlight headless =
     case headless of
-        HeadlessBooting (BootBuildingJar secs) ->
-            "⏳ jar を作っています(1〜2 分)… " ++ String.fromInt secs ++ " 秒"
+        HeadlessBooting (BootBuildingJar b) ->
+            (if b.round <= 1 then
+                "⏳ jar を作っています… "
+
+             else
+                "⏳ jar を作り直しています(" ++ String.fromInt b.round ++ " 回目)… "
+            )
+                ++ String.fromInt b.secs
+                ++ " 秒"
+                ++ (case b.last of
+                        Just n ->
+                            "(前回は " ++ String.fromInt n ++ " 秒)"
+
+                        Nothing ->
+                            ""
+                   )
 
         HeadlessBooting (BootStartingGame secs) ->
-            "⏳ 起こしています(数秒)… " ++ String.fromInt secs ++ " 秒"
+            "⏳ 起こしています… " ++ String.fromInt secs ++ " 秒"
 
         HeadlessBooting BootWaiting ->
             "⏳ 待っています…"

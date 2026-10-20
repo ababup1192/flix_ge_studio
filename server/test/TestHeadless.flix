@@ -1,15 +1,26 @@
-// TestHeadless — 窓なしのゲームの世話係の決まり（頼みをどうするか・終わった後の状態）を固定する。
-// プロセスを起こす・ポートに繋がる IO は Headless.answer / startInBackground の仕事で、ここでは Seen を手で置く。
+// TestHeadless — 窓なしのゲームの世話係の決まり（頼みをどうするか・起こしている段・終わった後の状態）を固定する。
+// プロセスを起こす・ポートに繋がる・鍵の pid を読む IO は Headless.answer の仕事で、ここでは Seen を手で置く。
 //
 //   Idle ─頼み─▶ Booting ─答えた─▶ Running ─終わった─▶ Idle
 //                  └─ ready 前に終わった ─▶ Crashed(n) ─ n < 2 なら次の頼みで起こし直す / 2 以上は Failed のまま
+//   Booting の段: Starting（起こしている）⇄ Building（作り手の pid が居る間。替わったら数え直して回数を 1 足す）
 
 mod TestHeadless {
-    use Headless.{Launch, Decision, Readiness, BootStage}
+    use Headless.{Launch, Decision, Readiness, BootStage, BootPhase}
 
-    /// 起こした時刻 0 から now ミリ秒後の様子（ポートは答えない・ゲームは起動の途中でない）。
+    /// now ミリ秒の様子（ポートは答えない・ゲームは起動の途中でない・誰も jar を作っていない）。
     def quietAt(now: Int64): Headless.Seen =
-        {now = now, answering = false, gameStarting = false, logTail = "boom" :: Nil, stage = BootStage.StartingGame}
+        {now = now, answering = false, gameStarting = false, logTail = "boom" :: Nil, builder = None, lastBuild = None}
+
+    /// 時刻 0 に起こした 1 本（まだ jar の作り手を見ていない）。
+    def booted(failures: Int32): Launch = Launch.Booting(5000, failures, BootPhase.Starting(0i64, 0))
+
+    /// 答えだけ取り出す（状態を進めた答えも、そのままの答えも）。
+    def answerOf(decision: Decision): Option[Readiness] = match decision {
+        case Decision.Answer(r)     => Some(r)
+        case Decision.Observe(_, r) => Some(r)
+        case _                      => None
+    }
 
     // ── 頼みをどうするか ──────────────────────────────────
 
@@ -21,20 +32,69 @@ mod TestHeadless {
             (Headless.decide(Launch.Idle, quietAt(0i64)) == Decision.Start(0),
              Headless.decide(Launch.Idle, { gameStarting = true | quietAt(0i64) }) == Decision.Start(0)))
 
-    /// 起こしている 1 本のポートが答えたら Running の印を付ける・答えなければ起こし直さずに、段と経過秒で待たせる。
+    /// 起こしている 1 本のポートが答えたら Running の印を付ける・答えなければ起こす段の経過秒で待たせる。
     @Test
     def testBootingWaitsThenMarksRunning(): Unit \ Assert =
         Assert.assertEq(
-            expected = (Decision.MarkRunning(5000), Decision.Answer(Readiness.Booting(BootStage.StartingGame, 1i64, 0))),
-            (Headless.decide(Launch.Booting(5000, 0i64, 0), { answering = true | quietAt(1000i64) }),
-             Headless.decide(Launch.Booting(5000, 0i64, 0), quietAt(1000i64))))
+            expected = (Decision.MarkRunning(5000), Some(Readiness.Booting(BootStage.StartingGame, 1i64, 0))),
+            (Headless.decide(booted(0), { answering = true | quietAt(1000i64) }),
+             answerOf(Headless.decide(booted(0), quietAt(1000i64)))))
 
-    /// 起こしてから stallMillis たっても答えなければ、ログの末尾つきで「長く起きない」を答える（起こし直さない）。
+    /// 起こす段で stallMillis たっても答えなければ、ログの末尾つきで「長く起きない」を答える（起こし直さない）。
     @Test
-    def testBootingTooLongIsStalledWithLog(): Unit \ Assert =
+    def testStartingTooLongIsStalledWithLog(): Unit \ Assert =
+        let now = Headless.stallMillis();
         Assert.assertEq(
-            expected = Decision.Answer(Readiness.Stalled(Headless.stalledMessage(Headless.stallMillis()), "boom" :: Nil)),
-            Headless.decide(Launch.Booting(5000, 0i64, 0), quietAt(Headless.stallMillis())))
+            expected = Some(Readiness.Stalled(Headless.stalledMessage(BootPhase.Starting(0i64, 0), now), "boom" :: Nil)),
+            answerOf(Headless.decide(booted(0), quietAt(now))))
+
+    /// jar を作っている間は「長く起きない」を数えない — 作り手が生きていれば stallMillis を過ぎても待つ。
+    @Test
+    def testBuildingDoesNotCountTowardStall(): Unit \ Assert =
+        let launch = Launch.Booting(5000, 0, BootPhase.Building(73404, 0i64, 1));
+        let now = Headless.stallMillis() * 2i64;
+        Assert.assertEq(
+            expected = Some(Readiness.Booting(BootStage.BuildingJar(1, Some(95i64)), now / 1000i64, 0)),
+            answerOf(Headless.decide(launch, { builder = Some(73404), lastBuild = Some(95i64) | quietAt(now) })))
+
+    /// 作っている段にも上限（buildStallMillis）はある（作り手が固まったまま待ち続けない）。
+    @Test
+    def testBuildingHasItsOwnLongLimit(): Unit \ Assert =
+        let phase = BootPhase.Building(73404, 0i64, 1);
+        Assert.assertEq(
+            expected = (false, true),
+            (Headless.isStalled(Headless.buildStallMillis() - 1i64, phase), Headless.isStalled(Headless.buildStallMillis(), phase)))
+
+    /// 作り終えて作り手が居なくなったら、起こす段の見切りはそこから数える（作っていた時間を足さない）。
+    @Test
+    def testStallCountsFromWhenBuildEnded(): Unit \ Assert =
+        let builtUntil = Headless.stallMillis() * 3i64;
+        let after = Headless.observe(builtUntil, None, BootPhase.Building(73404, 0i64, 1));
+        Assert.assertEq(
+            expected = (BootPhase.Starting(builtUntil, 1), false),
+            (after, Headless.isStalled(builtUntil + Headless.stallMillis() - 1i64, after)))
+
+    /// 作り手の pid が替わったら経過を数え直し、何回目かを 1 足す（「作り直しています（2 回目）」）。
+    @Test
+    def testNewBuilderRestartsCountAndRound(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (BootPhase.Building(73404, 0i64, 1), BootPhase.Building(80001, 9000i64, 2), BootPhase.Building(80001, 9000i64, 2)),
+            (Headless.observe(0i64, Some(73404), BootPhase.Starting(0i64, 0)),
+             Headless.observe(9000i64, Some(80001), BootPhase.Building(73404, 0i64, 1)),
+             Headless.observe(12000i64, Some(80001), BootPhase.Building(80001, 9000i64, 2))))
+
+    /// 作り終えた後にまた作り手が現れても回数を続けて数える（作り終えた直後の作り直し）。
+    @Test
+    def testBuildAgainAfterStartingCountsOn(): Unit \ Assert =
+        Assert.assertEq(expected = BootPhase.Building(80001, 5000i64, 2),
+            Headless.observe(5000i64, Some(80001), BootPhase.Starting(1000i64, 1)))
+
+    /// 作り手は鍵の生きている pid。鍵が無くても、jar を使わず flix run でコンパイルしている時は 0。
+    @Test
+    def testBuilderOf(): Unit \ Assert =
+        let flixRun = "[headless-run] flix run で流すので HEADLESS_JAVA_OPTS（-Xmx1g）は効かない" :: Nil;
+        Assert.assertEq(expected = (Some(73404), Some(0), None),
+            (Headless.builderOf(Some(73404), Nil), Headless.builderOf(None, flixRun), Headless.builderOf(None, "ok" :: Nil)))
 
     /// 1 回落ちただけなら次の頼みで 1 回だけ起こし直す・続けて maxCrashesInRow 回落ちたら理由を答えたまま待つ。
     @Test
@@ -46,60 +106,37 @@ mod TestHeadless {
              Headless.decide(Launch.Crashed(limit, "落ちた", "boom" :: Nil), quietAt(0i64))))
 
     /// 「もう一度起こす」は落ちた 1 本・長く起きない 1 本を起こし直す（落ちた回数は持ち越す）。
-    /// 起きている途中（まだ長くない）は起こし直さない — 押すたびに JVM を増やさない。
+    /// 起きている途中（まだ長くない）・jar を作っている途中は起こし直さない — 押すたびに JVM を増やさない。
     @Test
     def testRestartOnlyWhenCrashedOrStalled(): Unit \ Assert =
+        let building = Launch.Booting(5000, 0, BootPhase.Building(73404, 0i64, 1));
         Assert.assertEq(
-            expected = (Decision.Start(Headless.maxCrashesInRow()), Decision.Start(1),
-                        Decision.Answer(Readiness.Booting(BootStage.StartingGame, 1i64, 0))),
+            expected = (Decision.Start(Headless.maxCrashesInRow()), Decision.Start(1), false, false),
             (Headless.decideRestart(Launch.Crashed(Headless.maxCrashesInRow(), "落ちた", Nil), quietAt(0i64)),
-             Headless.decideRestart(Launch.Booting(5000, 0i64, 1), quietAt(Headless.stallMillis())),
-             Headless.decideRestart(Launch.Booting(5000, 0i64, 0), quietAt(1000i64))))
+             Headless.decideRestart(booted(1), quietAt(Headless.stallMillis())),
+             Headless.decideRestart(booted(0), quietAt(1000i64)) == Decision.Start(0),
+             Headless.decideRestart(building, { builder = Some(73404) | quietAt(Headless.stallMillis()) }) == Decision.Start(0)))
 
-    /// 段は様子のまま答える（jar を作っている間は BuildingJar・経過秒は起こした時刻から）。
+    // ── 一言（目安を決め打ちしない）────────────────────────
+
+    /// jar を作る一言は前回の秒数が分かる時だけ目安を言い、2 人目の作り手からは「作り直しています（2 回目）」。
     @Test
-    def testBootingAnswersStageFromSeen(): Unit \ Assert =
+    def testBootingMessageForBuild(): Unit \ Assert =
+        let first = Headless.bootingMessage(BootStage.BuildingJar(1, Some(95i64)), 37i64, 0);
+        let unknown = Headless.bootingMessage(BootStage.BuildingJar(1, None), 37i64, 0);
+        let again = Headless.bootingMessage(BootStage.BuildingJar(2, None), 4i64, 0);
         Assert.assertEq(
-            expected = Decision.Answer(Readiness.Booting(BootStage.BuildingJar, 42i64, 1)),
-            Headless.decide(Launch.Booting(5000, 0i64, 1), { stage = BootStage.BuildingJar | quietAt(42500i64) }))
+            expected = (true, false, true),
+            (String.contains(substr = "前回は 95 秒。いま 37 秒", first),
+             String.contains(substr = "分", unknown) or String.contains(substr = "前回", unknown),
+             String.contains(substr = "作り直しています（2 回目）", again)))
 
-    // ── 段の決まり（bin/headless-run の行と jar を作る鍵）────
-
-    /// jar を作ると言って鍵がある間だけ BuildingJar。作り終えて鍵が外れたら StartingGame。
+    /// 起こす一言は経過秒だけ（「数秒」の目安も言わない）。前に落ちていれば「もう一度」。
     @Test
-    def testBootStageJarWhileLocked(): Unit \ Assert =
-        let log = "Found 'flix.toml'." :: "[headless-run] jar を作る（src か lib が変わった）" :: Nil;
+    def testBootingMessageForStart(): Unit \ Assert =
         Assert.assertEq(
-            expected = (BootStage.BuildingJar, BootStage.StartingGame),
-            (Headless.bootStageOf(log, true), Headless.bootStageOf(log, false)))
-
-    /// jar を作らない回は headless-run が何も言わない — 鍵が（ほかの make の物で）あっても StartingGame。
-    @Test
-    def testBootStageSilentLogIsStarting(): Unit \ Assert =
-        Assert.assertEq(expected = BootStage.StartingGame, Headless.bootStageOf(Nil, true))
-
-    /// ほかの make が jar を作り終えるのを待つ間も BuildingJar（その後に同じ jar で起こす）。
-    @Test
-    def testBootStageWaitingForOtherBuild(): Unit \ Assert =
-        Assert.assertEq(expected = BootStage.BuildingJar,
-            Headless.bootStageOf("[headless-run] pid 123 が jar を作っているので待つ" :: Nil, true))
-
-    /// jar を使えずに flix run へ回った回は、鍵なしでもコンパイルしているので BuildingJar。
-    @Test
-    def testBootStageFlixRunIsBuilding(): Unit \ Assert =
-        Assert.assertEq(expected = BootStage.BuildingJar,
-            Headless.bootStageOf("[headless-run] flix run で流すので HEADLESS_JAVA_OPTS（-Xmx1g）は効かない" :: Nil, false))
-
-    /// 一言は段で変わる: jar を作る時だけ「1〜2 分」・起こしているだけなら「数秒」。経過秒も言う。
-    @Test
-    def testBootingMessageByStage(): Unit \ Assert =
-        let jar = Headless.bootingMessage(BootStage.BuildingJar, 37i64, 0);
-        let boot = Headless.bootingMessage(BootStage.StartingGame, 3i64, 0);
-        Assert.assertEq(
-            expected = (true, true, false, true),
-            (String.contains(substr = "1〜2 分", jar) and String.contains(substr = "37 秒", jar),
-             String.contains(substr = "数秒", boot) and String.contains(substr = "3 秒", boot),
-             String.contains(substr = "jar", boot),
+            expected = ("窓なしのゲームを起こしています（3 秒）", true),
+            (Headless.bootingMessage(BootStage.StartingGame, 3i64, 0),
              String.contains(substr = "もう一度", Headless.bootingMessage(BootStage.StartingGame, 0i64, 1))))
 
     // ── 終わった後の状態 ──────────────────────────────────
@@ -110,13 +147,13 @@ mod TestHeadless {
         let exit = {port = 5000, why = Headless.exitReason(1), logTail = "boom" :: Nil};
         Assert.assertEq(
             expected = (Launch.Crashed(2, Headless.exitReason(1), "boom" :: Nil), Launch.Idle),
-            (Headless.afterExit(exit, Launch.Booting(5000, 0i64, 1)), Headless.afterExit(exit, Launch.Running(5000))))
+            (Headless.afterExit(exit, booted(1)), Headless.afterExit(exit, Launch.Running(5000))))
 
     /// 起こし直した後に古い 1 本（別のポート）の終わりが届いても、今の 1 本の状態は変えない。
     @Test
     def testAfterExitIgnoresOldProcess(): Unit \ Assert =
         let exit = {port = 4000, why = Headless.exitReason(137), logTail = Nil};
-        Assert.assertEq(expected = Launch.Booting(5000, 0i64, 1), Headless.afterExit(exit, Launch.Booting(5000, 0i64, 1)))
+        Assert.assertEq(expected = booted(1), Headless.afterExit(exit, booted(1)))
 
     /// ログの末尾に混ざる端末の色の印は外す（画面に字のまま出さない）。
     @Test

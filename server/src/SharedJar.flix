@@ -152,9 +152,16 @@ mod SharedJar {
 
     // ── 入口（IO）──────────────────────────────────────────
 
+    /// 様子に、engine が残した前回 jar を作るのにかかった秒数を足す（分かる時だけ。画面が「前回は N 秒」と言う）。
+    pub def withLastBuild(last: Option[Int64], json: Json): Json = match (last, json) {
+        case (Some(n), JObject(fields)) =>
+            JObject(Map.insert("lastBuildSeconds", JNumber(JsonCodec.intToBd(Int64.clampToInt32(min = 0, max = Int32.maxValue(), n))), fields))
+        case _ => json
+    }
+
     /// 開いた時・様子見。要れば裏で 1 本作り始めて、今の様子を返す。
     pub def look(state: State, dir: String): Json \ IO =
-        step(state, dir, onLook)
+        step(state, dir, onLook) |> withLastBuild(Headless.lastBuildSeconds(dir))
 
     /// jar に効くファイルを保存した後に呼ぶ（効かないパスなら何もしない）。
     pub def saved(state: State, dir: String, relPath: String): Unit \ IO =

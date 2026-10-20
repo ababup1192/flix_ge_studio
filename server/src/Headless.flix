@@ -7,15 +7,17 @@
 // 1 本の移り変わり（Launch。旗を重ねずにこの 1 つで持つ）:
 //
 //     Idle ──頼み──▶ Booting ──ポートが答えた──▶ Running ──放っておかれて終わった──▶ Idle
-//                      │  └─ 3 分たっても答えない: Stalled を答える（理由とログの末尾。待ち続ける）
+//                      │  └─ 起こす段で 3 分たっても答えない: Stalled を答える（理由とログの末尾。待ち続ける）
 //                      └─ ready にならずに終わった ──▶ Crashed(続けて落ちた回数, 理由, ログの末尾)
 //     Crashed(1) ──次の頼み──▶ Booting（1 回だけ黙って起こし直す）
 //     Crashed(2 以上) ──▶ Failed を答えたまま待つ（「もう一度起こす」= restart で 1 本だけ起こす）
 //
 // 決まり:
-//   - 起こすのは頼まれた時だけ。立ち上げ中は待たせず「起こしています」を返す。Booting の中は 2 段（BootStage）:
-//     jar を作っている（src が変わった時だけ。1〜2 分）と、起こしている（JVM の立ち上げ・最初の 1 枚。数秒）。
-//     どちらかは debug/headless.log と jar を作る鍵（build/headless/.lock）から毎回決め直す（Launch には写さない）
+//   - 起こすのは頼まれた時だけ。立ち上げ中は待たせず「起こしています」を返す。Booting の中は 2 段（BootPhase）:
+//     jar を作っている（Building）と、起こしている（Starting。JVM の立ち上げ・最初の 1 枚）。
+//     jar を作る鍵（build/headless/.lock/pid）に生きている作り手が居る間は Building。作り手の pid が替わったら
+//     経過秒を数え直して「2 回目」と数える。かかる時間の目安は決め打ちせず、engine が残す前回の秒数があればそれを言う
+//   - 「長く起きない」（3 分）は起こしている段だけで数える。作っている段は作り手が生きている間待つ（上限は 20 分）
 //   - ゲーム（窓あり）が起動の途中なら起こさない（コンパイルと JVM のメモリの山を重ねない。Game.isStarting）
 //   - 続けて落ちる時は起こし直さない（頼まれるたびに JVM とコンパイルを量産しない）。数えた回数は ready で 0 に戻る
 //   - 放っておかれたら自分で終わる（HEADLESS_IDLE_SECS）。メモリの上限（以前の -Xmx1g）は付けない —
@@ -47,8 +49,8 @@ mod Headless {
     pub enum Launch with Eq, ToString {
         /// 起こしていない（まだ頼まれていない・放っておかれて自分から終わった）
         case Idle
-        /// 起こして ready を待っている（ポート, 起こした時刻のミリ秒, それまで続けて落ちた回数）
-        case Booting(Int32, Int64, Int32)
+        /// 起こして ready を待っている（ポート, それまで続けて落ちた回数, 今の段）
+        case Booting(Int32, Int32, BootPhase)
         /// ready になった（ポートが答えた）
         case Running(Int32)
         /// ready にならずに終わった（続けて落ちた回数, 理由, debug/headless.log の末尾）
@@ -66,17 +68,25 @@ mod Headless {
     /// ゲームに置く入口の名前（engine の App.Headless の冒頭の書き方）。
     pub def entry(): String = "E2e.serveHeadless"
 
-    /// 起こしている 1 本が今どの段か（engine の bin/headless-run の出す行で分かる）。
-    ///   BuildingJar  … jar を作っている（src・lib が変わった時だけ。1〜2 分）
-    ///   StartingGame … jar はある。JVM を立ち上げて最初の 1 枚を待っている（数秒）
+    /// 起こしている 1 本の段（Launch.Booting が持つ。頼みのたびに observe で進める）。時刻はミリ秒。
+    pub enum BootPhase with Eq, ToString {
+        /// JVM を起こして最初の 1 枚を待っている（この段に入った時刻, それまでに作り手を見た回数）
+        case Starting(Int64, Int32)
+        /// jar を作っている・作り終えるのを待っている（作り手の pid, この作り手を初めて見た時刻, 何回目の作り手か）
+        case Building(Int32, Int64, Int32)
+    }
+
+    /// 画面に見せる段。
+    ///   BuildingJar(何回目, 前回の秒数) … jar を作っている（前回の秒数は engine が残した物。無ければ目安を言わない）
+    ///   StartingGame                    … jar はある。JVM を立ち上げて最初の 1 枚を待っている
     pub enum BootStage with Eq, ToString {
-        case BuildingJar
+        case BuildingJar(Int32, Option[Int64])
         case StartingGame
     }
 
     /// 頼みの答え。
     ///   Ready(port)          … 頼める
-    ///   Booting(stage, 秒, 落ちた回数) … 起こしている 1 本を待っている（段と起こしてからの経過秒。少し後にもう一度頼む）
+    ///   Booting(stage, 秒, 落ちた回数) … 起こしている 1 本を待っている（段とその段に入ってからの経過秒。少し後にもう一度頼む）
     ///   Starting(why)        … それ以外で待っている（ゲームが起動の途中・答えない。少し後にもう一度頼む）
     ///   Stalled(why, log)    … 起こしてから長く ready にならない（待ち続けるが、理由とログの末尾と起こし直す口を見せる）
     ///   Failed(why, log)     … ready にならずに落ちた（続けては起こさない。画面は理由と「もう一度起こす」を出す）
@@ -95,8 +105,11 @@ mod Headless {
     ///   answering    … 今の 1 本のポートが繋がるか
     ///   gameStarting … ゲーム（窓あり）が起動の途中か
     ///   logTail      … debug/headless.log の末尾
-    ///   stage        … 起こしている 1 本の段（bootStageOf で決めた物）
-    pub type alias Seen = {now = Int64, answering = Bool, gameStarting = Bool, logTail = List[String], stage = BootStage}
+    ///   builder      … jar を作っている生きた作り手の pid（鍵 build/headless/.lock/pid。jar を使わず flix run で
+    ///                  コンパイルしている時は 0。誰も作っていなければ無し。builderOf で決めた物）
+    ///   lastBuild    … engine が残した前回 jar を作るのにかかった秒数（lastBuildFile。無ければ無し）
+    pub type alias Seen = {now = Int64, answering = Bool, gameStarting = Bool, logTail = List[String],
+                           builder = Option[Int32], lastBuild = Option[Int64]}
 
     /// 頼みをどうするか。
     pub enum Decision with Eq, ToString {
@@ -104,6 +117,8 @@ mod Headless {
         case Answer(Readiness)
         /// ready になった印を付けて Ready を答える（ポート）
         case MarkRunning(Int32)
+        /// 状態を進めて答える（起こしている段が移った・作り手が替わった）
+        case Observe(Launch, Readiness)
         /// 新しく 1 本起こす（それまで続けて落ちた回数を持ち越す）
         case Start(Int32)
     }
@@ -113,8 +128,12 @@ mod Headless {
     /// 続けて何回落ちたら黙って起こし直すのをやめるか（1 回目は 1 度だけ起こし直す）。
     pub def maxCrashesInRow(): Int32 = 2
 
-    /// 起こしてから何ミリ秒 ready にならなければ「長く起きない」とするか（初回の jar 作りは 1〜2 分）。
+    /// 起こす段に入ってから何ミリ秒 ready にならなければ「長く起きない」とするか（jar を作っている間は数えない）。
     pub def stallMillis(): Int64 = 180000i64
+
+    /// jar を作っている段の見切り（作り手が生きている間は待つが、これを過ぎたら「長く起きない」を見せる）。
+    /// engine の headless-run も、ほかの作り手を 15 分待って諦める。
+    pub def buildStallMillis(): Int64 = 1200000i64
 
     /// 理由に添えるログの行数。
     pub def tailLines(): Int32 = 12
@@ -124,11 +143,12 @@ mod Headless {
         case Launch.Running(port) =>
             if (seen#answering) Decision.Answer(Readiness.Ready(port))
             else Decision.Answer(Readiness.Starting("窓なしのゲームが答えません（終わる途中なら、次の頼みで起こし直します）"))
-        case Launch.Booting(port, startedAt, failures) =>
+        case Launch.Booting(port, failures, phase) =>
             if (seen#answering) Decision.MarkRunning(port)
-            else if (seen#now - startedAt >= stallMillis())
-                Decision.Answer(Readiness.Stalled(stalledMessage(seen#now - startedAt), seen#logTail))
-            else Decision.Answer(Readiness.Booting(seen#stage, (seen#now - startedAt) / 1000i64, failures))
+            else {
+                let next = observe(seen#now, seen#builder, phase);
+                Decision.Observe(Launch.Booting(port, failures, next), readinessOf(seen, failures, next))
+            }
         case Launch.Idle => startUnlessGameStarting(0, seen)
         case Launch.Crashed(failures, why, tail) =>
             if (failures >= maxCrashesInRow()) Decision.Answer(Readiness.Failed(why, tail))
@@ -139,7 +159,7 @@ mod Headless {
     /// 落ちた回数は持ち越す — 押して起こした 1 本がまた落ちたら、すぐ理由に戻る（押すたびに 1 本だけ）。
     pub def decideRestart(launch: Launch, seen: Seen): Decision = match launch {
         case Launch.Crashed(failures, _, _) => startUnlessGameStarting(failures, seen)
-        case Launch.Booting(_, startedAt, failures) if not seen#answering and seen#now - startedAt >= stallMillis() =>
+        case Launch.Booting(_, failures, phase) if not seen#answering and isStalled(seen#now, observe(seen#now, seen#builder, phase)) =>
             startUnlessGameStarting(failures, seen)
         case _ => decide(launch, seen)
     }
@@ -147,7 +167,7 @@ mod Headless {
     /// 起こしたプロセスが終わった後の状態。終わったのが今の 1 本（同じポート）でなければ変えない
     /// （起こし直した後に、止めた古い 1 本の終わりが届いても混ぜない）。
     pub def afterExit(exit: {port = Int32, why = String, logTail = List[String]}, launch: Launch): Launch = match launch {
-        case Launch.Booting(port, _, failures) if port == exit#port => Launch.Crashed(failures + 1, exit#why, exit#logTail)
+        case Launch.Booting(port, failures, _) if port == exit#port => Launch.Crashed(failures + 1, exit#why, exit#logTail)
         case Launch.Running(port) if port == exit#port => Launch.Idle
         case other => other
     }
@@ -156,30 +176,69 @@ mod Headless {
     pub def exitReason(code: Int32): String =
         "窓なしのゲームが ready にならずに終わりました（終了コード ${code}）"
 
-    /// bin/headless-run が jar を作る（またはほかの make が作り終えるのを待つ・jar なしでコンパイルする）時に出す行の印。
-    pub def buildMarks(): List[String] =
-        "[headless-run] jar を作る" :: "が jar を作っているので待つ" :: "[headless-run] flix run で流す" :: Nil
+    /// 段を進める（builder … 今の作り手の pid。無ければ誰も作っていない）。
+    /// 作り手が現れたら Building・替わったら経過を数え直して回数を 1 足す・居なくなったら Starting（そこから数える）。
+    pub def observe(now: Int64, builder: Option[Int32], phase: BootPhase): BootPhase = match (phase, builder) {
+        case (BootPhase.Building(pid, since, round), Some(current)) =>
+            if (pid == current) BootPhase.Building(pid, since, round) else BootPhase.Building(current, now, round + 1)
+        case (BootPhase.Building(_, _, round), None) => BootPhase.Starting(now, round)
+        case (BootPhase.Starting(_, done), Some(pid)) => BootPhase.Building(pid, now, done + 1)
+        case (BootPhase.Starting(since, done), None) => BootPhase.Starting(since, done)
+    }
 
-    /// 段を決める。log … debug/headless.log の全行・buildLocked … jar を作る鍵（build/headless/.lock）があるか。
-    /// jar を作ると言った後でも、鍵が外れていれば作り終えて JVM を起こしている（flix run は鍵なしでコンパイルし続ける）。
-    pub def bootStageOf(log: List[String], buildLocked: Bool): BootStage =
-        let said = mark -> List.exists(line -> String.contains(substr = mark, line), log);
-        if (said("[headless-run] flix run で流す")) BootStage.BuildingJar
-        else if (buildLocked and List.exists(said, buildMarks())) BootStage.BuildingJar
-        else BootStage.StartingGame
+    /// 長く起きないか（起こす段は stallMillis・作っている段は buildStallMillis）。
+    pub def isStalled(now: Int64, phase: BootPhase): Bool = match phase {
+        case BootPhase.Starting(since, _)    => now - since >= stallMillis()
+        case BootPhase.Building(_, since, _) => now - since >= buildStallMillis()
+    }
 
-    /// 起こしている間の一言（段・起こしてからの経過秒。前に落ちていれば、それも言う）。
+    /// 段から答え（経過はその段に入ってからの秒）。
+    pub def readinessOf(seen: Seen, failures: Int32, phase: BootPhase): Readiness =
+        if (isStalled(seen#now, phase)) Readiness.Stalled(stalledMessage(phase, seen#now), seen#logTail)
+        else match phase {
+            case BootPhase.Starting(since, _) =>
+                Readiness.Booting(BootStage.StartingGame, (seen#now - since) / 1000i64, failures)
+            case BootPhase.Building(_, since, round) =>
+                Readiness.Booting(BootStage.BuildingJar(round, seen#lastBuild), (seen#now - since) / 1000i64, failures)
+        }
+
+    /// jar を使わずに flix run でコンパイルしている時に headless-run が出す行の印（鍵を取らない）。
+    pub def flixRunMark(): String = "[headless-run] flix run で流す"
+
+    /// 作り手を決める（IO で読んだ物を渡す）。lockOwner … 鍵の pid のうち生きている物・log … debug/headless.log の全行。
+    /// 鍵の作り手が居ればそれ。jar を使わず flix run でコンパイルしているなら 0（この 1 本が自分でコンパイルしている）。
+    pub def builderOf(lockOwner: Option[Int32], log: List[String]): Option[Int32] = match lockOwner {
+        case Some(pid) => Some(pid)
+        case None =>
+            if (List.exists(line -> String.contains(substr = flixRunMark(), line), log)) Some(0) else None
+    }
+
+    /// engine が残す、前回 jar を作るのにかかった秒数のファイル（ゲームの根から。engine 0.52.1 の名前は仮）。
+    pub def lastBuildFile(): String = "build/headless/last-build-seconds"
+
+    /// 起こしている間の一言（段・その段に入ってからの経過秒。前に落ちていれば、それも言う）。
+    /// かかる時間の目安は決め打ちしない（前回の秒数が分かる時だけ言う）。
     pub def bootingMessage(stage: BootStage, elapsedSecs: Int64, failures: Int32): String =
         let again = if (failures > 0) "落ちたので、もう一度" else "";
         let secs = Int64.toString(elapsedSecs);
         match stage {
-            case BootStage.BuildingJar  => "窓なしのゲームの jar を作っています（src が変わったので 1〜2 分。${again}起こして ${secs} 秒）"
-            case BootStage.StartingGame => "窓なしのゲームを${again}起こしています（数秒。${secs} 秒）"
+            case BootStage.BuildingJar(round, last) =>
+                let what = if (round <= 1) "jar を作っています" else "jar を作り直しています（${Int32.toString(round)} 回目）";
+                let took = match last {
+                    case Some(n) => "前回は ${Int64.toString(n)} 秒。いま ${secs} 秒"
+                    case None    => "${secs} 秒"
+                };
+                "窓なしのゲームの ${what}（${again}${took}）"
+            case BootStage.StartingGame => "窓なしのゲームを${again}起こしています（${secs} 秒）"
         }
 
-    /// 長く起きない時の一言（起こしてからの経過ミリ秒）。
-    pub def stalledMessage(elapsed: Int64): String =
-        "窓なしのゲームが ${Int64.toString(elapsed / 60000i64)} 分たっても ready になりません（下は debug/headless.log の末尾。「もう一度起こす」で止めて起こし直せます）"
+    /// 長く起きない時の一言（段とその段に入ってからの経過）。
+    pub def stalledMessage(phase: BootPhase, now: Int64): String = match phase {
+        case BootPhase.Starting(since, _) =>
+            "窓なしのゲームが ${Int64.toString((now - since) / 60000i64)} 分たっても ready になりません（下は debug/headless.log の末尾。「もう一度起こす」で止めて起こし直せます）"
+        case BootPhase.Building(_, since, _) =>
+            "jar を作り始めて ${Int64.toString((now - since) / 60000i64)} 分たっても終わりません（下は debug/headless.log の末尾。「もう一度起こす」で止めて起こし直せます）"
+    }
 
     def startUnlessGameStarting(failures: Int32, seen: Seen): Decision =
         if (seen#gameStarting) Decision.Answer(Readiness.Starting("ゲームが起動の途中なので、窓なしのゲームは起動が済んでから起こします"))
@@ -232,10 +291,14 @@ mod Headless {
                     answering = portOf(launch) |> Option.exists(answers),
                     gameStarting = gameStarting,
                     logTail = logTail(dir, tailLines()),
-                    stage = bootStageOf(logLines(dir), new JFile("${dir}/build/headless/.lock").exists())
+                    builder = builderOf(lockOwner(dir), logLines(dir)),
+                    lastBuild = lastBuildSeconds(dir)
                 };
                 match rule(launch, seen) {
                     case Decision.Answer(readiness) => readiness
+                    case Decision.Observe(next, readiness) =>
+                        discard (state#launches).put(dir, next);
+                        readiness
                     case Decision.MarkRunning(port) =>
                         discard (state#launches).put(dir, Launch.Running(port));
                         Readiness.Ready(port)
@@ -243,7 +306,7 @@ mod Headless {
                         // 長く起きない 1 本を起こし直す時は、先に止める（JVM を 2 本並べない）
                         stopProcess(state, dir);
                         let port = freePort();
-                        discard (state#launches).put(dir, Launch.Booting(port, seen#now, failures));
+                        discard (state#launches).put(dir, Launch.Booting(port, failures, BootPhase.Starting(seen#now, 0)));
                         startInBackground(state, dir, port);
                         Readiness.Booting(BootStage.StartingGame, 0i64, failures)
                 }
@@ -259,6 +322,15 @@ mod Headless {
         };
         lock.unlock();
         result
+
+    /// jar を作る鍵の作り手のうち、生きている pid（鍵が無い・読めない・作り手が居なければ無し）。
+    def lockOwner(dir: String): Option[Int32] \ IO =
+        Int32.fromString(String.trim(readText(new JFile("${dir}/build/headless/.lock/pid"))))
+            |> Option.filter(pid -> ProcessHandle.of(Int32.toInt64(pid)).isPresent())
+
+    /// engine が残した前回 jar を作るのにかかった秒数（無い・読めなければ無し）。
+    pub def lastBuildSeconds(dir: String): Option[Int64] \ IO =
+        Int64.fromString(String.trim(readText(new JFile("${dir}/${lastBuildFile()}"))))
 
     def launchOf(state: State, dir: String): Launch \ IO =
         let value: Launch = (state#launches).get(dir);
