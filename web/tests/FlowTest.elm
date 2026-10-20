@@ -77,6 +77,10 @@ simulate effect =
             SimulatedEffect.Process.sleep info.afterMs
                 |> SimulatedEffect.Task.perform (\_ -> Main.TalkRetried info.seq)
 
+        Effect.TalkFollow info ->
+            SimulatedEffect.Process.sleep info.afterMs
+                |> SimulatedEffect.Task.perform (\_ -> Main.TalkFollowed info.seq)
+
         -- Browser.Dom は SimulatedEffect に無い。スクロール位置はテストの
         -- 関心外なので何もしない
         Effect.ZoomViewport _ ->

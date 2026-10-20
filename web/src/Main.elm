@@ -1317,6 +1317,7 @@ type Msg
     | VideosMsg VideoView.Msg
     | TalkMsg TalkView.Msg
     | TalkRetried Int
+    | TalkFollowed Int
     | GalleryPaneClicked GalleryPane
     | GameLogViewOpened
     | GameLogViewClosed
@@ -1521,6 +1522,13 @@ update msg model =
             let
                 ( talk, out ) =
                     TalkView.retryFired seq model.talk
+            in
+            runTalkOut out { model | talk = talk }
+
+        TalkFollowed seq ->
+            let
+                ( talk, out ) =
+                    TalkView.followFired seq model.talk
             in
             runTalkOut out { model | talk = talk }
 
@@ -6743,17 +6751,19 @@ handleOkByKind env model =
         "talkShot" ->
             case
                 D.decodeValue
-                    (D.map3 (\node line answer -> ( { node = node, line = line }, answer ))
+                    (D.map4 (\node line took answer -> ( { node = node, line = line }, took, answer ))
                         (D.field "node" D.string)
                         (D.field "line" D.int)
+                        -- 1 往復のミリ秒(realApi が測って添える。遅ければカーソルを追って撮るのをやめる)
+                        (D.maybe (D.field "tookMs" D.int))
                         TalkView.shotAnswerDecoder
                     )
                     env.body
             of
-                Ok ( t, answer ) ->
+                Ok ( t, took, answer ) ->
                     let
                         ( talk, out ) =
-                            TalkView.gotShot t answer model.talk
+                            TalkView.gotShotTimed t took answer model.talk
                     in
                     runTalkOut out { model | talk = talk }
 
@@ -8805,6 +8815,10 @@ runTalkOut out model =
                 )
                 ( model, Effect.none )
                 outs
+
+        TalkView.OutFollowLater seq ->
+            -- カーソルを追って撮る前に少し待つ(連打は最後の 1 回だけ。古い予約は照合キーで捨てる)
+            ( model, Effect.TalkFollow { seq = seq, afterMs = 150 } )
 
         TalkView.OutRetryLater seq ->
             -- 窓なしのゲームを起こしている間は 3 秒おきに頼み直す(段と経過秒はサーバの答えに乗る)
@@ -15980,6 +15994,7 @@ main =
             , framePeeked = FramePeeked
             , wakePolled = WakePolled
             , talkRetried = TalkRetried
+            , talkFollowed = TalkFollowed
             , scrolled = TimelineScrolled
             }
     in

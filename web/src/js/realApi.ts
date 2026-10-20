@@ -291,13 +291,15 @@ export function realApi(base: string): Api {
             vars?: Record<string, string>;
           };
           try {
+            // 1 往復のミリ秒を添える(遅ければ画面がカーソルを追って撮るのをやめる)
+            const startedAt = performance.now();
             const res = await fetchWithin(`${base}/talk/shot`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ node, line, restart: restart === true, vars: vars ?? {} }),
             }, SHOT_MS);
             const body = await res.json().catch(() => ({ ok: false, error: { message: `HTTP ${res.status}` } }));
-            return { ...body, node, line };
+            return { ...body, node, line, tookMs: Math.round(performance.now() - startedAt) };
           } catch (e) {
             return { ok: false, error: { message: String(e) }, node, line };
           }

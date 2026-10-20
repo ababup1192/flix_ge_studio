@@ -48,6 +48,8 @@ type Effect
     | WakePoll { seq : Int, afterMs : Float }
       -- 会話のプレビュー: 窓なしのゲームが立ち上がるのを待って頼み直す間。seq は古い予約の照合キー
     | TalkRetry { seq : Int, afterMs : Float }
+      -- 会話のプレビュー: カーソルを追って撮る前の間(連打は最後の 1 回だけ)。seq は古い予約の照合キー
+    | TalkFollow { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -87,6 +89,7 @@ perform :
     , framePeeked : Int -> msg
     , wakePolled : Int -> msg
     , talkRetried : Int -> msg
+    , talkFollowed : Int -> msg
     , scrolled : msg
     }
     -> Effect
@@ -151,6 +154,10 @@ perform caps effect =
         TalkRetry info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.talkRetried info.seq)
+
+        TalkFollow info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.talkFollowed info.seq)
 
         WakePoll info ->
             Process.sleep info.afterMs

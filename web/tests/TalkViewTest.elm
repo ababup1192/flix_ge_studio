@@ -15,7 +15,7 @@ import Json.Decode as D
 import Dict
 import TalkTags
 import TalkTree
-import TalkView exposing (Boot(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
+import TalkView exposing (Boot(..), Follow(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
 
 
 path : String
@@ -47,9 +47,21 @@ offsetOfLine n =
     (n - 1) * 2
 
 
+{-| カーソルを n 行目へ動かす(追う予約はまだ来ていない)。 -}
+moveTo : Int -> TalkView.Model -> ( TalkView.Model, Out )
+moveTo n model =
+    TalkView.update (TalkView.CaretMoved model.text (offsetOfLine n)) model
+
+
+{-| カーソルを n 行目へ動かし、150 ms の予約が来た所まで進める(予約が出なければ動かしただけ)。 -}
 caretTo : Int -> TalkView.Model -> ( TalkView.Model, Out )
 caretTo n model =
-    TalkView.update (TalkView.CaretMoved model.text (offsetOfLine n)) model
+    case moveTo n model of
+        ( m1, OutFollowLater seq ) ->
+            TalkView.followFired seq m1
+
+        other ->
+            other
 
 
 clock : Int -> TalkView.Target
@@ -247,9 +259,115 @@ suite =
             \_ ->
                 ( TalkView.lineAt "a\nb\nc" 0, TalkView.lineAt "a\nb\nc" 2, TalkView.lineAt "a\nb\nc" 4 )
                     |> Expect.equal ( 1, 2, 3 )
-        , test "何も頼んでいなければ、カーソルの行をすぐ頼む" <|
+        , test "カーソルが別の行へ移ったら 150 ms の予約をし、予約が来たらその行を撮る" <|
             \_ ->
-                caretTo 40 opened |> Tuple.second |> Expect.equal (OutShot (clock 40))
+                let
+                    ( m1, out1 ) =
+                        moveTo 40 opened
+
+                    ( m2, out2 ) =
+                        case out1 of
+                            OutFollowLater seq ->
+                                TalkView.followFired seq m1
+
+                            _ ->
+                                ( m1, OutNone )
+                in
+                ( ( m1.request, out1 ), ( m2.request, out2 ) )
+                    |> Expect.equal ( ( Waiting 1 (clock 40), OutFollowLater 1 ), ( InFlight (clock 40), OutShot (clock 40) ) )
+        , test "連打は最後の 1 回だけ撮る(古い予約は捨てる)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        moveTo 40 opened
+
+                    ( m2, _ ) =
+                        moveTo 41 m1
+
+                    ( m3, _ ) =
+                        moveTo 42 m2
+
+                    ( m4, staleOut ) =
+                        TalkView.followFired 1 m3
+
+                    ( m5, lastOut ) =
+                        TalkView.followFired 3 m4
+                in
+                ( ( staleOut, m4.request ), ( lastOut, m5.request ) )
+                    |> Expect.equal ( ( OutNone, Waiting 3 (clock 42) ), ( OutShot (clock 42), InFlight (clock 42) ) )
+        , test "撮っている途中に次が来たら、前の答えは捨てて最後の行だけ頼む(古い行の絵を出さない)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        caretTo 40 opened
+
+                    ( m2, out2 ) =
+                        moveTo 41 m1
+
+                    ( m3, out3 ) =
+                        TalkView.gotShot (clock 40) (ShotOk "png40") m2
+                in
+                ( ( out2, m2.request ), ( m3.shown, m3.request, out3 ) )
+                    |> Expect.equal ( ( OutNone, InFlightThen (clock 40) (clock 41) ), ( Blank, InFlight (clock 41), OutShot (clock 41) ) )
+        , test "未保存の字がある間はカーソルを追って撮らない(保存した時に撮る)" <|
+            \_ ->
+                let
+                    dirty =
+                        { opened | text = opened.text ++ "y" }
+                in
+                moveTo 40 dirty |> Tuple.mapFirst .request |> Expect.equal ( Idle, OutNone )
+        , test "未保存になったら、待っていた予約も畳む(前の行を撮りに行かない)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        moveTo 40 opened
+
+                    ( m2, _ ) =
+                        TalkView.update (TalkView.TextEdited (opened.text ++ "y") (offsetOfLine 41)) m1
+                in
+                ( m2.request, TalkView.followFired 1 m2 |> Tuple.second ) |> Expect.equal ( Idle, OutNone )
+        , test "起きた後の 1 枚が 1 秒を超えたら追って撮るのをやめ、保存か「この行を撮る」だけで撮る" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        caretTo 40 opened
+
+                    ( m2, _ ) =
+                        TalkView.gotShotTimed (clock 40) (Just 300) (ShotOk "png40") m1
+
+                    ( m3, _ ) =
+                        caretTo 41 m2
+
+                    ( m4, _ ) =
+                        TalkView.gotShotTimed (clock 41) (Just (TalkView.slowShotMs + 200)) (ShotOk "png41") m3
+
+                    ( m5, moved ) =
+                        moveTo 42 m4
+
+                    ( _, shoot ) =
+                        TalkView.update TalkView.ShootClicked m5
+                in
+                ( ( m2.follow, m4.follow ), ( moved, shoot ) )
+                    |> Expect.equal ( ( FollowCursor, FollowManual (TalkView.slowShotMs + 200) ), ( OutNone, OutShot (clock 42) ) )
+        , test "起きた直後の 1 枚目が遅くても数えない(JVM が温まる前)・「自動に戻す」でまた追う" <|
+            \_ ->
+                let
+                    booting =
+                        { opened | headless = HeadlessBooting BootWaiting }
+
+                    ( m1, _ ) =
+                        caretTo 40 booting
+
+                    ( m2, _ ) =
+                        TalkView.gotShotTimed (clock 40) (Just 5000) (ShotOk "png40") m1
+
+                    manual =
+                        { m2 | follow = FollowManual 1500 }
+
+                    ( m3, out3 ) =
+                        TalkView.update TalkView.FollowResumed { manual | cursor = 41 }
+                in
+                ( m2.follow, ( m3.follow, out3 ) ) |> Expect.equal ( FollowCursor, ( FollowCursor, OutFollowLater (m2.followSeq + 1) ) )
         , test "頼んでいる間に動いたカーソルは、答えの後に最後の 1 つだけ頼む" <|
             \_ ->
                 let

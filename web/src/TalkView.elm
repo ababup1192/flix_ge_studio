@@ -9,6 +9,7 @@ module TalkView exposing
     , Pick
     , Picker(..)
     , Problem
+    , Follow(..)
     , Request(..)
     , Shot
     , ShotAnswer(..)
@@ -22,7 +23,10 @@ module TalkView exposing
     , gotFile
     , gotFiles
     , gotGoto
+    , followFired
     , gotShot
+    , gotShotTimed
+    , slowShotMs
     , gotProgram
     , gotTree
     , gotVocab
@@ -46,8 +50,9 @@ Studio は自分で描かない。右の絵は窓なしのゲーム(ゲーム自
 
 プレビューの頼みと見せ方は直交する 2 つの型にしてある。
 
-  - Request … 頼み。Idle / InFlight(1 つ頼んでいる)/ InFlightThen(頼んでいる間にカーソルが
-    動いた。答えが来たら最後の行だけ頼む — 打鍵ごとに窓なしのゲームへ積まない)
+  - Request … 頼み。Idle / Waiting(カーソルが動いた。150 ms 待って最後の 1 回だけ撮る)/
+    InFlight(1 つ頼んでいる)/ InFlightThen(頼んでいる間に次が来た。前の答えは捨て、最後の行だけ頼む —
+    打鍵ごとに窓なしのゲームへ積まない)
   - Shown … 見せ方。Blank / Shown(今の行の絵)/ Held(前の絵のまま。理由つき — 台本が壊れている・
     ゲームを起こしている最中)
 
@@ -99,8 +104,21 @@ type alias Shot =
 
 type Request
     = Idle
+    | Waiting Int Target
     | InFlight Target
     | InFlightThen Target Target
+
+
+{-| カーソルを追って撮るか(Request とは別の軸)。
+
+  - FollowCursor … カーソルが別の行へ移ったら、保存しなくてもその行を撮る(保存済みの台本の行だけ)
+  - FollowManual ミリ秒 … 1 往復が遅かった(slowShotMs を超えた)ので自動では撮らない。保存した時と
+    「この行を撮る」で撮る(今までの形)。「自動に戻す」で FollowCursor へ
+
+-}
+type Follow
+    = FollowCursor
+    | FollowManual Int
 
 
 type Shown
@@ -227,6 +245,10 @@ type alias Model =
     , overrides : Dict String String
     , pane : Pane
 
+    -- カーソルを追って撮るか(遅い時は止める)と、追う予約の照合キー(古い予約は捨てる)
+    , follow : Follow
+    , followSeq : Int
+
     -- 読み進める欄(組んだ木を流す物と、流している 1 回。まだ流していなければ Nothing)
     , program : TalkRun.Program
     , reading : Maybe TalkRun.Reading
@@ -256,6 +278,8 @@ init =
     , tree = TalkTree.empty
     , overrides = Dict.empty
     , pane = ScriptPane
+    , follow = FollowCursor
+    , followSeq = 0
     , program = TalkRun.emptyProgram
     , reading = Nothing
     }
@@ -278,6 +302,8 @@ type Msg
     | VarsResetAll
     | PaneChosen Pane
     | GraphNodePicked String
+    | ShootClicked
+    | FollowResumed
     | ReadStarted String
     | ReadChosen Int
     | ReadLinePicked Int
@@ -290,6 +316,7 @@ type Out
     | OutShot Target
     | OutGoto Target
     | OutRetryLater Int
+    | OutFollowLater Int
     | OutRestart Target
     | OutScrollToLine Int
     | OutBatch (List Out)
@@ -341,6 +368,10 @@ ask force t model =
         Idle ->
             ( { model | request = InFlight t }, OutShot t )
 
+        Waiting _ _ ->
+            -- 追う予約より先に頼む(予約は照合キーが合わなくなって捨てられる)
+            ( { model | request = InFlight t }, OutShot t )
+
         InFlight cur ->
             if cur == t && not force then
                 ( model, OutNone )
@@ -350,6 +381,74 @@ ask force t model =
 
         InFlightThen cur _ ->
             ( { model | request = InFlightThen cur t }, OutNone )
+
+
+{-| 1 往復がこれを超えたら、カーソルを追って撮るのをやめる(ミリ秒)。 -}
+slowShotMs : Int
+slowShotMs =
+    1000
+
+
+{-| カーソルを追う間(連打は最後の 1 回だけ撮る)。 -}
+followDelayMs : Int
+followDelayMs =
+    150
+
+
+{-| 保存していない字があるか(未保存の行はゲームが読めないので、保存するまで撮らない)。 -}
+isDirty : Model -> Bool
+isDirty model =
+    model.text /= model.saved
+
+
+{-| カーソルが別の行へ移った: 追って撮る時は 150 ms 待つ予約(前の予約は捨てる)。撮っている途中なら、
+答えが来た後に最後の行だけ頼む(前の答えは捨てる)。未保存の字がある間・遅くて止めた間・ノードの外は撮らない。
+-}
+followCursor : Model -> ( Model, Out )
+followCursor model =
+    case ( model.follow, isDirty model, targetAt model.path model.nodes model.cursor ) of
+        ( FollowCursor, False, Just t ) ->
+            case model.request of
+                InFlight cur ->
+                    if cur == t then
+                        ( model, OutNone )
+
+                    else
+                        ( { model | request = InFlightThen cur t }, OutNone )
+
+                InFlightThen cur _ ->
+                    ( { model | request = InFlightThen cur t }, OutNone )
+
+                _ ->
+                    let
+                        seq =
+                            model.followSeq + 1
+                    in
+                    ( { model | request = Waiting seq t, followSeq = seq }, OutFollowLater seq )
+
+        _ ->
+            -- 撮らない時は、待っていた予約も畳む(前の行を撮りに行かない)
+            case model.request of
+                Waiting _ _ ->
+                    ( { model | request = Idle }, OutNone )
+
+                _ ->
+                    ( model, OutNone )
+
+
+{-| 追う予約が来た。今の予約(照合キーが合う)ならその行を撮る。古い予約は捨てる。 -}
+followFired : Int -> Model -> ( Model, Out )
+followFired seq model =
+    case model.request of
+        Waiting s t ->
+            if s == seq then
+                ( { model | request = InFlight t }, OutShot t )
+
+            else
+                ( model, OutNone )
+
+        _ ->
+            ( model, OutNone )
 
 
 {-| 今のカーソルの行を頼む(ノードが無い行なら頼まない)。 -}
@@ -494,6 +593,13 @@ update msg model =
 
         PaneChosen pane ->
             ( { model | pane = pane, picker = PickerClosed }, OutNone )
+
+        ShootClicked ->
+            -- 自動で撮らない間(遅い・未保存)に、今の行をその場で撮る
+            askCursor True model
+
+        FollowResumed ->
+            followCursor { model | follow = FollowCursor }
 
         GraphNodePicked title ->
             -- 図の箱を押した: そのノードの title: の行へカーソルを置いて台本に戻り、撮る
@@ -649,7 +755,7 @@ moveCaret offset model =
 
     else
         -- 別の行へ動いたらダイアログは閉じる(選んだ値を前の行に書かない)
-        askCursor False { model | cursor = line, picker = PickerClosed }
+        followCursor { model | cursor = line, picker = PickerClosed }
 
 
 {-| シナリオの一覧が届いた。まだ何も開いていなければ先頭を開く。 -}
@@ -731,14 +837,42 @@ gotBuild report model =
         )
 
 
-{-| 撮った答え。今の頼みと違う Target の答えは捨てる。 -}
+{-| 撮った答え(かかった時間を知らない形)。 -}
 gotShot : Target -> ShotAnswer -> Model -> ( Model, Out )
 gotShot t answer model =
+    gotShotTimed t Nothing answer model
+
+
+{-| 撮った答え。今の頼みと違う Target の答えは捨てる。撮っている途中に次が来ていたら、この答えは捨てて次を頼む。
+took = 1 往復のミリ秒。窓なしのゲームが起きた後(前も撮れていた)の 1 枚が slowShotMs を超えたら、追って撮るのをやめる
+(起きた直後の 1 枚目は重いので数えない)。
+-}
+gotShotTimed : Target -> Maybe Int -> ShotAnswer -> Model -> ( Model, Out )
+gotShotTimed t took answer model =
     let
+        tooSlow =
+            case ( ( answer, model.headless ), ( took, model.follow ) ) of
+                ( ( ShotOk _, HeadlessOk ), ( Just ms, FollowCursor ) ) ->
+                    if ms > slowShotMs then
+                        Just ms
+
+                    else
+                        Nothing
+
+                _ ->
+                    Nothing
+
         apply m =
             case answer of
                 ShotOk png ->
-                    ( { m | shown = Shown { target = t, png = png }, note = "", headless = HeadlessOk }, OutNone )
+                    ( { m
+                        | shown = Shown { target = t, png = png }
+                        , note = ""
+                        , headless = HeadlessOk
+                        , follow = tooSlow |> Maybe.map FollowManual |> Maybe.withDefault m.follow
+                      }
+                    , OutNone
+                    )
 
                 ShotStarting why boot ->
                     retryLater (hold why { m | headless = HeadlessBooting boot })
@@ -762,15 +896,14 @@ gotShot t answer model =
 
         InFlightThen cur next ->
             if cur == t then
-                -- 答えの中身は見せ、待っていた最後の行をすぐ頼む(頼み直しの予約は要らない)
-                let
-                    ( m1, _ ) =
-                        apply { model | request = InFlight next }
-                in
-                ( m1, OutShot next )
+                -- 前の答えは捨て(古い行の絵を出さない)、待っていた最後の行をすぐ頼む
+                ( { model | request = InFlight next }, OutShot next )
 
             else
                 ( model, OutNone )
+
+        Waiting _ _ ->
+            ( model, OutNone )
 
         Idle ->
             ( model, OutNone )
@@ -1422,6 +1555,19 @@ viewProblems model =
         )
 
 
+isInFlight : Request -> Bool
+isInFlight request =
+    case request of
+        InFlight _ ->
+            True
+
+        InFlightThen _ _ ->
+            True
+
+        _ ->
+            False
+
+
 viewPreview : Model -> Html Msg
 viewPreview model =
     let
@@ -1443,11 +1589,74 @@ viewPreview model =
                 []
 
         busy =
-            busyLabel (model.request /= Idle) model.headless
+            busyLabel (isInFlight model.request) model.headless
+
+        -- 出している絵がカーソルの行の物か(違う間は薄く出し、どの行の絵かを言う)
+        here =
+            targetAt model.path model.nodes model.cursor
+
+        shotOf =
+            case model.shown of
+                Shown shot ->
+                    Just shot
+
+                Held shot _ ->
+                    Just shot
+
+                Blank ->
+                    Nothing
+
+        stale =
+            shotOf |> Maybe.map (\shot -> Just shot.target /= here) |> Maybe.withDefault False
+
+        shotCaption =
+            case shotOf of
+                Just shot ->
+                    span
+                        [ HA.classList
+                            [ ( "talk-shot-of font-mono text-[11px]", True )
+                            , ( "text-ink-faint", stale )
+                            , ( "text-ink-soft", not stale )
+                            ]
+                        ]
+                        [ text
+                            ("絵: "
+                                ++ shot.target.node
+                                ++ " · "
+                                ++ String.fromInt shot.target.line
+                                ++ " 行目"
+                                ++ (if stale then
+                                        "(カーソルの行と違う)"
+
+                                    else
+                                        ""
+                                   )
+                            )
+                        ]
+
+                Nothing ->
+                    text ""
+
+        manual =
+            case ( model.follow, isDirty model && stale ) of
+                ( FollowManual ms, _ ) ->
+                    div [ HA.class "talk-follow-off flex items-center gap-2 text-[11px] text-ink-soft" ]
+                        [ text ("1 枚に " ++ String.fromFloat (toFloat (ms // 100) / 10) ++ " 秒かかったので、カーソルを追って撮るのを止めました(保存した時と下のボタンで撮ります)")
+                        , button [ HA.class "talk-shoot d-btn d-btn-xs", HE.onClick ShootClicked ] [ text "この行を撮る" ]
+                        , button [ HA.class "talk-follow-resume d-btn d-btn-ghost d-btn-xs", HE.onClick FollowResumed ] [ text "自動に戻す" ]
+                        ]
+
+                ( FollowCursor, True ) ->
+                    div [ HA.class "talk-follow-dirty text-[11px] text-ink-faint" ]
+                        [ text "未保存の字があるので、保存するまでカーソルの行は撮りません(ゲームは保存した台本を読むため)" ]
+
+                _ ->
+                    text ""
     in
     div [ HA.class "flex flex-col gap-2" ]
         [ div [ HA.class "flex items-center gap-2" ]
             [ span [ HA.class "font-mono text-xs text-ink" ] [ text caption ]
+            , shotCaption
             , if busy /= "" then
                 span [ HA.class "talk-busy text-[11px] text-ink-faint" ] [ text busy ]
 
@@ -1460,6 +1669,7 @@ viewPreview model =
                 ]
                 [ text "この行へ飛ばす" ]
             ]
+        , manual
         , if not model.hasEntry then
             div [ HA.class "text-xs text-ink-soft" ]
                 [ text "このゲームには窓なしの入口がありません。src に pub def serveHeadless() を置くと、ここにゲームの本物の画面が出ます(engine の App.Headless の冒頭)。" ]
@@ -1478,7 +1688,7 @@ viewPreview model =
                         ]
 
                 Shown shot ->
-                    picture shot False
+                    picture shot stale
 
                 Held shot why ->
                     div [ HA.class "flex flex-col gap-1" ]
@@ -1488,7 +1698,7 @@ viewPreview model =
         , viewHeadlessTrouble model
         , viewVariables model
         , div [ HA.class "text-[11px] text-ink-faint" ]
-            [ text "右の絵はゲームが窓なしで描いた本物の画面です(起動中のゲームは動かしません)。保存すると撮り直します。" ]
+            [ text "右の絵はゲームが窓なしで描いた本物の画面です(起動中のゲームは動かしません)。カーソルの行を撮り、保存すると撮り直します。" ]
         ]
 
 
