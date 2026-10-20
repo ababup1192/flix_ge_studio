@@ -9,6 +9,7 @@ module TalkView exposing
     , Pick
     , Picker(..)
     , Problem
+    , Autosave(..)
     , Follow(..)
     , Request(..)
     , Shot
@@ -23,7 +24,10 @@ module TalkView exposing
     , gotFile
     , gotFiles
     , gotGoto
+    , autosaveFired
     , followFired
+    , gotBuildTimed
+    , slowFlowMs
     , gotShot
     , gotShotTimed
     , slowShotMs
@@ -50,7 +54,8 @@ Studio は自分で描かない。右の絵は窓なしのゲーム(ゲーム自
 
 プレビューの頼みと見せ方は直交する 2 つの型にしてある。
 
-  - Request … 頼み。Idle / Waiting(カーソルが動いた。150 ms 待って最後の 1 回だけ撮る)/
+  - Request … 頼み。Idle / Typing(打っている。止まって 300 ms で保存して組み、撮る。その間の答えは捨てる)/
+    Waiting(カーソルが動いた。150 ms 待って最後の 1 回だけ撮る)/
     InFlight(1 つ頼んでいる)/ InFlightThen(頼んでいる間に次が来た。前の答えは捨て、最後の行だけ頼む —
     打鍵ごとに窓なしのゲームへ積まない)
   - Shown … 見せ方。Blank / Shown(今の行の絵)/ Held(前の絵のまま。理由つき — 台本が壊れている・
@@ -104,6 +109,7 @@ type alias Shot =
 
 type Request
     = Idle
+    | Typing Int
     | Waiting Int Target
     | InFlight Target
     | InFlightThen Target Target
@@ -119,6 +125,19 @@ type Request
 type Follow
     = FollowCursor
     | FollowManual Int
+
+
+{-| 打つのが止まったら自動で保存して組み、撮るか(会話の画面の入・切。既定は入)。
+
+  - AutoOn … 打つのが 300 ms 止まったら保存 → bin/fge yarn build → カーソルの行を撮る
+  - AutoOff … 切った(⌘S で保存して撮る。今までの形)
+  - AutoStopped ミリ秒 … 保存から絵が出るまでが slowFlowMs を超えたので止めた(⌘S の形に戻る。「自動に戻す」で AutoOn)
+
+-}
+type Autosave
+    = AutoOn
+    | AutoOff
+    | AutoStopped Int
 
 
 type Shown
@@ -249,6 +268,13 @@ type alias Model =
     , follow : Follow
     , followSeq : Int
 
+    -- 打つのが止まったら自動で保存して撮るか
+    , autosave : Autosave
+
+    -- 保存から絵が出るまでの測り: 組むのにかかったミリ秒(その保存の絵を待っている間) と、前回の合計ミリ秒
+    , flowBuildMs : Maybe Int
+    , lastFlowMs : Maybe Int
+
     -- 読み進める欄(組んだ木を流す物と、流している 1 回。まだ流していなければ Nothing)
     , program : TalkRun.Program
     , reading : Maybe TalkRun.Reading
@@ -280,6 +306,9 @@ init =
     , pane = ScriptPane
     , follow = FollowCursor
     , followSeq = 0
+    , autosave = AutoOn
+    , flowBuildMs = Nothing
+    , lastFlowMs = Nothing
     , program = TalkRun.emptyProgram
     , reading = Nothing
     }
@@ -304,6 +333,7 @@ type Msg
     | GraphNodePicked String
     | ShootClicked
     | FollowResumed
+    | AutosaveToggled Bool
     | ReadStarted String
     | ReadChosen Int
     | ReadLinePicked Int
@@ -317,6 +347,7 @@ type Out
     | OutGoto Target
     | OutRetryLater Int
     | OutFollowLater Int
+    | OutAutosaveLater Int
     | OutRestart Target
     | OutScrollToLine Int
     | OutBatch (List Out)
@@ -372,6 +403,10 @@ ask force t model =
             -- 追う予約より先に頼む(予約は照合キーが合わなくなって捨てられる)
             ( { model | request = InFlight t }, OutShot t )
 
+        Typing _ ->
+            -- 打っている間は撮らない(止まった後の保存で撮る)
+            ( model, OutNone )
+
         InFlight cur ->
             if cur == t && not force then
                 ( model, OutNone )
@@ -381,6 +416,74 @@ ask force t model =
 
         InFlightThen cur _ ->
             ( { model | request = InFlightThen cur t }, OutNone )
+
+
+{-| 保存から絵が出るまでがこれを超えたら、自動で保存して撮るのをやめる(ミリ秒)。 -}
+slowFlowMs : Int
+slowFlowMs =
+    2000
+
+
+{-| 打った: 自動の保存が入なら、止まるのを待つ予約(前の予約・撮っている途中の答えは捨てる)。切なら今までどおり。 -}
+typed : String -> Int -> Model -> ( Model, Out )
+typed body offset model =
+    let
+        line =
+            lineAt body offset
+
+        m1 =
+            { model
+                | text = body
+                , cursor = line
+                , picker =
+                    if line == model.cursor then
+                        model.picker
+
+                    else
+                        PickerClosed
+            }
+    in
+    case model.autosave of
+        AutoOn ->
+            if model.path == "" then
+                ( m1, OutNone )
+
+            else
+                let
+                    seq =
+                        model.followSeq + 1
+                in
+                ( { m1 | request = Typing seq, followSeq = seq, flowBuildMs = Nothing }, OutAutosaveLater seq )
+
+        _ ->
+            moveCaret offset { model | text = body }
+
+
+{-| 打つのが止まった予約が来た。今の予約なら保存して組む(組み終えたら gotBuild が撮る)。
+組んでいる最中ならもう一度待つ・保存済みと同じ字なら撮るだけ。古い予約は捨てる。
+-}
+autosaveFired : Int -> Model -> ( Model, Out )
+autosaveFired seq model =
+    case model.request of
+        Typing s ->
+            if s /= seq then
+                ( model, OutNone )
+
+            else if model.saving /= Nothing then
+                let
+                    next =
+                        model.followSeq + 1
+                in
+                ( { model | request = Typing next, followSeq = next }, OutAutosaveLater next )
+
+            else if not (isDirty model) then
+                askCursor True { model | request = Idle }
+
+            else
+                ( { model | request = Idle, saving = Just model.text, status = "" }, OutBuild model.path (Just model.text) )
+
+        _ ->
+            ( model, OutNone )
 
 
 {-| 1 往復がこれを超えたら、カーソルを追って撮るのをやめる(ミリ秒)。 -}
@@ -489,7 +592,7 @@ update msg model =
             )
 
         TextEdited body offset ->
-            moveCaret offset { model | text = body }
+            typed body offset model
 
         CaretMoved body offset ->
             moveCaret offset { model | text = body }
@@ -597,6 +700,18 @@ update msg model =
         ShootClicked ->
             -- 自動で撮らない間(遅い・未保存)に、今の行をその場で撮る
             askCursor True model
+
+        AutosaveToggled on ->
+            ( { model
+                | autosave =
+                    if on then
+                        AutoOn
+
+                    else
+                        AutoOff
+              }
+            , OutNone
+            )
 
         FollowResumed ->
             followCursor { model | follow = FollowCursor }
@@ -787,9 +902,41 @@ gotFile path body model =
         ( { model | text = body, saved = body }, OutBuild path Nothing )
 
 
-{-| 組んだ結果。保存した回は今の行を撮り直す。壊れていれば前の絵のまま理由を出す。 -}
+{-| 組んだ結果(かかった時間を知らない形)。 -}
 gotBuild : { ok : Bool, saved : Bool, nodes : List Node, problems : List Problem, notes : List Problem } -> Model -> ( Model, Out )
 gotBuild report model =
+    gotBuildTimed Nothing report model
+
+
+{-| 組んだ結果。保存した回は今の行を撮り直す(took = 保存して組むのにかかったミリ秒。撮った後に合計を出す)。
+壊れていれば保存はしたが撮らず、前の絵のまま誤りの行を示す。組んでいる間にまた打っていたら撮らない(次の保存で撮る)。
+-}
+gotBuildTimed : Maybe Int -> { ok : Bool, saved : Bool, nodes : List Node, problems : List Problem, notes : List Problem } -> Model -> ( Model, Out )
+gotBuildTimed took report model0 =
+    let
+        model =
+            { model0
+                | flowBuildMs =
+                    if report.saved && report.ok then
+                        took
+
+                    else
+                        Nothing
+            }
+
+        typing =
+            case model.request of
+                Typing _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    gotBuildWith typing report model
+
+
+gotBuildWith : Bool -> { ok : Bool, saved : Bool, nodes : List Node, problems : List Problem, notes : List Problem } -> Model -> ( Model, Out )
+gotBuildWith typing report model =
     let
         m1 =
             { model
@@ -806,7 +953,10 @@ gotBuild report model =
                             model.saved
             }
     in
-    if report.ok then
+    if report.ok && typing then
+        ( { m1 | status = "" }, OutNone )
+
+    else if report.ok then
         askCursor report.saved { m1 | status = if report.saved then "保存しました" else "" }
 
     else
@@ -850,6 +1000,27 @@ took = 1 往復のミリ秒。窓なしのゲームが起きた後(前も撮れ�
 gotShotTimed : Target -> Maybe Int -> ShotAnswer -> Model -> ( Model, Out )
 gotShotTimed t took answer model =
     let
+        -- 保存から絵が出るまで(組むのにかかった分 + この 1 枚)。自動の保存が入で slowFlowMs を超えたら止める
+        flowMs =
+            case ( answer, model.flowBuildMs, took ) of
+                ( ShotOk _, Just built, Just shot ) ->
+                    Just (built + shot)
+
+                _ ->
+                    Nothing
+
+        autosaveAfter =
+            case ( model.autosave, flowMs ) of
+                ( AutoOn, Just ms ) ->
+                    if ms > slowFlowMs then
+                        AutoStopped ms
+
+                    else
+                        AutoOn
+
+                ( other, _ ) ->
+                    other
+
         tooSlow =
             case ( ( answer, model.headless ), ( took, model.follow ) ) of
                 ( ( ShotOk _, HeadlessOk ), ( Just ms, FollowCursor ) ) ->
@@ -870,6 +1041,15 @@ gotShotTimed t took answer model =
                         , note = ""
                         , headless = HeadlessOk
                         , follow = tooSlow |> Maybe.map FollowManual |> Maybe.withDefault m.follow
+                        , autosave = autosaveAfter
+                        , flowBuildMs = Nothing
+                        , lastFlowMs =
+                            case flowMs of
+                                Just ms ->
+                                    Just ms
+
+                                Nothing ->
+                                    m.lastFlowMs
                       }
                     , OutNone
                     )
@@ -903,6 +1083,10 @@ gotShotTimed t took answer model =
                 ( model, OutNone )
 
         Waiting _ _ ->
+            ( model, OutNone )
+
+        Typing _ ->
+            -- 打ち始めたので前の流れの答えは捨てる(止まった後の保存で撮り直す)
             ( model, OutNone )
 
         Idle ->
@@ -1382,6 +1566,19 @@ viewHead model =
                 ]
                 (List.map (\f -> option [ HA.value f, HA.selected (f == model.path) ] [ text f ]) model.files)
         , viewPaneSwitch model
+        , Html.label
+            [ HA.class "talk-autosave flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-ink-soft"
+            , HA.title "打つ手が 300 ms 止まったら保存して組み直し、カーソルの行を撮ります(切ると ⌘S で保存して撮ります)"
+            ]
+            [ input
+                [ HA.type_ "checkbox"
+                , HA.class "d-checkbox d-checkbox-xs"
+                , HA.checked (model.autosave == AutoOn)
+                , HE.onCheck AutosaveToggled
+                ]
+                []
+            , text "自動で保存して撮る"
+            ]
         , if model.text /= model.saved then
             span [ HA.class "text-[11px] text-ink-faint" ] [ text "● 未保存" ]
 
@@ -1555,6 +1752,11 @@ viewProblems model =
         )
 
 
+seconds : Int -> String
+seconds ms =
+    String.fromFloat (toFloat (ms // 100) / 10)
+
+
 isInFlight : Request -> Bool
 isInFlight request =
     case request of
@@ -1631,14 +1833,32 @@ viewPreview model =
                                     else
                                         ""
                                    )
+                                ++ (case model.lastFlowMs of
+                                        Just ms ->
+                                            " · 保存から " ++ seconds ms ++ " 秒"
+
+                                        Nothing ->
+                                            ""
+                                   )
                             )
                         ]
 
                 Nothing ->
                     text ""
 
+        stopped =
+            case model.autosave of
+                AutoStopped ms ->
+                    div [ HA.class "talk-autosave-off flex items-center gap-2 text-[11px] text-ink-soft" ]
+                        [ text ("保存から絵が出るまで " ++ seconds ms ++ " 秒かかったので、打つのが止まった時の自動の保存を止めました(⌘S で保存して撮ります)")
+                        , button [ HA.class "talk-autosave-resume d-btn d-btn-ghost d-btn-xs", HE.onClick (AutosaveToggled True) ] [ text "自動に戻す" ]
+                        ]
+
+                _ ->
+                    text ""
+
         manual =
-            case ( model.follow, isDirty model && stale ) of
+            case ( model.follow, isDirty model && stale && model.autosave /= AutoOn ) of
                 ( FollowManual ms, _ ) ->
                     div [ HA.class "talk-follow-off flex items-center gap-2 text-[11px] text-ink-soft" ]
                         [ text ("1 枚に " ++ String.fromFloat (toFloat (ms // 100) / 10) ++ " 秒かかったので、カーソルを追って撮るのを止めました(保存した時と下のボタンで撮ります)")
@@ -1669,6 +1889,7 @@ viewPreview model =
                 ]
                 [ text "この行へ飛ばす" ]
             ]
+        , stopped
         , manual
         , if not model.hasEntry then
             div [ HA.class "text-xs text-ink-soft" ]

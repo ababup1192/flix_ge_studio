@@ -50,6 +50,8 @@ type Effect
     | TalkRetry { seq : Int, afterMs : Float }
       -- 会話のプレビュー: カーソルを追って撮る前の間(連打は最後の 1 回だけ)。seq は古い予約の照合キー
     | TalkFollow { seq : Int, afterMs : Float }
+      -- 会話の台本: 打つ手が止まるのを待つ間(止まったら保存して組み、撮る)。seq は古い予約の照合キー
+    | TalkAutosave { seq : Int, afterMs : Float }
     | NoFx
     | Batch (List Effect)
 
@@ -90,6 +92,7 @@ perform :
     , wakePolled : Int -> msg
     , talkRetried : Int -> msg
     , talkFollowed : Int -> msg
+    , talkAutosaved : Int -> msg
     , scrolled : msg
     }
     -> Effect
@@ -158,6 +161,10 @@ perform caps effect =
         TalkFollow info ->
             Process.sleep info.afterMs
                 |> Task.perform (\_ -> caps.talkFollowed info.seq)
+
+        TalkAutosave info ->
+            Process.sleep info.afterMs
+                |> Task.perform (\_ -> caps.talkAutosaved info.seq)
 
         WakePoll info ->
             Process.sleep info.afterMs

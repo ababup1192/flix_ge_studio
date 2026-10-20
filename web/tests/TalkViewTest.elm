@@ -15,7 +15,7 @@ import Json.Decode as D
 import Dict
 import TalkTags
 import TalkTree
-import TalkView exposing (Boot(..), Follow(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
+import TalkView exposing (Autosave(..), Boot(..), Follow(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
 
 
 path : String
@@ -245,10 +245,185 @@ graphSuite =
         ]
 
 
+{-| 組めた答え(保存した回)。 -}
+built : Bool -> TalkView.Model -> { ok : Bool, saved : Bool, nodes : List TalkView.Node, problems : List TalkView.Problem, notes : List TalkView.Problem }
+built ok model =
+    { ok = ok
+    , saved = True
+    , nodes = model.nodes
+    , problems =
+        if ok then
+            []
+
+        else
+            [ { file = path, line = 40, msg = "知らない話し手" } ]
+    , notes = []
+    }
+
+
+{-| 40 行目にカーソルを置いて 1 枚出ている所(何も頼んでいない・自動の保存は入)。 -}
+shownAt40 : TalkView.Model
+shownAt40 =
+    let
+        ( m1, _ ) =
+            caretTo 40 opened
+    in
+    TalkView.gotShot (clock 40) (ShotOk "png40") m1 |> Tuple.first
+
+
+{-| 40 行目で字を打つ(本文の末尾に字を足す)。 -}
+typeAt40 : String -> TalkView.Model -> ( TalkView.Model, Out )
+typeAt40 extra model =
+    TalkView.update (TalkView.TextEdited (model.text ++ extra) (offsetOfLine 40)) model
+
+
+autosaveSuite : Test
+autosaveSuite =
+    describe "打つのが止まったら自動で保存して撮る"
+        [ test "打っている間は撮らず、止まって 300 ms の予約が来たら保存して組み、組めたら撮る" <|
+            \_ ->
+                let
+                    ( m1, out1 ) =
+                        typeAt40 "a" shownAt40
+
+                    ( m2, out2 ) =
+                        TalkView.autosaveFired m1.followSeq m1
+
+                    ( m3, out3 ) =
+                        TalkView.gotBuildTimed (Just 120) (built True m2) m2
+                in
+                ( out1, out2, ( m3.request, out3 ) )
+                    |> Expect.equal
+                        ( OutAutosaveLater m1.followSeq
+                        , OutBuild path (Just (shownAt40.text ++ "a"))
+                        , ( InFlight (clock 40), OutShot (clock 40) )
+                        )
+        , test "連打は最後の 1 回だけ保存する(古い予約は捨てる)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        typeAt40 "a" shownAt40
+
+                    ( m2, _ ) =
+                        typeAt40 "b" m1
+
+                    ( m3, stale ) =
+                        TalkView.autosaveFired m1.followSeq m2
+
+                    ( _, last ) =
+                        TalkView.autosaveFired m2.followSeq m3
+                in
+                ( stale, last ) |> Expect.equal ( OutNone, OutBuild path (Just (shownAt40.text ++ "ab")) )
+        , test "撮っている途中に打ったら、その答えは捨てる(前の流れの絵を出さない)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        caretTo 41 shownAt40
+
+                    ( m2, _ ) =
+                        typeAt40 "a" m1
+
+                    ( m3, out3 ) =
+                        TalkView.gotShot (clock 41) (ShotOk "png41") m2
+                in
+                ( ( m3.shown, out3 ), m3.request ) |> Expect.equal ( ( Shown { target = clock 40, png = "png40" }, OutNone ), Typing m2.followSeq )
+        , test "組んでいる間にまた打ったら、組めても撮らず次の保存を待つ" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        typeAt40 "a" shownAt40
+
+                    ( m2, _ ) =
+                        TalkView.autosaveFired m1.followSeq m1
+
+                    ( m3, _ ) =
+                        typeAt40 "b" m2
+
+                    ( m4, out4 ) =
+                        TalkView.gotBuildTimed (Just 120) (built True m3) m3
+
+                    ( _, out5 ) =
+                        TalkView.autosaveFired m3.followSeq m4
+                in
+                ( out4, out5 ) |> Expect.equal ( OutNone, OutBuild path (Just (shownAt40.text ++ "ab")) )
+        , test "組んでいる最中に予約が来たら、もう一度待つ(保存を重ねない)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        typeAt40 "a" shownAt40
+
+                    busy =
+                        { m1 | saving = Just "前の保存" }
+
+                    ( m2, out2 ) =
+                        TalkView.autosaveFired m1.followSeq busy
+                in
+                ( out2, m2.request ) |> Expect.equal ( OutAutosaveLater m2.followSeq, Typing m2.followSeq )
+        , test "誤りがあれば保存はするが撮らず、前の絵のまま誤りの行を示す" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        typeAt40 "a" shownAt40
+
+                    ( m2, _ ) =
+                        TalkView.autosaveFired m1.followSeq m1
+
+                    ( m3, out3 ) =
+                        TalkView.gotBuildTimed (Just 120) (built False m2) m2
+                in
+                ( ( out3, m3.saved == m2.text ), ( List.map .line m3.problems, m3.shown ) )
+                    |> Expect.equal ( ( OutNone, True ), ( [ 40 ], Held { target = clock 40, png = "png40" } "台本に誤りがあるので前の絵のまま(40 行目: 知らない話し手)" ) )
+        , test "保存から絵まで(組む + 1 枚)を測って出し、2 秒を超えたら自動を止める(⌘S の形に戻る)" <|
+            \_ ->
+                let
+                    flow buildMs shotMs model =
+                        let
+                            ( m1, _ ) =
+                                typeAt40 "a" model
+
+                            ( m2, _ ) =
+                                TalkView.autosaveFired m1.followSeq m1
+
+                            ( m3, _ ) =
+                                TalkView.gotBuildTimed (Just buildMs) (built True m2) m2
+                        in
+                        TalkView.gotShotTimed (clock 40) (Just shotMs) (ShotOk "png") m3 |> Tuple.first
+
+                    fast =
+                        flow 300 200 shownAt40
+
+                    slow =
+                        flow 1900 300 fast
+
+                    ( _, afterStop ) =
+                        typeAt40 "z" slow
+                in
+                ( ( fast.lastFlowMs, fast.autosave ), ( slow.lastFlowMs, slow.autosave ), afterStop )
+                    |> Expect.equal ( ( Just 500, AutoOn ), ( Just 2200, AutoStopped 2200 ), OutNone )
+        , test "切った間は打っても保存しない(⌘S で保存して撮る)・入れ直すと次の打鍵から自動" <|
+            \_ ->
+                let
+                    ( off, _ ) =
+                        TalkView.update (TalkView.AutosaveToggled False) shownAt40
+
+                    ( _, typedOff ) =
+                        typeAt40 "a" off
+
+                    ( on, _ ) =
+                        TalkView.update (TalkView.AutosaveToggled True) off
+
+                    ( m2, typedOn ) =
+                        typeAt40 "a" on
+                in
+                ( typedOff, typedOn ) |> Expect.equal ( OutNone, OutAutosaveLater m2.followSeq )
+        ]
+
+
 suite : Test
 suite =
     describe "TalkView"
         [ pickerSuite
+        , autosaveSuite
         , varsSuite
         , graphSuite
         , test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
@@ -316,11 +491,11 @@ suite =
                         { opened | text = opened.text ++ "y" }
                 in
                 moveTo 40 dirty |> Tuple.mapFirst .request |> Expect.equal ( Idle, OutNone )
-        , test "未保存になったら、待っていた予約も畳む(前の行を撮りに行かない)" <|
+        , test "未保存になったら、待っていた予約も畳む(前の行を撮りに行かない・自動の保存が切の時)" <|
             \_ ->
                 let
                     ( m1, _ ) =
-                        moveTo 40 opened
+                        moveTo 40 { opened | autosave = AutoOff }
 
                     ( m2, _ ) =
                         TalkView.update (TalkView.TextEdited (opened.text ++ "y") (offsetOfLine 41)) m1
