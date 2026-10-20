@@ -1,5 +1,11 @@
 # NOTES
 
+## 次やること（2026-10-20・studiocispeed: CI の Rust のキャッシュを main で温める）
+
+1. 済み: release.yml に warm-macos / warm-windows（main への push で app/src-tauri が変わったときだけ）を足した。release 側の rust-cache は shared-key: tauri-release・save-if: false。make app はキャッシュ無しで 217 秒、温まりで 98 秒（この Mac mini）。CI は 543 秒で、そのうち cargo が 482 秒。
+2. 次: 見回り役が 0.53.1 のタグの後に main へ入れる → warm-* が 1 回走る → 次のタグの rust-cache が `Cache restored` になり、cargo の Finished が約 1 分になるかを見る。
+3. 残りの案: editor-app 自身の 47〜70 秒（--timings）・jar の二重ビルド（make test と make app）・make -j3・npm/elm のキャッシュ。
+
 ## 次やること（2026-10-19・studioheadless: 窓なしのゲームが落ちたのを覚える）
 
 1. 済み: `Headless` が 1 本の今を `Launch`（Idle / Booting / Running / Crashed）の 1 つで持つ。ready 前に終わったら理由（終了コード）と
