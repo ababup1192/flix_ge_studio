@@ -27,6 +27,13 @@ fi
 
 # -XstartOnFirstThread は macOS の GLFW/AppKit がメインスレッドを要求するための専用フラグ。
 # Linux の JVM はこのオプションを知らず起動に失敗するので、Darwin のときだけ付ける。
+# FLIX_PRINT_JAR=1 なら、使うコンパイラの jar のパスを出して終わる（engine の bin/headless-run が jar の鍵に混ぜる）。
+# WhyNot: 無いと素の java -jar flix.jar が REPL になり、Studio から起こした jar 作りが入力待ちで止まる（0.53.0）。
+if [ "${FLIX_PRINT_JAR:-}" = 1 ]; then
+    printf '%s\n' "$FLIX_JAR"
+    exit 0
+fi
+
 FLAGS=""
 if [ "$(uname)" = "Darwin" ]; then
     FLAGS="-XstartOnFirstThread"
