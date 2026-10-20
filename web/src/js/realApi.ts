@@ -272,13 +272,17 @@ export function realApi(base: string): Api {
         case "talkVocab":
           // 台本の語彙(vocab.json。表情・背景を選ぶダイアログの値)。中身は GET /file と同じ形
           return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
-        case "talkBuild":
+        case "talkBuild": {
           // 保存して組む(text が無ければ読むだけ)。誤りは 200 の ok:false が契約。
-          // 繋がらない時も投げずに ok:false で返す(画面の「組んでいます…」を畳むため)
-          return sendJson("POST", `${base}/talk/build`, payload).catch((e: unknown) => ({
+          // 繋がらない時も投げずに ok:false で返す(画面の「組んでいます…」を畳むため)。
+          // かかったミリ秒を tookMs で添える(画面が保存から絵が出るまでの時間を出す)
+          const startedAt = performance.now();
+          const body = await sendJson("POST", `${base}/talk/build`, payload).catch((e: unknown) => ({
             ok: false,
             error: { message: String(e) },
           }));
+          return { ...(body as object), tookMs: Math.round(performance.now() - startedAt) };
+        }
         case "talkShot": {
           // 窓なしのゲームで 1 枚。頼んだ場面を答えに添える(画面が古い答えを捨てる照合キー)。
           // 繋がらない・時間切れも投げずに ok:false で返す(投げると頼みが返らず「撮っています…」のまま)

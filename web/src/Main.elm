@@ -1318,6 +1318,7 @@ type Msg
     | TalkMsg TalkView.Msg
     | TalkRetried Int
     | TalkFollowed Int
+    | TalkAutosaved Int
     | GalleryPaneClicked GalleryPane
     | GameLogViewOpened
     | GameLogViewClosed
@@ -1529,6 +1530,13 @@ update msg model =
             let
                 ( talk, out ) =
                     TalkView.followFired seq model.talk
+            in
+            runTalkOut out { model | talk = talk }
+
+        TalkAutosaved seq ->
+            let
+                ( talk, out ) =
+                    TalkView.autosaveFired seq model.talk
             in
             runTalkOut out { model | talk = talk }
 
@@ -6737,7 +6745,8 @@ handleOkByKind env model =
                 Ok report ->
                     let
                         ( talk, out ) =
-                            TalkView.gotBuild report model.talk
+                            -- 保存して組むのにかかったミリ秒(realApi が測って添える。保存から絵までの合計に使う)
+                            TalkView.gotBuildTimed (D.decodeValue (D.field "tookMs" D.int) env.body |> Result.toMaybe) report model.talk
 
                         ( m1, fx ) =
                             runTalkOut out { model | talk = talk }
@@ -8815,6 +8824,10 @@ runTalkOut out model =
                 )
                 ( model, Effect.none )
                 outs
+
+        TalkView.OutAutosaveLater seq ->
+            -- 打つ手が 300 ms 止まったら保存して組み、撮る(打っている間の予約は照合キーで捨てる)
+            ( model, Effect.TalkAutosave { seq = seq, afterMs = 300 } )
 
         TalkView.OutFollowLater seq ->
             -- カーソルを追って撮る前に少し待つ(連打は最後の 1 回だけ。古い予約は照合キーで捨てる)
@@ -15995,6 +16008,7 @@ main =
             , wakePolled = WakePolled
             , talkRetried = TalkRetried
             , talkFollowed = TalkFollowed
+            , talkAutosaved = TalkAutosaved
             , scrolled = TimelineScrolled
             }
     in
