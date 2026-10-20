@@ -1,6 +1,8 @@
 # リリースビルド: macOS の .app (zip) と Windows のポータブル zip を作り、
 # タグ (v*) の push なら同じ Release に両方添付する。workflow_dispatch では
 # artifact を作るだけ (動作確認用)。
+# main への push (Rust 側が変わったとき) では warm-* だけが走り、Rust の
+# キャッシュを温める (下の warm-macos の説明)。
 #
 # devbox/nix には依存しない:
 #   - Flix コンパイラは GitHub releases の flix.jar を版で固定して取得
@@ -13,6 +15,12 @@ name: release
 on:
   push:
     tags: ["v*"]
+    # main は Rust のキャッシュを温めるためだけに走らせる。paths はタグの push には
+    # 効かない (GitHub の決まり) ので、タグの回は今までどおり毎回走る。
+    branches: [main]
+    paths:
+      - "app/src-tauri/**"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
     inputs:
       engine_version:
@@ -29,6 +37,9 @@ jobs:
   # 版が無い・形が違う・engine にそのタグが無ければここで止まる。engine の main の最新は
   # 使わない: ゲームとずれると make と Studio を行き来するたびに全部コンパイルし直しになる。
   resolve:
+    # main の push (キャッシュ温め) では走らせない。prepare / windows / macos は
+    # needs でここに繋がっているので、一緒に飛ぶ。
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.engine.outputs.version }}
@@ -124,9 +135,13 @@ jobs:
         run: |
           npm ci
           npm run build
+      # 読むだけ。保存は main の warm-* が持つ (タグの ref で保存しても、次のタグからは
+      # 読めず 10GB の枠を食うだけ)。shared-key は warm-* とそろえる。
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          shared-key: tauri-release
+          save-if: false
       - name: Package portable zip
         shell: pwsh
         run: ./ci/package-windows.ps1 -EngineRepo "$PWD/engine_repo" -FlixJar "$PWD/flix.jar"
@@ -159,9 +174,13 @@ jobs:
           node-version: "22"
       - name: Fetch flix.jar
         run: curl -fL -o flix.jar https://github.com/flix/flix/releases/download/v${{ env.FLIX_VERSION }}/flix.jar
+      # 読むだけ。保存は main の warm-* が持つ (タグの ref で保存しても、次のタグからは
+      # 読めず 10GB の枠を食うだけ)。shared-key は warm-* とそろえる。
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          shared-key: tauri-release
+          save-if: false
       - uses: taiki-e/install-action@v2
         with:
           tool: tauri-cli@2
@@ -201,6 +220,54 @@ jobs:
         with:
           name: macos-zip
           path: FlixGEStudio-macos-arm64.zip
+
+  # ── Rust のキャッシュ温め (main の push だけ) ─────────────────────────
+  # GitHub Actions のキャッシュは、タグの回からは「自分のタグ」と「既定ブランチ (main)」の
+  # 分しか読めない。release はタグでしか走らないので、そこで保存しても次のタグは読めず、
+  # 毎回まっさらから cargo を回していた (macOS で約 8 分)。main でここが保存した分を
+  # タグの回が読む。
+  # 当たる条件は 2 つ: shared-key が同じこと (既定ではジョブ名がキーに混ざる) と、
+  # cargo の呼び方が release と同じこと (cargo tauri build は素の cargo build と
+  # 環境が違い、objc2 から tauri まで別物として組み直しになる)。
+  # web/dist と resources/ は中身が要らない: tauri のビルドは在ることだけを確かめる
+  # (editor_server.jar だけはファイルとして在る必要がある)。
+  warm-macos:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          shared-key: tauri-release
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@2
+      - name: 空の web/dist と resources を置く
+        run: |
+          mkdir -p web/dist app/src-tauri/resources/jre app/src-tauri/resources/dist app/src-tauri/resources/engine
+          : > app/src-tauri/resources/editor_server.jar
+      - name: cargo tauri build (Makefile の app と同じ呼び方)
+        working-directory: app/src-tauri
+        run: env -u DEVELOPER_DIR -u SDKROOT cargo tauri build --bundles app
+
+  warm-windows:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          shared-key: tauri-release
+      - name: 空の web/dist と resources を置く
+        shell: bash
+        run: |
+          mkdir -p web/dist app/src-tauri/resources/jre app/src-tauri/resources/dist app/src-tauri/resources/engine
+          : > app/src-tauri/resources/editor_server.jar
+      - name: cargo build --release (ci/package-windows.ps1 と同じ呼び方)
+        working-directory: app/src-tauri
+        run: cargo build --release
 
   release:
     needs: [resolve, windows, macos]
