@@ -76,6 +76,7 @@ ok:false で返り、前の絵を Held で出したまま誤りの行を示す�
 左の面は Pane の 1 つで持つ: 台本(ScriptPane)か、ノードの図(GraphPane。箱と jump・選択肢の矢印。
 押すとその台本の行へ戻る)か、読み進める欄(ReadPane。選択肢を選びながら台詞を順に出す。TalkRun)。
 図と欄は組んだ木(dialogue.json)から作る。欄の台詞を押すと、その行をその時の変数の値で撮る。
+上に並ぶノードのタブは図の箱と同じで、押すとそのノードの行へカーソルを置いて台本の面に戻り、欄をその行まで送る(jumpTo)。
 
 変数の一覧は組んだ木(dialogue.json)の `<<declare>>` を並べ、値を変えるとその値で撮り直す
 (engine 0.51 の始まりの引数 `$名前=値`。変えた値は overrides に持ち、初めの値に戻すと消える)。
@@ -565,6 +566,23 @@ askCursor force model =
             ( model, OutNone )
 
 
+{-| ノードへ飛ぶ(台本の上のタブ・図の箱): その title: の行へカーソルを置いて台本の面に戻り、撮る。
+台本の欄もその行まで送る(カーソルだけ動かすと、欄は前の所を出したままになる)。
+撮りは頼み中なら最後の 1 つだけ後で頼むが、欄は押すたびに送る。
+-}
+jumpTo : Node -> Model -> ( Model, Out )
+jumpTo node model =
+    askCursor False { model | cursor = node.line, pane = ScriptPane, picker = PickerClosed }
+        |> Tuple.mapSecond
+            (\out ->
+                if out == OutNone then
+                    OutScrollToLine node.line
+
+                else
+                    OutBatch [ out, OutScrollToLine node.line ]
+            )
+
+
 {-| 絵を前のまま残して理由を添える。 -}
 hold : String -> Model -> Model
 hold why model =
@@ -605,7 +623,7 @@ update msg model =
                 ( { model | saving = Just model.text, status = "" }, OutBuild model.path (Just model.text) )
 
         NodeClicked node ->
-            askCursor False { model | cursor = node.line }
+            jumpTo node model
 
         GotoClicked ->
             case targetAt model.path model.nodes model.cursor of
@@ -717,12 +735,10 @@ update msg model =
             followCursor { model | follow = FollowCursor }
 
         GraphNodePicked title ->
-            -- 図の箱を押した: そのノードの title: の行へカーソルを置いて台本に戻り、撮る
+            -- 図の箱を押した: 台本の上のタブと同じく、そのノードへ飛ぶ
             case model.nodes |> List.filter (\n -> n.title == title && n.file == model.path) |> List.head of
                 Just node ->
-                    -- 台本の欄もその行まで送る(図から戻った時に、押したノードが見えているように)
-                    askCursor False { model | cursor = node.line, pane = ScriptPane, picker = PickerClosed }
-                        |> Tuple.mapSecond (\out -> OutBatch [ out, OutScrollToLine node.line ])
+                    jumpTo node model
 
                 Nothing ->
                     ( { model | pane = ScriptPane }, OutNone )

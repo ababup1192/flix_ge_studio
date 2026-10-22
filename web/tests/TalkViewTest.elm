@@ -210,6 +210,25 @@ graphSuite =
                 press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.GraphNodePicked "clock" ] opened
                     |> Tuple.mapFirst (\m -> ( m.pane, m.cursor ))
                     |> Expect.equal ( ( TalkView.ScriptPane, 36 ), OutBatch [ OutShot (clock 36), OutScrollToLine 36 ] )
+        , test "台本の上のノードのタブを押すと、そのノードの行へカーソルを置き、欄をその行まで送って撮る" <|
+            \_ ->
+                press [ TalkView.NodeClicked { title = "clock", file = path, line = 36 } ] opened
+                    |> Tuple.mapFirst .cursor
+                    |> Expect.equal ( 36, OutBatch [ OutShot (clock 36), OutScrollToLine 36 ] )
+        , test "撮っている最中にタブを切り替えても、欄はそのノードの行まで送る(撮りは最後の 1 つだけ後で頼む)" <|
+            \_ ->
+                press
+                    [ TalkView.NodeClicked { title = "clock", file = path, line = 36 }
+                    , TalkView.NodeClicked { title = "arrival", file = path, line = 7 }
+                    ]
+                    opened
+                    |> Tuple.mapFirst (\m -> ( m.cursor, m.request ))
+                    |> Expect.equal ( ( 7, InFlightThen (clock 36) { node = "arrival", line = 7 } ), OutScrollToLine 7 )
+        , test "図の面でタブを押すと台本の面に戻り、欄をその行まで送る" <|
+            \_ ->
+                press [ TalkView.PaneChosen TalkView.GraphPane, TalkView.NodeClicked { title = "clock", file = path, line = 36 } ] opened
+                    |> Tuple.mapFirst .pane
+                    |> Expect.equal ( TalkView.ScriptPane, OutBatch [ OutShot (clock 36), OutScrollToLine 36 ] )
         , test "読み進める欄の台詞を押すと、その行をその時の変数の値で撮る" <|
             \_ ->
                 let
