@@ -1,2 +1,2 @@
 # 同梱する engine の版。ゲームの master の flix.toml にある flix_game_engine の version と同じにする（README の「リリースの手順」）。
-0.57.0
+0.57.1
