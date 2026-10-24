@@ -889,20 +889,23 @@ moveCaret offset model =
         followCursor { model | cursor = line, picker = PickerClosed }
 
 
-{-| シナリオの一覧が届いた。まだ何も開いていなければ先頭を開く。 -}
+{-| シナリオの一覧が届いた。まだ何も開いていないか、開いているファイルが一覧から消えた
+(名前を変えた・消した)なら先頭を開き直す。消えたファイルの中身を残すと、プルダウンは別の
+ファイルを見せたまま古い行番号で撮り、保存すると消えたファイルを書き戻してしまう。
+-}
 gotFiles : { files : List String, hasEntry : Bool } -> Model -> ( Model, Out )
 gotFiles got model =
     let
         m1 =
             { model | files = got.files, hasEntry = got.hasEntry }
     in
-    if model.path == "" then
+    if model.path == "" || not (List.member model.path got.files) then
         case List.head got.files of
             Just first ->
                 update (FilePicked first) m1
 
             Nothing ->
-                ( m1, OutNone )
+                ( { init | files = got.files, hasEntry = got.hasEntry }, OutNone )
 
     else
         ( m1, OutNone )
