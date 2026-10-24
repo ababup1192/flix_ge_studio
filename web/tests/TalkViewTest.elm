@@ -445,6 +445,16 @@ suite =
         , autosaveSuite
         , varsSuite
         , graphSuite
+        , test "開いているファイルが一覧から消えたら(名前を変えた)、先頭を開き直して読み直す" <|
+            \_ ->
+                TalkView.gotFiles { files = [ "assets/talk/001_novel.yarn", "assets/talk/x.yarn" ], hasEntry = True } opened
+                    |> Tuple.mapFirst (\m -> ( m.path, m.text ))
+                    |> Expect.equal ( ( "assets/talk/001_novel.yarn", "" ), OutRead "assets/talk/001_novel.yarn" )
+        , test "開いているファイルが一覧に残っていれば、中身はそのまま" <|
+            \_ ->
+                TalkView.gotFiles { files = [ "assets/talk/x.yarn", path ], hasEntry = True } opened
+                    |> Tuple.mapFirst (\m -> ( m.path, m.text == opened.text ))
+                    |> Expect.equal ( ( path, True ), OutNone )
         , test "行のノードは、このファイルで title: の行が line 以下のいちばん後の物" <|
             \_ ->
                 ( TalkView.targetAt path nodes 40, TalkView.targetAt path nodes 7, TalkView.targetAt path nodes 3 )
