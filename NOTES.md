@@ -1,5 +1,10 @@
 # NOTES
 
+## 次やること（2026-10-24・会話の台本で探す）
+
+1. 済み: 会話のタブに探す欄（⌘F・「検索」ボタン）。「このファイル」は Enter / ⇧Enter で次・前へ選び行に印、「全ファイル」は全部の .yarn をファイル・ノード・行で一覧にし、押すとそのファイルを開いてその行を選ぶ（`TalkSearch`・読むのは GET /file）
+2. **人の目で確かめる**: .app（WKWebView）で、探す欄で打っている間に本文の欄の選択が見えるか・指が探す欄から離れないか
+
 ## 次やること（2026-10-20・studiocispeed: CI の Rust のキャッシュを main で温める）
 
 1. 済み: release.yml に warm-macos / warm-windows（main への push で app/src-tauri が変わったときだけ）を足した。release 側の rust-cache は shared-key: tauri-release・save-if: false。make app はキャッシュ無しで 217 秒、温まりで 98 秒（この Mac mini）。CI は 543 秒で、そのうち cargo が 482 秒。

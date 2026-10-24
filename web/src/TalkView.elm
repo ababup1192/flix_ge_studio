@@ -10,6 +10,8 @@ module TalkView exposing
     , Picker(..)
     , Problem
     , Autosave(..)
+    , Find(..)
+    , FindScope(..)
     , Follow(..)
     , Request(..)
     , Shot
@@ -23,6 +25,8 @@ module TalkView exposing
     , gotBuild
     , gotFile
     , gotFiles
+    , gotSearchFile
+    , hitsOf
     , gotGoto
     , autosaveFired
     , followFired
@@ -81,6 +85,11 @@ ok:false で返り、前の絵を Held で出したまま誤りの行を示す�
 変数の一覧は組んだ木(dialogue.json)の `<<declare>>` を並べ、値を変えるとその値で撮り直す
 (engine 0.51 の始まりの引数 `$名前=値`。変えた値は overrides に持ち、初めの値に戻すと消える)。
 
+探す欄(⌘F。Find の 1 つで持つ)は 2 つの範囲を切り替える: このファイル(打つと下の一番近い所を選び、
+Enter / ↓ で次・⇧Enter / ↑ で前へ。本文の欄で選び、行に印を付ける)と、全ファイル(全部の .yarn を読んで
+ファイル・ノード・行の一覧を出し、押すとそのファイルを開いてその行を選ぶ)。探し方は TalkSearch。
+全ファイルの中身は範囲を切り替えた時に読み直し(corpus)、開いているファイルだけは打っている今の中身で探す。
+
 「この行へ飛ばす」だけが起動中のゲームを動かす(遊んでいる World をその行の場面へ差し替える)。
 
 サーバ往復は Main の仕事(Out で頼む)。
@@ -94,6 +103,7 @@ import Html.Events as HE
 import Json.Decode as D
 import TalkGraph
 import TalkRun
+import TalkSearch
 import TalkTags
 import TalkTree
 
@@ -215,6 +225,23 @@ type Picker
     | PickerOpen Pick (List String) Int
 
 
+{-| 探す範囲: 開いているファイルの中 / 全部の .yarn を横断。 -}
+type FindScope
+    = InFile
+    | AcrossFiles
+
+
+{-| 探す欄(開閉と打った字・範囲・選んでいる番号を旗で重ねない)。
+
+  - FindClosed … 閉じている
+  - FindOpen … 開いている(at は見つかった所の並びの何番目を選んでいるか)
+
+-}
+type Find
+    = FindClosed
+    | FindOpen { query : String, scope : FindScope, at : Int }
+
+
 {-| 左の面: 台本を書く / ノードの図を見る。 -}
 type Pane
     = ScriptPane
@@ -279,6 +306,13 @@ type alias Model =
     -- 読み進める欄(組んだ木を流す物と、流している 1 回。まだ流していなければ Nothing)
     , program : TalkRun.Program
     , reading : Maybe TalkRun.Reading
+
+    -- 探す欄と、全ファイルを横断して探すために読んだ中身(パス → 本文)
+    , find : Find
+    , corpus : Dict String String
+
+    -- 全ファイルの一覧から別のファイルの行を選んだ: そのファイルが届いたらカーソルを置く行
+    , pendingJump : Maybe Int
     }
 
 
@@ -312,6 +346,9 @@ init =
     , lastFlowMs = Nothing
     , program = TalkRun.emptyProgram
     , reading = Nothing
+    , find = FindClosed
+    , corpus = Dict.empty
+    , pendingJump = Nothing
     }
 
 
@@ -338,6 +375,13 @@ type Msg
     | ReadStarted String
     | ReadChosen Int
     | ReadLinePicked Int
+    | FindOpened
+    | FindTyped String
+    | FindScopeChosen FindScope
+    | FindStepped Int
+    | FindEntered Bool
+    | FindHitPicked TalkSearch.Hit
+    | FindDismissed
 
 
 type Out
@@ -351,6 +395,9 @@ type Out
     | OutAutosaveLater Int
     | OutRestart Target
     | OutScrollToLine Int
+    | OutSelect { from : Int, to : Int, line : Int }
+    | OutFocus String
+    | OutReadForSearch (List String)
     | OutBatch (List Out)
 
 
@@ -605,7 +652,14 @@ update : Msg -> Model -> ( Model, Out )
 update msg model =
     case msg of
         FilePicked path ->
-            ( { init | files = model.files, hasEntry = model.hasEntry, path = path, retrySeq = model.retrySeq + 1 }
+            ( { init
+                | files = model.files
+                , hasEntry = model.hasEntry
+                , path = path
+                , retrySeq = model.retrySeq + 1
+                , find = model.find
+                , corpus = model.corpus
+              }
             , OutRead path
             )
 
@@ -783,6 +837,211 @@ update msg model =
             else
                 askCursor True { model | overrides = Dict.empty }
 
+        FindOpened ->
+            -- ⌘F: このファイルの中を探す(開いていれば打った字はそのまま。欄へカーソルを置く)
+            let
+                query =
+                    case model.find of
+                        FindOpen f ->
+                            f.query
+
+                        FindClosed ->
+                            ""
+            in
+            ( { model | find = FindOpen { query = query, scope = InFile, at = 0 } }, OutFocus findBoxId )
+
+        FindTyped query ->
+            case model.find of
+                FindOpen f ->
+                    let
+                        m1 =
+                            { model | find = FindOpen { f | query = query, at = 0 } }
+                    in
+                    case f.scope of
+                        InFile ->
+                            -- 打つたびにカーソルの行から下の一番近い所を選ぶ
+                            selectAt (TalkSearch.firstFrom model.cursor (hitsOf m1)) m1
+
+                        AcrossFiles ->
+                            ( m1, OutNone )
+
+                FindClosed ->
+                    ( model, OutNone )
+
+        FindScopeChosen scope ->
+            case model.find of
+                FindOpen f ->
+                    let
+                        m1 =
+                            { model | find = FindOpen { f | scope = scope, at = 0 } }
+                    in
+                    case scope of
+                        InFile ->
+                            selectAt (TalkSearch.firstFrom model.cursor (hitsOf m1)) m1
+
+                        AcrossFiles ->
+                            -- ほかのファイルは今のディスクの中身を読み直す(開いているファイルは打っている今の中身で探す)
+                            ( m1, OutBatch [ OutReadForSearch (List.filter (\file -> file /= model.path) model.files), OutFocus findBoxId ] )
+
+                FindClosed ->
+                    ( model, OutNone )
+
+        FindStepped delta ->
+            case model.find of
+                FindOpen f ->
+                    let
+                        at =
+                            TalkSearch.step delta f.at (hitsOf model)
+                    in
+                    case f.scope of
+                        InFile ->
+                            selectAt at model
+
+                        AcrossFiles ->
+                            ( { model | find = FindOpen { f | at = at } }, OutNone )
+
+                FindClosed ->
+                    ( model, OutNone )
+
+        FindEntered back ->
+            case model.find of
+                FindOpen f ->
+                    case f.scope of
+                        InFile ->
+                            update
+                                (FindStepped
+                                    (if back then
+                                        -1
+
+                                     else
+                                        1
+                                    )
+                                )
+                                model
+
+                        AcrossFiles ->
+                            case hitsOf model |> List.drop f.at |> List.head of
+                                Just hit ->
+                                    update (FindHitPicked hit) model
+
+                                Nothing ->
+                                    ( model, OutNone )
+
+                FindClosed ->
+                    ( model, OutNone )
+
+        FindHitPicked hit ->
+            case model.find of
+                FindOpen f ->
+                    let
+                        at =
+                            hitsOf model
+                                |> List.indexedMap Tuple.pair
+                                |> List.filter (\( _, h ) -> h == hit)
+                                |> List.head
+                                |> Maybe.map Tuple.first
+                                |> Maybe.withDefault f.at
+
+                        m1 =
+                            { model | find = FindOpen { f | at = at } }
+                    in
+                    if hit.file == model.path then
+                        selectHit hit m1
+
+                    else
+                        -- 別のファイル: 開き直して、届いたらその行を選ぶ(gotFile)
+                        update (FilePicked hit.file) m1
+                            |> Tuple.mapFirst (\m -> { m | pendingJump = Just hit.line })
+
+                FindClosed ->
+                    ( model, OutNone )
+
+        FindDismissed ->
+            ( { model | find = FindClosed }, OutNone )
+
+
+{-| 探す欄の id(開いた時にカーソルを置く)。 -}
+findBoxId : String
+findBoxId =
+    "talk-find"
+
+
+{-| 本文の欄の id(探して見つかった所を選ぶ)。 -}
+textBoxId : String
+textBoxId =
+    "talk-text"
+
+
+{-| 探す欄の字で見つかった所(範囲がこのファイルなら打っている今の中身、全ファイルなら読んだ中身。
+開いているファイルだけは今の中身で探す)。閉じていれば空。
+-}
+hitsOf : Model -> List TalkSearch.Hit
+hitsOf model =
+    case model.find of
+        FindClosed ->
+            []
+
+        FindOpen f ->
+            case f.scope of
+                InFile ->
+                    TalkSearch.inText f.query model.path model.text
+
+                AcrossFiles ->
+                    model.files
+                        |> List.filterMap
+                            (\file ->
+                                if file == model.path then
+                                    Just ( file, model.text )
+
+                                else
+                                    Dict.get file model.corpus |> Maybe.map (Tuple.pair file)
+                            )
+                        |> TalkSearch.across f.query
+
+
+{-| このファイルの中で at 番目に見つかった所を選ぶ(無ければ番号だけ置く)。 -}
+selectAt : Int -> Model -> ( Model, Out )
+selectAt at model =
+    let
+        m1 =
+            case model.find of
+                FindOpen f ->
+                    { model | find = FindOpen { f | at = at } }
+
+                FindClosed ->
+                    model
+    in
+    case hitsOf m1 |> List.drop at |> List.head of
+        Just hit ->
+            selectHit hit m1
+
+        Nothing ->
+            ( m1, OutNone )
+
+
+{-| 開いているファイルの見つかった所へ: カーソルをその行へ置いて台本の面に戻し、本文の欄でその字を選ぶ(行が変われば撮る)。 -}
+selectHit : TalkSearch.Hit -> Model -> ( Model, Out )
+selectHit hit model =
+    let
+        sel =
+            OutSelect { from = hit.from, to = hit.to, line = hit.line }
+
+        moved =
+            { model | pane = ScriptPane, picker = PickerClosed }
+    in
+    if hit.line == model.cursor then
+        ( moved, sel )
+
+    else
+        followCursor { moved | cursor = hit.line }
+            |> Tuple.mapSecond (\out -> OutBatch [ out, sel ])
+
+
+{-| 全ファイルを横断して探すために読んだ 1 本が届いた。 -}
+gotSearchFile : String -> String -> Model -> Model
+gotSearchFile path body model =
+    { model | corpus = Dict.insert path body model.corpus }
+
 
 {-| カーソルの行のタグ key を選ぶダイアログを開く。開けない時は理由を status に出す。
 選択中は今の値(無ければ先頭)。
@@ -918,7 +1177,37 @@ gotFile path body model =
         ( model, OutNone )
 
     else
-        ( { model | text = body, saved = body }, OutBuild path Nothing )
+        let
+            m1 =
+                { model | text = body, saved = body, corpus = Dict.insert path body model.corpus, pendingJump = Nothing }
+        in
+        case model.pendingJump of
+            Just line ->
+                -- 全ファイルの一覧から選んだ行: カーソルを置き、その行の見つかった所を選ぶ(無ければ行まで送るだけ)
+                let
+                    sel =
+                        case TalkSearch.inText (findQuery m1 |> Maybe.withDefault "") path body |> List.filter (\h -> h.line == line) |> List.head of
+                            Just hit ->
+                                OutSelect { from = hit.from, to = hit.to, line = line }
+
+                            Nothing ->
+                                OutScrollToLine line
+                in
+                ( { m1 | cursor = line }, OutBatch [ OutBuild path Nothing, sel ] )
+
+            Nothing ->
+                ( m1, OutBuild path Nothing )
+
+
+{-| 探す欄の字(閉じていれば Nothing)。 -}
+findQuery : Model -> Maybe String
+findQuery model =
+    case model.find of
+        FindOpen f ->
+            Just f.query
+
+        FindClosed ->
+            Nothing
 
 
 {-| 組んだ結果(かかった時間を知らない形)。 -}
@@ -1292,6 +1581,7 @@ view model =
     div [ HA.class "talk flex min-h-0 flex-1 gap-4 px-6 pb-6 pt-4", HE.preventDefaultOn "keydown" (pickerKeyDecoder model.picker) ]
         [ div [ HA.class "flex min-h-0 min-w-0 flex-1 flex-col gap-2" ]
             [ viewHead model
+            , viewFind model
             , viewNodes model
             , case model.pane of
                 ScriptPane ->
@@ -1315,18 +1605,27 @@ view model =
         ]
 
 
-{-| 会話の画面のキー(本文の欄からも届く)。⌘E / Ctrl+E で表情・⌘B / Ctrl+B で背景を選ぶダイアログを開き、
+{-| 会話の画面のキー(本文の欄からも届く)。⌘F / Ctrl+F で探す欄を開き、⌘E / Ctrl+E で表情・⌘B / Ctrl+B で背景を選ぶダイアログを開き、
 開いている間は ↑↓・Enter・Esc をダイアログが取る(本文のカーソルは動かさない・改行しない)。ほかは素通し。
 -}
 pickerKeyDecoder : Picker -> D.Decoder ( Msg, Bool )
 pickerKeyDecoder picker =
-    D.map3 (\key meta ctrl -> ( key, meta || ctrl ))
+    D.map4 (\key meta ctrl shift -> ( key, meta || ctrl, shift ))
         (D.field "key" D.string)
         (D.field "metaKey" D.bool)
         (D.field "ctrlKey" D.bool)
+        (D.field "shiftKey" D.bool)
         |> D.andThen
-            (\( key, modified ) ->
+            (\( key, modified, shift ) ->
                 case ( picker, modified, String.toLower key ) of
+                    ( _, True, "f" ) ->
+                        -- ⌘⇧F は Studio 全体の横断検索(Doc)に任せる
+                        if shift then
+                            D.fail "ほかのキーは素通し"
+
+                        else
+                            D.succeed ( FindOpened, True )
+
                     ( _, True, "e" ) ->
                         D.succeed ( TagPickRequested "face", True )
 
@@ -1604,7 +1903,13 @@ viewHead model =
           else
             text ""
         , button
-            [ HA.class "talk-save d-btn d-btn-xs ml-auto"
+            [ HA.class "talk-find-open d-btn d-btn-ghost d-btn-xs ml-auto"
+            , HA.title "台詞を探します(⌘F / Ctrl+F)。全ファイルに切り替えると、どのファイルのどのノードにあるかを一覧にします"
+            , HE.onClick FindOpened
+            ]
+            [ text "検索" ]
+        , button
+            [ HA.class "talk-save d-btn d-btn-xs"
             , HA.disabled (model.path == "" || model.saving /= Nothing)
             , HA.title "保存して組み直し、今の行を撮り直します(⌘S / Ctrl+S)"
             , HE.onClick SaveClicked
@@ -1618,6 +1923,231 @@ viewHead model =
                 )
             ]
         ]
+
+
+{-| 探す欄: 字・見つかった数・前後・範囲(このファイル / 全ファイル)・閉じる。全ファイルなら下に一覧。 -}
+viewFind : Model -> Html Msg
+viewFind model =
+    case model.find of
+        FindClosed ->
+            text ""
+
+        FindOpen f ->
+            let
+                hits =
+                    hitsOf model
+
+                count =
+                    if String.isEmpty f.query then
+                        ""
+
+                    else if List.isEmpty hits then
+                        "見つかりません"
+
+                    else
+                        String.fromInt (f.at + 1)
+                            ++ " / "
+                            ++ String.fromInt (List.length hits)
+                            ++ (if List.length hits >= TalkSearch.maxHits then
+                                    "+"
+
+                                else
+                                    ""
+                               )
+
+                scopeTab scope label =
+                    button
+                        [ HA.classList
+                            [ ( "talk-find-scope d-btn d-btn-xs", True )
+                            , ( "d-btn-active bg-accent/30 text-ink", f.scope == scope )
+                            ]
+                        , HE.onClick (FindScopeChosen scope)
+                        ]
+                        [ text label ]
+
+                keys =
+                    HE.preventDefaultOn "keydown"
+                        (D.map2 Tuple.pair (D.field "key" D.string) (D.field "shiftKey" D.bool)
+                            |> D.andThen
+                                (\( key, shift ) ->
+                                    case key of
+                                        "Enter" ->
+                                            D.succeed ( FindEntered shift, True )
+
+                                        "ArrowDown" ->
+                                            D.succeed ( FindStepped 1, True )
+
+                                        "ArrowUp" ->
+                                            D.succeed ( FindStepped -1, True )
+
+                                        "Escape" ->
+                                            D.succeed ( FindDismissed, True )
+
+                                        _ ->
+                                            D.fail "ふつうのキー"
+                                )
+                        )
+
+                loading =
+                    List.filter (\file -> file /= model.path && not (Dict.member file model.corpus)) model.files
+            in
+            div [ HA.class "talk-find-bar flex flex-col gap-1 rounded-md border border-edge bg-well px-2 py-1.5" ]
+                [ div [ HA.class "flex items-center gap-2" ]
+                    [ input
+                        [ HA.id findBoxId
+                        , HA.class "talk-find-input d-input d-input-xs min-w-0 flex-1 font-mono"
+                        , HA.placeholder
+                            (if f.scope == InFile then
+                                "このファイルの中を探す(Enter で次・⇧Enter で前)"
+
+                             else
+                                "全部の .yarn から台詞を探す(↑↓ で選び Enter で開く)"
+                            )
+                        , HA.value f.query
+                        , HE.onInput FindTyped
+                        , keys
+                        ]
+                        []
+                    , span [ HA.class "talk-find-count shrink-0 text-[11px] text-ink-soft" ] [ text count ]
+                    , button [ HA.class "d-btn d-btn-ghost d-btn-xs", HA.title "前(⇧Enter / ↑)", HE.onClick (FindStepped -1) ] [ text "↑" ]
+                    , button [ HA.class "d-btn d-btn-ghost d-btn-xs", HA.title "次(Enter / ↓)", HE.onClick (FindStepped 1) ] [ text "↓" ]
+                    , div [ HA.class "d-join" ] [ scopeTab InFile "このファイル", scopeTab AcrossFiles "全ファイル" ]
+                    , button [ HA.class "talk-find-close d-btn d-btn-ghost d-btn-xs", HA.title "閉じる(Esc)", HE.onClick FindDismissed ] [ text "×" ]
+                    ]
+                , if f.scope == AcrossFiles then
+                    viewFindHits model f.query f.at hits loading
+
+                  else
+                    text ""
+                ]
+
+
+{-| 全ファイルを横断して見つかった所の一覧(ファイルごとに見出し・行・ノード・その行の字)。押すとその行へ。 -}
+viewFindHits : Model -> String -> Int -> List TalkSearch.Hit -> List String -> Html Msg
+viewFindHits model query at hits loading =
+    let
+        row i hit =
+            button
+                [ HA.classList
+                    [ ( "talk-find-hit flex w-full cursor-pointer items-baseline gap-2 rounded-sm px-1.5 py-0.5 text-left text-[11px]", True )
+                    , ( "bg-accent/30 text-ink", i == at )
+                    , ( "text-ink-soft hover:bg-white/10", i /= at )
+                    ]
+                , HE.onClick (FindHitPicked hit)
+                ]
+                [ span [ HA.class "w-10 shrink-0 text-right font-mono text-ink-faint" ] [ text (String.fromInt hit.line) ]
+                , span [ HA.class "w-28 shrink-0 truncate font-mono text-ink-faint" ] [ text (Maybe.withDefault "" hit.node) ]
+                , span [ HA.class "min-w-0 flex-1 truncate font-mono" ] (highlighted query hit.text)
+                ]
+
+        groups =
+            hits
+                |> List.indexedMap Tuple.pair
+                |> groupByFile
+
+        status =
+            if not (List.isEmpty loading) then
+                "読み込んでいます(残り " ++ String.fromInt (List.length loading) ++ " 本)"
+
+            else if String.isEmpty query then
+                String.fromInt (List.length model.files) ++ " 本の .yarn から探します"
+
+            else if List.isEmpty hits then
+                "どのファイルにもありません"
+
+            else
+                String.fromInt (List.length groups)
+                    ++ " 本のファイルで "
+                    ++ String.fromInt (List.length hits)
+                    ++ " か所"
+                    ++ (if List.length hits >= TalkSearch.maxHits then
+                            "(先頭の " ++ String.fromInt TalkSearch.maxHits ++ " か所だけ)"
+
+                        else
+                            ""
+                       )
+    in
+    div [ HA.class "talk-find-hits flex max-h-64 flex-col gap-0.5 overflow-auto" ]
+        (span [ HA.class "text-[11px] text-ink-faint" ] [ text status ]
+            :: List.concatMap
+                (\( file, rows ) ->
+                    div
+                        [ HA.classList
+                            [ ( "talk-find-file mt-1 font-mono text-[11px]", True )
+                            , ( "text-ink", file == model.path )
+                            , ( "text-ink-soft", file /= model.path )
+                            ]
+                        ]
+                        [ text
+                            (file
+                                ++ "("
+                                ++ String.fromInt (List.length rows)
+                                ++ ")"
+                                ++ (if file == model.path then
+                                        " — 開いているファイル"
+
+                                    else
+                                        ""
+                                   )
+                            )
+                        ]
+                        :: List.map (\( i, hit ) -> row i hit) rows
+                )
+                groups
+        )
+
+
+{-| 並びを保ったまま、続くファイルごとに束ねる。 -}
+groupByFile : List ( Int, TalkSearch.Hit ) -> List ( String, List ( Int, TalkSearch.Hit ) )
+groupByFile rows =
+    List.foldr
+        (\( i, hit ) acc ->
+            case acc of
+                ( file, group ) :: rest ->
+                    if file == hit.file then
+                        ( file, ( i, hit ) :: group ) :: rest
+
+                    else
+                        ( hit.file, [ ( i, hit ) ] ) :: acc
+
+                [] ->
+                    [ ( hit.file, [ ( i, hit ) ] ) ]
+        )
+        []
+        rows
+
+
+{-| 行の字の中で探した字の所に印を付ける(大文字と小文字は区別しない)。 -}
+highlighted : String -> String -> List (Html msg)
+highlighted query line =
+    case String.indexes (String.toLower query) (String.toLower line) of
+        i :: _ ->
+            if String.isEmpty query then
+                [ text line ]
+
+            else
+                [ text (String.left i line)
+                , span [ HA.class "rounded-sm bg-amber-300/30 text-ink" ] [ text (String.slice i (i + String.length query) line) ]
+                , text (String.dropLeft (i + String.length query) line)
+                ]
+
+        [] ->
+            [ text line ]
+
+
+{-| 重なりを落とす(並びは保つ)。 -}
+unique : List Int -> List Int
+unique xs =
+    List.foldr
+        (\x acc ->
+            if List.member x acc then
+                acc
+
+            else
+                x :: acc
+        )
+        []
+        xs
 
 
 viewNodes : Model -> Html Msg
@@ -1660,6 +2190,25 @@ viewEditor model =
         marked =
             model.problems |> List.filter (\p -> p.file == model.path && p.line > 0)
 
+        -- 探す欄(このファイル)で見つかった行と、選んでいる行
+        ( found, current ) =
+            case model.find of
+                FindOpen f ->
+                    if f.scope == InFile then
+                        let
+                            hits =
+                                hitsOf model
+                        in
+                        ( hits |> List.map .line
+                        , hits |> List.drop f.at |> List.head |> Maybe.map .line
+                        )
+
+                    else
+                        ( [], Nothing )
+
+                FindClosed ->
+                    ( [], Nothing )
+
         caret =
             D.map2 Tuple.pair (D.at [ "target", "value" ] D.string) (D.at [ "target", "selectionStart" ] D.int)
 
@@ -1696,6 +2245,7 @@ viewEditor model =
                                 , HA.classList
                                     [ ( "text-red-300", List.any (\p -> p.line == i) marked )
                                     , ( "text-ink", i == model.cursor )
+                                    , ( "bg-amber-300/20", List.member i found )
                                     ]
                                 ]
                                 [ text
@@ -1709,8 +2259,23 @@ viewEditor model =
                         )
                 )
             , div [ HA.class "relative min-w-0 flex-1" ]
-                (textarea
-                    [ HA.class "talk-text block w-full resize-none overflow-hidden whitespace-pre bg-transparent px-3 py-2 font-mono text-[12px] text-ink outline-none"
+                (List.map
+                    (\line ->
+                        div
+                            [ HA.classList
+                                [ ( "talk-found pointer-events-none absolute inset-x-0", True )
+                                , ( "bg-amber-300/30", current == Just line )
+                                , ( "bg-amber-300/10", current /= Just line )
+                                ]
+                            , HA.style "top" (px (8 + lineHeight * (line - 1)))
+                            , HA.style "height" (px lineHeight)
+                            ]
+                            []
+                    )
+                    (unique found)
+                    ++ textarea
+                    [ HA.id textBoxId
+                    , HA.class "talk-text block w-full resize-none overflow-hidden whitespace-pre bg-transparent px-3 py-2 font-mono text-[12px] text-ink outline-none"
                     , HA.style "line-height" (px lineHeight)
                     , HA.style "height" (px (lineHeight * (lineCount + 1) + 16))
                     , HA.attribute "wrap" "off"

@@ -15,7 +15,7 @@ import Json.Decode as D
 import Dict
 import TalkTags
 import TalkTree
-import TalkView exposing (Autosave(..), Boot(..), Follow(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
+import TalkView exposing (Autosave(..), Boot(..), Find(..), FindScope(..), Follow(..), Headless(..), Out(..), Picker(..), Request(..), ShotAnswer(..), Shown(..))
 
 
 path : String
@@ -438,10 +438,107 @@ autosaveSuite =
         ]
 
 
+{-| 探す欄の下ごしらえ: 2 本のファイル。b.yarn を開いている(4 行目に「鍵」)。 -}
+twoFiles : TalkView.Model
+twoFiles =
+    let
+        init =
+            TalkView.init
+
+        body =
+            "title: start\n---\nme: こんにちは\nme: 鍵を拾った\n==="
+    in
+    { init
+        | files = [ "assets/talk/a.yarn", "assets/talk/b.yarn" ]
+        , path = "assets/talk/b.yarn"
+        , text = body
+        , saved = body
+        , nodes = [ { title = "start", file = "assets/talk/b.yarn", line = 1 } ]
+    }
+
+
+findSuite : Test
+findSuite =
+    describe "探す欄"
+        [ test "⌘F で開いて欄へカーソルを置き、打つとその字を本文の欄で選ぶ(行も動かす)" <|
+            \_ ->
+                let
+                    ( m1, out1 ) =
+                        press [ TalkView.FindOpened ] twoFiles
+
+                    ( m2, out2 ) =
+                        TalkView.update (TalkView.FindTyped "鍵") m1
+                in
+                ( out1, m2.cursor, out2 )
+                    |> Expect.equal
+                        ( OutFocus "talk-find"
+                        , 4
+                        , OutBatch [ OutFollowLater m2.followSeq, OutSelect { from = 31, to = 32, line = 4 } ]
+                        )
+        , test "Enter で次へ・⇧Enter で前へ(端で回る)" <|
+            \_ ->
+                let
+                    ( m1, _ ) =
+                        press [ TalkView.FindOpened, TalkView.FindTyped "me" ] twoFiles
+
+                    ( m2, _ ) =
+                        press [ TalkView.FindEntered False ] m1
+
+                    ( m3, _ ) =
+                        press [ TalkView.FindEntered True, TalkView.FindEntered True ] m2
+                in
+                List.map .cursor [ m1, m2, m3 ] |> Expect.equal [ 3, 4, 4 ]
+        , test "全ファイルに切り替えるとほかのファイルを読み、届いた中身と今の中身から並べる" <|
+            \_ ->
+                let
+                    ( m1, out ) =
+                        press [ TalkView.FindOpened, TalkView.FindTyped "鍵", TalkView.FindScopeChosen AcrossFiles ] twoFiles
+
+                    m2 =
+                        TalkView.gotSearchFile "assets/talk/a.yarn" "title: x\n---\nme: 鍵はどこ\n===" m1
+                in
+                ( out, TalkView.hitsOf m2 |> List.map (\h -> ( h.file, h.line, h.node )) )
+                    |> Expect.equal
+                        ( OutBatch [ OutReadForSearch [ "assets/talk/a.yarn" ], OutFocus "talk-find" ]
+                        , [ ( "assets/talk/a.yarn", 3, Just "x" ), ( "assets/talk/b.yarn", 4, Just "start" ) ]
+                        )
+        , test "一覧で別のファイルの行を選ぶと開き直し、届いたらその行を選ぶ(探す欄は開いたまま)" <|
+            \_ ->
+                let
+                    other =
+                        "title: x\n---\nme: 鍵はどこ\n==="
+
+                    m1 =
+                        press [ TalkView.FindOpened, TalkView.FindTyped "鍵", TalkView.FindScopeChosen AcrossFiles ] twoFiles
+                            |> Tuple.first
+                            |> TalkView.gotSearchFile "assets/talk/a.yarn" other
+
+                    ( m2, out2 ) =
+                        press [ TalkView.FindEntered False ] m1
+
+                    ( m3, out3 ) =
+                        TalkView.gotFile "assets/talk/a.yarn" other m2
+                in
+                ( ( out2, m2.path ), ( m3.cursor, out3 ), m3.find )
+                    |> Expect.equal
+                        ( ( OutRead "assets/talk/a.yarn", "assets/talk/a.yarn" )
+                        , ( 3, OutBatch [ OutBuild "assets/talk/a.yarn" Nothing, OutSelect { from = 17, to = 18, line = 3 } ] )
+                        , FindOpen { query = "鍵", scope = AcrossFiles, at = 0 }
+                        )
+        , test "Esc で閉じると行の印も消える" <|
+            \_ ->
+                press [ TalkView.FindOpened, TalkView.FindTyped "鍵", TalkView.FindDismissed ] twoFiles
+                    |> Tuple.first
+                    |> (\m -> ( m.find, TalkView.hitsOf m ))
+                    |> Expect.equal ( FindClosed, [] )
+        ]
+
+
 suite : Test
 suite =
     describe "TalkView"
         [ pickerSuite
+        , findSuite
         , autosaveSuite
         , varsSuite
         , graphSuite
