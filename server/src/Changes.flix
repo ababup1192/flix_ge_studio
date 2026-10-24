@@ -8,6 +8,8 @@
 //   2. 焼きたてでリファレンス画像と違う絵がある → 旧いリファレンス画像を reference/archive/ の vN へ退避し、
 //      新しい絵を基準にする (自動追随)。変わった場面を記録し、未読の知らせにする
 //   3. 初めての場面 (基準が無い) は黙って基準になる (知らせない)
+//   4. 絵が reference/SHA256SUMS.txt の行と同じ (承認済み: 別の機械で基準を更新して push された)
+//      → 手元の古いリファレンス画像を退避して黙って合わせる (知らせない。Gallery の approved)
 //
 // 記録はサーバの生存中だけ (メモリ)。事故の警報が目的で、レジストリではない —
 // 「触っていないのに知らせが来た」を成立させるのが仕事。
@@ -39,8 +41,9 @@ mod Changes {
     pub def pump(state: State, runner: Runner.State, game: Game.Runtime, dir: String): Json \ IO =
         observeBake(state, runner, dir);
         let items = Gallery.diffItemsOf(dir);
-        let diffs = items |> List.filter(item -> snd(item) == "diff") |> List.map(fst);
+        let diffs = noticeNames(items);
         let firsts = items |> List.filter(item -> snd(item) == "missingReference") |> List.map(fst);
+        let approved = items |> List.filter(item -> snd(item) == "approved") |> List.map(fst);
         let running = Runner.runningTarget(runner) == Some("render");
         // 起こす前に測る。描き出している最中に入った保存はこの指紋と違うので、
         // 次の目盛りでそのまま拾える。
@@ -66,7 +69,8 @@ mod Changes {
             } else
                 running;
         // 描き出した直後の時だけ追随する (stale の間の差分は古い絵との比較なので信用しない)
-        if (not stale and not baking and (not List.isEmpty(diffs) or not List.isEmpty(firsts))) {
+        if (not stale and not baking
+                and (not List.isEmpty(diffs) or not List.isEmpty(firsts) or not List.isEmpty(approved))) {
             discard new JFile("${dir}/reference").mkdirs();
             discard new JFile("${dir}/reference/archive").mkdirs();
             foreach (name <- ownNames(state, dir, firsts))
@@ -76,6 +80,12 @@ mod Changes {
                 copyFile("${dir}/reference/${name}", "${dir}/reference/archive/${versionName(name, ver)}");
                 copyFile("${dir}/gallery/${name}", "${dir}/reference/${name}");
                 record(state, dir, name, ver)
+            };
+            foreach (name <- approved) {
+                if (new JFile("${dir}/reference/${name}").isFile())
+                    copyFile("${dir}/reference/${name}", "${dir}/reference/archive/${versionName(name, nextVer(dir, name))}")
+                else ();
+                copyFile("${dir}/gallery/${name}", "${dir}/reference/${name}")
             }
         } else ();
         statusJson(state, dir, baking)
@@ -263,6 +273,11 @@ mod Changes {
         })
 
     // ── 純粋なルール (テスト対象) ──────────────────────────
+
+    /// 見比べ (Gallery.diffItems) のうち、知らせる場面の名前 — 基準と違い、
+    /// SHA256SUMS.txt でも承認されていない絵 (diff) だけ。approved と初めての場面は黙って基準になる。
+    pub def noticeNames(items: List[(String, String)]): List[String] =
+        items |> List.filter(item -> snd(item) == "diff") |> List.map(fst)
 
     /// 既読記録の値から既読かを判定。無記録 (JMap.get の null 由来の None) は
     /// 「未読の知らせ無し」= 既読に倒す — null をそのまま String 比較へ流すと

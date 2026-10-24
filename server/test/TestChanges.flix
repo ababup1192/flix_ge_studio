@@ -56,4 +56,17 @@ mod TestChanges {
             (Changes.entriesOf(text),
              Changes.entriesOf(Changes.appendEntry(text, "title.png", 3)),
              Changes.entriesOf("こわれた断片;まだこわれてる")))
+
+    /// 知らせる場面: SHA256SUMS.txt と同じ (approved) は知らせない・違う (diff) は知らせる・
+    /// 一覧が無い (承認の判定が常に false) なら今までどおり diff を知らせる。
+    @Test
+    def testNoticeNames(): Unit \ Assert =
+        let galleryNames = "spring.png" :: "summer.png" :: Nil;
+        let referenceNames = "spring.png" :: "summer.png" :: Nil;
+        Assert.assertEq(
+            expected = ("summer.png" :: Nil, "spring.png" :: "summer.png" :: Nil),
+            (Changes.noticeNames(Gallery.diffItems(galleryNames, referenceNames,
+                 _ -> false, name -> name == "spring.png")),
+             Changes.noticeNames(Gallery.diffItems(galleryNames, referenceNames,
+                 _ -> false, _ -> false))))
 }

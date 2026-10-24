@@ -9,8 +9,6 @@ mod NextStep {
     import java.io.{File => JFile}
     import java.nio.file.Files
     import java.lang.Exception
-    import java.security.MessageDigest
-    import java.util.HexFormat
     import java.util.concurrent.{ConcurrentHashMap => JMap}
 
     use Util.Json.Json
@@ -141,7 +139,7 @@ mod NextStep {
             let listing = entries
                 |> List.map(entry -> { let (name, hash) = entry; "${name}\t${hash}\n" })
                 |> List.join("");
-            Some(sha256Hex(listing.getBytes("UTF-8")))
+            Some(Gallery.sha256Hex(listing.getBytes("UTF-8")))
         }
 
     /// 1 ファイルの SHA-256。(mtime, size) が覚えている物と同じならそのまま返す。
@@ -162,16 +160,13 @@ mod NextStep {
             case Some(hash) => Some(hash)
             case None       =>
                 try {
-                    let hash = sha256Hex(Files.readAllBytes(file.toPath()));
+                    let hash = Gallery.sha256Hex(Files.readAllBytes(file.toPath()));
                     discard cache.put("hash|${path}", "${mark}|${hash}");
                     Some(hash)
                 } catch {
                     case _: Exception => None
                 }
         }
-
-    def sha256Hex(bytes: Array[Int8, Static]): String \ IO =
-        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 
     /// GET /journey/state の本文。unseen は Changes の未読の知らせの数。
     pub def stateJson(game: Game.Runtime, dir: String, unseen: Int32): Json \ IO =
@@ -203,7 +198,8 @@ mod NextStep {
             |> List.length;
         let stale = isStale(jsonMtimes(dir, "assets"), Gallery.galleryMtimes(dir));
         let items = Gallery.diffItemsOf(dir);
-        let diffs = items |> List.filter(item -> snd(item) != "ok") |> List.length;
+        // approved (SHA256SUMS.txt で承認済み) は Changes が黙って基準に写すので数えない。
+        let diffs = items |> List.filter(item -> snd(item) != "ok" and snd(item) != "approved") |> List.length;
         // お手本がまだ空 = 全項目が「reference/ に無い」。gallery まで空なら items が空で
         // diffs も 0 なので、リファレンス画像の更新ではなく create に落ちる。
         let referenceEmpty = List.forAll(item -> snd(item) == "missingReference", items);

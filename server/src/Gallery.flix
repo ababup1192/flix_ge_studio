@@ -8,6 +8,9 @@ mod Gallery {
     import java.io.{File => JFile}
     import java.nio.file.Files
     import java.math.{BigDecimal => JBigDecimal}
+    import java.lang.{String => JavaString}
+    import java.security.MessageDigest
+    import java.util.HexFormat
 
     use Util.Json.Json
     use Util.Json.Json.{JObject, JArray, JString, JNumber, JBool}
@@ -58,7 +61,11 @@ mod Gallery {
             "title"     => JString(note#title),
             "desc"      => JString(note#desc),
             "tags"      => JArray(note#tags |> List.map(JString) |> List.toVector),
-            "reference" => JString(Map.getWithDefault(entry#name, "missingReference", status))
+            // approved は画面には ok と同じ (承認済みの絵。手元の基準は pump がすぐ写す)
+            "reference" => JString(match Map.getWithDefault(entry#name, "missingReference", status) {
+                case "approved" => "ok"
+                case other      => other
+            })
         })
 
     /// "s3_clear.png" → "s3_clear"。Doc の name は拡張子を持たない。
@@ -153,9 +160,15 @@ mod Gallery {
         }
 
     /// gallery/ と reference/ の名前の和集合を取り、名前ごとの status を並べる (名前順)。
-    /// `same` はバイト一致の判定 (テストでは差し替えられる)。
+    /// `same` はバイト一致の判定、`approved` は reference/SHA256SUMS.txt の行との一致
+    /// (どちらもテストでは差し替えられる)。
+    ///
+    /// approved: 手元の reference/*.png とは違う (または無い) が、絵の SHA-256 が
+    /// SHA256SUMS.txt の行と同じ。ゲームのリポは PNG 本体を git に入れず一覧だけを追跡するので、
+    /// 別の機械で基準を更新して push された絵は、手元では古い PNG と食い違って見える。
+    /// それは承認済みの変化で、知らせる物ではない。
     pub def diffItems(galleryNames: List[String], referenceNames: List[String],
-                      same: String -> Bool \ ef): List[(String, String)] \ ef =
+                      same: String -> Bool \ ef, approved: String -> Bool \ ef): List[(String, String)] \ ef =
         List.append(galleryNames, referenceNames)
             |> List.distinct
             |> List.sort
@@ -163,14 +176,18 @@ mod Gallery {
                 let inGallery = List.memberOf(name, galleryNames);
                 let inReference = List.memberOf(name, referenceNames);
                 let sameBytes = if (inGallery and inReference) same(name) else false;
-                (name, diffStatus(inGallery, inReference, sameBytes))
+                let status = diffStatus(inGallery, inReference, sameBytes);
+                let unmatched = status == "diff" or status == "missingReference";
+                if (unmatched and approved(name)) (name, "approved") else (name, status)
             })
 
     /// ディスク上の gallery/ reference/ を見比べる。Changes の自動追随と NextStep が使う。
     pub def diffItemsOf(dir: String): List[(String, String)] \ IO =
         let galleryNames = listNamed(suffix = ".png", dir, "gallery") |> List.map(entry -> entry#name);
         let referenceNames = listNamed(suffix = ".png", dir, "reference") |> List.map(entry -> entry#name);
-        diffItems(galleryNames, referenceNames, name -> sameBytes(dir, name))
+        let sums = loadReferenceSums(dir);
+        diffItems(galleryNames, referenceNames, name -> sameBytes(dir, name),
+            name -> isApproved(sums, dir, name))
 
     /// gallery/name と reference/name のバイト一致。どちらか読めなければ不一致扱い。
     def sameBytes(dir: String, name: String): Bool \ IO =
@@ -178,6 +195,40 @@ mod Gallery {
             case (Some(a), Some(b)) => Array.sameElements(a, b)
             case _                  => false
         }
+
+    /// gallery/name の SHA-256 が SHA256SUMS.txt のその名前の行と同じか。行が無ければ false。
+    def isApproved(sums: Map[String, String], dir: String, name: String): Bool \ IO =
+        match (Map.get(name, sums), readBytes("${dir}/gallery/${name}")) {
+            case (Some(expected), Some(bytes)) => sha256Hex(bytes) == expected
+            case _                             => false
+        }
+
+    // ── reference/SHA256SUMS.txt (エンジンの make reference-update が書く一覧) ──
+
+    /// reference/SHA256SUMS.txt を 名前 → SHA-256 で読む。無い・読めないは空 (= 承認済みは無し、今までどおり)。
+    def loadReferenceSums(dir: String): Map[String, String] \ IO =
+        match readBytes("${dir}/reference/SHA256SUMS.txt") {
+            case Some(bytes) => parseReferenceSums(new JavaString(bytes, "UTF-8"))
+            case None        => Map#{}
+        }
+
+    /// 一覧の本文 → 名前 → SHA-256。行は `shasum -a 256` の出力 "<ハッシュ>  <ファイル名>"
+    /// (engine の bin/reference-update.sh が書く)。読み方は engine の
+    /// go/internal/status の checkReference と同じ: 最初の空白の並びで 2 つに割り、
+    /// 2 つにならない行は飛ばす。名前の前後の空白は落とす。
+    pub def parseReferenceSums(text: String): Map[String, String] =
+        String.lines(text)
+            |> List.filterMap(line -> {
+                let trimmed = String.trimLeft(line);
+                let hash = String.takeWhile(c -> not Char.isWhitespace(c), trimmed);
+                let name = String.trim(String.dropLeft(String.length(hash), trimmed));
+                if (hash == "" or name == "") None else Some((name, hash))
+            })
+            |> List.toMap
+
+    /// バイト列の SHA-256 (16 進の小文字)。shasum の出力と同じ形。
+    pub def sha256Hex(bytes: Array[Int8, Static]): String \ IO =
+        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 
     /// gallery/ の PNG の mtime 一覧 (NextStep の鮮度判定に使う)。
     pub def galleryMtimes(dir: String): List[Int64] \ IO =
