@@ -225,6 +225,28 @@ export function realApi(base: string): Api {
           window.requestAnimationFrame(() => tryFocus(30));
           return { ok: true };
         }
+        // 会話の台本で探して見つかった字を選ぶ。探す欄で打っている指は離さない(WebKit は
+        // setSelectionRange がフォーカスを奪うので前のフォーカスへ返す)。探す欄の外から来た時は本文の欄へ置く
+        case "talkSelect": {
+          // text は選ぶ字。欄がまだ前のファイルの中身なら(開き直した直後)描き直しを待つ
+          const { id, from, to, text } = payload as { id: string; from: number; to: number; text: string };
+          const trySelect = (left: number) => {
+            const el = document.getElementById(id);
+            if (el instanceof HTMLTextAreaElement && el.value.slice(from, to) === text) {
+              const prev = document.activeElement;
+              el.setSelectionRange(from, to);
+              if (prev instanceof HTMLInputElement) {
+                prev.focus({ preventScroll: true });
+              } else {
+                el.focus({ preventScroll: true });
+              }
+            } else if (left > 0) {
+              window.requestAnimationFrame(() => trySelect(left - 1));
+            }
+          };
+          window.requestAnimationFrame(() => trySelect(30));
+          return { ok: true };
+        }
         // ファイルそのものへの動詞。断り(409 既にある / 400 プロジェクト外)は
         // サーバの理由つきで投げる — 画面には「なぜできなかったか」を出したい
         case "fileNew":
@@ -265,6 +287,9 @@ export function realApi(base: string): Api {
           return getJson(`${base}/talk/files`);
         case "talkRead":
           // 会話の画面で開くシナリオの中身(編集画面と同じ GET /file)
+          return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
+        case "talkSearchRead":
+          // 全ファイルを横断して探すために読むほかのシナリオ(中身は GET /file と同じ形)
           return getJson(`${base}/file?path=${encodeURIComponent(String((payload as { path: string }).path ?? ""))}`);
         case "talkTree":
           // 組んだ会話の木(dialogue.json。変数の一覧とノードの図)。中身は GET /file と同じ形

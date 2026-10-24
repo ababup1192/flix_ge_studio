@@ -6705,6 +6705,17 @@ handleOkByKind env model =
                 Err _ ->
                     ( model, Effect.none )
 
+        "talkSearchRead" ->
+            case D.decodeValue (D.map2 Tuple.pair (D.field "path" D.string) (D.field "content" D.string)) env.body of
+                Ok ( path, body ) ->
+                    ( { model | talk = TalkView.gotSearchFile path body model.talk }, Effect.none )
+
+                Err _ ->
+                    ( model, Effect.none )
+
+        "talkSelect" ->
+            ( model, Effect.none )
+
         "talkVocab" ->
             ( { model
                 | talk =
@@ -8533,6 +8544,13 @@ handleErrByKind env message model =
         "talkRead" ->
             ( { model | talk = TalkView.gotGoto (Err ("開けませんでした — " ++ message)) model.talk }, Effect.none )
 
+        "talkSearchRead" ->
+            -- 読めなかった 1 本は横断検索に入らないだけ
+            ( model, Effect.none )
+
+        "talkSelect" ->
+            ( model, Effect.none )
+
         "talkTree" ->
             -- 木がまだ無い(一度も組んでいない)。変数の一覧とノードの図を出さないだけ
             ( { model | talk = TalkView.gotTree (Err message) model.talk }, Effect.none )
@@ -8812,6 +8830,22 @@ runTalkOut out model =
         TalkView.OutScrollToLine line ->
             -- 行が欄の上から 4 行目あたりに来るように送る(行の高さは本文と溝で同じ)
             ( model, Effect.ScrollTo { id = "talk-editor", top = toFloat (max 0 (line - 4) * TalkView.lineHeight) } )
+
+        TalkView.OutSelect sel ->
+            -- 探して見つかった字を本文の欄で選び(打っている探す欄からは指を離さない)、その行まで送る
+            ( model
+            , Effect.batch
+                [ send "talkSelect" [ ( "id", E.string "talk-text" ), ( "from", E.int sel.from ), ( "to", E.int sel.to ), ( "text", E.string (String.slice sel.from sel.to model.talk.text) ) ]
+                , Effect.ScrollTo { id = "talk-editor", top = toFloat (max 0 (sel.line - 4) * TalkView.lineHeight) }
+                ]
+            )
+
+        TalkView.OutFocus id ->
+            ( model, send "focusId" [ ( "id", E.string id ) ] )
+
+        TalkView.OutReadForSearch paths ->
+            -- 全ファイルを横断して探す: ほかの .yarn の中身を読む(編集画面と同じ GET /file)
+            ( model, Effect.batch (List.map (\path -> send "talkSearchRead" [ ( "path", E.string path ) ]) paths) )
 
         TalkView.OutBatch outs ->
             List.foldl
