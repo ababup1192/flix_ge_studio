@@ -25,7 +25,7 @@ mod Genesis {
         starter = String
     }
 
-    /// 10 枚のカード。並びは仕様 (client は並べ替えない) — 先頭は blank(まっさらの
+    /// 12 枚のカード。並びは仕様 (client は並べ替えない) — 先頭は blank(まっさらの
     /// 入口)、以降はジャンルの人気順、末尾は free(言葉からの受け皿)。
     /// 説明に実在のゲーム名は使わない (借り物なしで通じる言葉だけ)。
     pub def genres(): List[Genre] =
@@ -65,6 +65,12 @@ mod Genesis {
             controls = "←→ + ↓ + 回転",
             skeleton = "上からピースが落ちる / ←→ で寄せ ↓ で落とし回して積む / 一列そろうと消える(落下速度・得点は Doc)。終わり: 積み上がったら負け",
             starter = "templates/tetris-starter" }
+       :: { id = "tidepool", name = "パズル(一手ずつ考える)",
+            verb = "押して、読んで、解く",
+            includes = "倉庫番・ターン制の詰めパズル",
+            controls = "←→↑↓ + 待つ + 1 手戻す",
+            skeleton = "マス目の盤で ←→↑↓ に 1 マスずつ動き、物を押す / 1 手ごとに盤が変わる(潮の満ち引き) / 待つ・1 手戻す・面の初めから・先読み(待ったらどうなるか)。面は Doc の rows。終わり: 目的の物を目的のマスまで運ぶ",
+            starter = "templates/tidepool-starter" }
        :: { id = "shooter", name = "シューティング",
             verb = "よけて、撃つ",
             includes = "横スクロール・縦スクロール",
@@ -83,6 +89,12 @@ mod Genesis {
             controls = "クリック / 決定キーで読み進める",
             skeleton = "写真の背景に文章を出して読む(画面いっぱいの NVL と下のウィンドウの ADV を切り替える) → 選択肢で選ぶ → 変数で分岐する / ルビ・環境音・効果音・背景の切り替えは台本(Yarn)のコマンド / バックログ・オート・スキップ・既読・セーブとロード・設定がそろう。終わり: 結末のどれかを経てクレジットへ",
             starter = "templates/sound-novel-starter" }
+       :: { id = "mystery", name = "ノベル・推理",
+            verb = "読んで、疑って、言い当てる",
+            includes = "推理アドベンチャー・犯人当て",
+            controls = "クリック / 決定キー + 選ぶ",
+            skeleton = "文章を読む → 疑う相手を選ぶ → 選びで物語が分かれ、選ぶたびに部屋の照明がひとつ消える / 文章・分岐・結末は台本(Yarn)。終わり: 結末のどれか",
+            starter = "templates/novel-starter" }
        :: { id = "free",    name = "フリージャンル",
             verb = "言葉から始める",
             includes = "ここにない、全部",

@@ -6,12 +6,12 @@ mod TestGenesis {
     def ids(): List[String] =
         Genesis.genres() |> List.map(f -> f#id)
 
-    /// カードは 10 枚で、先頭は blank(まっさらの入口 = 左上)、
+    /// カードは 12 枚で、先頭は blank(まっさらの入口 = 左上)、
     /// 末尾は free(どのジャンルにも当てはまらない受け皿)。並びは仕様。
     @Test
     def testGenresShape(): Unit \ Assert =
         Assert.assertEq(
-            expected = (10, Some("blank"), Some("free")),
+            expected = (12, Some("blank"), Some("free")),
             (List.length(ids()), List.head(ids()), List.last(ids())))
 
     /// genre は必須・未知のジャンルは断る。free は direction が必須。
