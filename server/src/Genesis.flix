@@ -77,12 +77,12 @@ mod Genesis {
             controls = "選ぶだけ",
             skeleton = "毎日選ぶ → 数値が育つ(伸びは Doc)/ ときどきイベント。終わり: N 日目の発表会(N は Doc)",
             starter = "" }
-       :: { id = "novel",   name = "ノベル・推理",
+       :: { id = "novel",   name = "ノベル・サウンドノベル",
             verb = "読んで、選んで、たどり着く",
-            includes = "事件を追う推理もの・分岐するノベル",
-            controls = "選ぶだけ",
-            skeleton = "文章を読む → 選ぶ → 分岐する / 分岐と結末は Doc の rows。終わり: 結末のどれかへ",
-            starter = "templates/novel-starter" }
+            includes = "分岐するサウンドノベル・ビジュアルノベル",
+            controls = "クリック / 決定キーで読み進める",
+            skeleton = "写真の背景に文章を出して読む(画面いっぱいの NVL と下のウィンドウの ADV を切り替える) → 選択肢で選ぶ → 変数で分岐する / ルビ・環境音・効果音・背景の切り替えは台本(Yarn)のコマンド / バックログ・オート・スキップ・既読・セーブとロード・設定がそろう。終わり: 結末のどれかを経てクレジットへ",
+            starter = "templates/sound-novel-starter" }
        :: { id = "free",    name = "フリージャンル",
             verb = "言葉から始める",
             includes = "ここにない、全部",

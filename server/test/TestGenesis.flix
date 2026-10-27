@@ -42,12 +42,12 @@ mod TestGenesis {
     def testIsStarter(): Unit \ Assert =
         Assert.assertEq(
             expected = (true, true, true, false, false, false),
-            (Genesis.isStarter("templates/novel-starter"),
+            (Genesis.isStarter("templates/sound-novel-starter"),
              Genesis.isStarter("templates/rpg-starter"),
              Genesis.isStarter("templates/tetris-starter"),
              Genesis.isStarter(""),
              Genesis.isStarter("templates/unknown"),
-             Genesis.isStarter("../templates/novel-starter")))
+             Genesis.isStarter("../templates/sound-novel-starter")))
 
     /// 公式プロンプトは骨格と土台(テンプレート変形)を必ず運ぶ。
     /// あなたの言葉(world 等)はパラメータで埋まり、空なら欄が残る。
