@@ -25,7 +25,7 @@ mod TestGenesis {
              status(Map#{"genre" => "free"}),
              status(Map#{"genre" => "free", "direction" => "猫が魚を集める"})))
 
-    /// 公式テンプレートの登録: action / novel / rpg / puzzle / blank は starter 持ち、
+    /// 公式テンプレートの登録: action / novel / rpg / tidepool / blank は starter 持ち、
     /// free は持たない。
     @Test
     def testStarters(): Unit \ Assert =
@@ -34,7 +34,7 @@ mod TestGenesis {
             |> Option.map(f -> f#starter != "");
         Assert.assertEq(
             expected = (Some(true), Some(true), Some(true), Some(true), Some(true), Some(false)),
-            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("puzzle"),
+            (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("tidepool"),
              starterOf("blank"), starterOf("free")))
 
     /// 複製元の白名簿: 登録済みテンプレートだけ通す(空・未知・似た経路は弾く)。
@@ -44,7 +44,7 @@ mod TestGenesis {
             expected = (true, true, true, false, false, false),
             (Genesis.isStarter("templates/sound-novel-starter"),
              Genesis.isStarter("templates/rpg-starter"),
-             Genesis.isStarter("templates/tetris-starter"),
+             Genesis.isStarter("templates/tidepool-starter"),
              Genesis.isStarter(""),
              Genesis.isStarter("templates/unknown"),
              Genesis.isStarter("../templates/sound-novel-starter")))

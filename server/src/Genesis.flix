@@ -64,7 +64,7 @@ mod Genesis {
             includes = "落ち物パズル・同色そろえ・連鎖",
             controls = "←→ + ↓ + 回転",
             skeleton = "上からピースが落ちる / ←→ で寄せ ↓ で落とし回して積む / 一列そろうと消える(落下速度・得点は Doc)。終わり: 積み上がったら負け",
-            starter = "templates/tetris-starter" }
+            starter = "" }
        :: { id = "tidepool", name = "パズル(一手ずつ考える)",
             verb = "押して、読んで、解く",
             includes = "倉庫番・ターン制の詰めパズル",
@@ -94,7 +94,7 @@ mod Genesis {
             includes = "推理アドベンチャー・犯人当て",
             controls = "クリック / 決定キー + 選ぶ",
             skeleton = "文章を読む → 疑う相手を選ぶ → 選びで物語が分かれ、選ぶたびに部屋の照明がひとつ消える / 文章・分岐・結末は台本(Yarn)。終わり: 結末のどれか",
-            starter = "templates/novel-starter" }
+            starter = "" }
        :: { id = "free",    name = "フリージャンル",
             verb = "言葉から始める",
             includes = "ここにない、全部",
