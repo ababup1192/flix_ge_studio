@@ -25,15 +25,15 @@ mod TestGenesis {
              status(Map#{"genre" => "free"}),
              status(Map#{"genre" => "free", "direction" => "猫が魚を集める"})))
 
-    /// 公式テンプレートの登録: action / novel / rpg / tidepool / blank は starter 持ち、
-    /// free は持たない。
+    /// 公式テンプレートの登録: novel / rpg / tidepool / blank は starter 持ち、
+    /// action と free は持たない。
     @Test
     def testStarters(): Unit \ Assert =
         let starterOf = id -> Genesis.genres()
             |> List.filter(f -> f#id == id) |> List.head
             |> Option.map(f -> f#starter != "");
         Assert.assertEq(
-            expected = (Some(true), Some(true), Some(true), Some(true), Some(true), Some(false)),
+            expected = (Some(false), Some(true), Some(true), Some(true), Some(true), Some(false)),
             (starterOf("action"), starterOf("novel"), starterOf("rpg"), starterOf("tidepool"),
              starterOf("blank"), starterOf("free")))
 
