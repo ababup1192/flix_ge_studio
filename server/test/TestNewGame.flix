@@ -1,8 +1,11 @@
-// TestNewGame — 新しいゲームを産むときの「文字の書き換え」だけ固定する。
-// ファイルの複製や産声の確認 (check/test/bake) は通し確認に任せ、ここは純粋な変換だけを見る。
-// 期待する結果は engine の make new-game (perl の置換) と同じ形。
+// TestNewGame — 新しいゲームを産むときの「文字の書き換え」と、テンプレートから写さない物を固定する。
+// 産声の確認 (check/test/bake) は通し確認に任せる。
+// 期待する結果は engine の make new-game と同じ形。
 
 mod TestNewGame {
+    import java.io.{File => JFile}
+    import java.io.FileOutputStream
+    import java.lang.System
 
     /// テスト用の材料一式。
     def request(): NewGame.Request =
@@ -147,4 +150,47 @@ mod TestNewGame {
             expected = None,
             NewGame.manifestPlan("{\"copy\": [{\"src\": \"bin/a.py\"}], \"copyIfAbsent\": [], \"copyDirs\": []}")
                 |> Option.map(plan -> plan#copyList))
+
+    /// new-game.exclude の読み方: # から行末は注釈・行末の空白は落とす・空行は飛ばす。
+    /// / で始まる物と .. を含む物は読み飛ばす (ゲームのフォルダの外を消さない)。
+    @Test
+    def testExcludePaths(): Unit \ Assert =
+        Assert.assertEq(
+            expected = "sample-test" :: "docs/a" :: "keep me" :: Nil,
+            NewGame.excludePaths("# 注釈\n\nsample-test\ndocs/a   # 深いパス\n/abs\n../out\na/../b\nkeep me  \n"))
+
+    /// copyTemplate はテンプレートの生成物 (lib・build・debug・gallery・.devbox・.test-logs) と
+    /// new-game.exclude に挙がったパスをゲームに残さない。ほかの物と、外を指す行の先は残る。
+    @Test
+    def testCopyTemplateDropsExcludedAndGenerated(): Unit \ {Assert, IO} =
+        let root = "${System.getProperty("java.io.tmpdir")}/studio-test-new-game-${System.nanoTime()}";
+        let tpl = "${root}/tpl";
+        let game = "${root}/game";
+        foreach (path <- "src/Main.flix" :: "sample-test/TestSample.flix" :: "docs/a/b.md" :: "docs/keep.md"
+                         :: "lib/x" :: "build/x" :: "debug/x" :: "gallery/x" :: ".devbox/x" :: ".test-logs/x" :: Nil)
+            writeFile("${tpl}/${path}", "x");
+        writeFile("${tpl}/new-game.exclude", "# 注釈\nsample-test\ndocs/a # 深いパス\n../out\n");
+        writeFile("${root}/out/x", "x");
+        NewGame.copyTemplate(tpl, game);
+        let exists = path -> new JFile("${game}/${path}").exists();
+        let result =
+            (exists("src/Main.flix"), exists("docs/keep.md"), exists("new-game.exclude"),
+             exists("sample-test"), exists("docs/a"),
+             List.exists(exists, "lib" :: "build" :: "debug" :: "gallery" :: ".devbox" :: ".test-logs" :: Nil),
+             new JFile("${root}/out/x").exists());
+        deleteAll(new JFile(root));
+        Assert.assertEq(expected = (true, true, true, false, false, false, true), result)
+
+    def writeFile(path: String, text: String): Unit \ IO =
+        discard new JFile(path).getParentFile().mkdirs();
+        let out = new FileOutputStream(path);
+        out.write(text.getBytes("UTF-8"));
+        out.close()
+
+    def deleteAll(file: JFile): Unit \ IO =
+        let entries = file.listFiles();
+        if (Object.isNull(entries)) ()
+        else Array.toList(entries) |> List.forEach(deleteAll);
+        discard file.delete()
+
 }
