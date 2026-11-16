@@ -74,6 +74,25 @@ mod NewGame {
             or String.endsWith(suffix = ".md", fileName)
             or fileName == "Makefile"
 
+    /// テンプレートの根にあってもゲームへ写さないフォルダ。engine の make new-game が
+    /// 消す物と同じ。
+    // WhyNot: build を写すとテンプレ 1 本で 500MB 級にゲームが太り、パッケージ名が
+    // 変わるのでどのみち使えない。lib は engine_full から置き直す。
+    pub def generatedDirs(): Set[String] =
+        Set#{"lib", "build", "debug", "gallery", ".devbox", ".test-logs"}
+
+    /// new-game.exclude の本文から、ゲームへ写さないパスを取り出す。1 行に 1 つ・
+    /// テンプレートの根からの相対パス・# から行末は注釈。読み方は engine の make new-game と同じ。
+    // WhyNot: / で始まる物と .. を含む物は読み飛ばす — 消す先がゲームのフォルダの外へ出る。
+    pub def excludePaths(text: String): List[String] =
+        String.lines(text)
+            |> List.map(line -> String.splitOn(substr = "#", line) |> List.head |> Option.getWithDefault(""))
+            |> List.map(String.trimRight)
+            |> List.filter(path ->
+                not String.isEmpty(path)
+                    and not String.startsWith(prefix = "/", path)
+                    and not String.contains(substr = "..", path))
+
     /// flix.toml の本文から version = "…" の中身を取り出す。無ければ None。
     pub def versionFromToml(text: String): Option[String] =
         String.lines(text)
@@ -214,7 +233,7 @@ mod NewGame {
             1
         } else {
             Runner.logLine(state, "[new-game] ${request#gameDir} を作成します (NAME=${request#name} TITLE=${request#title} design=${request#w}x${request#h} TEMPLATE=${request#template})");
-            copyTree(skipTopLevel = Set#{"lib"}, templateDir, request#gameDir);
+            copyTemplate(templateDir, request#gameDir);
             foreach (sub <- "gallery" :: "reference" :: "debug" :: "atelier" :: Nil)
                 discard new JFile("${request#gameDir}/${sub}").mkdirs();
             renameAssets(request);
@@ -253,6 +272,26 @@ mod NewGame {
         }
 
     // ── 各工程 ────────────────────────────────────────────
+
+    /// テンプレートをゲームのフォルダへ写す。生成物 (generatedDirs) は写さず、
+    /// テンプレートの new-game.exclude に挙がったパスは写した後に消す。
+    // WhyNot: 写す途中で飛ばさず写した後に消すのは、a/b のような深いパスも
+    // make new-game と同じ 1 つの規則 (根からの相対パスを消す) で扱えるから。
+    pub def copyTemplate(templateDir: String, gameDir: String): Unit \ IO =
+        copyTree(skipTopLevel = generatedDirs(), templateDir, gameDir);
+        readTextIfFile("${gameDir}/new-game.exclude")
+            |> Option.map(excludePaths)
+            |> Option.getWithDefault(Nil)
+            |> List.forEach(path -> deletePath("${gameDir}/${path}"))
+
+    /// ファイルでもフォルダでも消す。無ければ何もしない。
+    // WhyNot: symlink を deleteTree に渡すと辿った先の中身を消すので、リンクだけ消す。
+    def deletePath(path: String): Unit \ IO =
+        let file = new JFile(path);
+        if (isSymlink(path)) { discard file.delete() }
+        else if (file.isDirectory()) deleteTree(file)
+        else if (file.exists()) { discard file.delete() }
+        else ()
 
     /// assets/__NAME__.* を assets/<name>.* に改名する。
     def renameAssets(request: Request): Unit \ IO =
