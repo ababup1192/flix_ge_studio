@@ -1,6 +1,6 @@
 [package]
 version     = "0.1.0"
-flix        = "0.78.0"
+flix        = "0.80.0"
 
 # ブラウザの UI エディタ画面から叩く常駐 HTTP サーバ。対象ゲームプロジェクト
 # (EDITOR_DIR) の project.json / *.ui.json / hitbox.json を読み書きする。
