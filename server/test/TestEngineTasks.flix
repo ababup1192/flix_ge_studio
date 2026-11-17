@@ -68,6 +68,16 @@ mod TestEngineTasks {
              EngineTasks.flixArgs(Task.AtelierPreview),
              EngineTasks.flixArgs(Task.EntryPoint("SfxPreview.main"))))
 
+    /// PALETTE を決めた Makefile だけが色票を持つ。PALETTE_DEPS やコメントは数えない。
+    @Test
+    def testDeclaresPalette(): Unit \ Assert =
+        Assert.assertEq(
+            expected = (true, true, false, false),
+            (EngineTasks.declaresPalette("ENGINE ?= ../..\nPALETTE      := assets/x.palette.json\n"),
+             EngineTasks.declaresPalette("PALETTE=assets/x.palette.json"),
+             EngineTasks.declaresPalette("PALETTE_DEPS := a.json\n"),
+             EngineTasks.declaresPalette("# PALETTE を決めると Palette.write が走る\n")))
+
     /// 実際のウィンドウを開くのは実機再生 (Debug) だけ。他は全部 headless。
     @Test
     def testIsHeadless(): Unit \ Assert =

@@ -114,8 +114,25 @@ mod EngineTasks {
     /// そのゲームがパレット (色の対応表) を持つか。焼きの前段に Palette.write を
     /// 走らせるかの判定 — 持たないゲームで走らせると、必ず失敗する 1 コンパイルを
     /// 毎回の焼きに足してしまう。
+    /// WhyNot: src/Palette.flix の有無では見ない — 色票を手で書いた原本として持つゲーム
+    /// (Palette.write の無い Palette モジュール) で、作成も焼きも必ず落ちる。make と同じく
+    /// Makefile の PALETTE を正とする。
     pub def hasPalette(dir: String): Bool \ IO =
-        new JFile("${dir}/src/Palette.flix").isFile()
+        try {
+            let file = new JFile("${dir}/Makefile");
+            file.isFile() and declaresPalette(new JavaString(Files.readAllBytes(file.toPath()), "UTF-8"))
+        } catch {
+            case _: Exception => false
+        }
+
+    /// Makefile が PALETTE（色票の写しの置き場）を決めているか。
+    pub def declaresPalette(makefile: String): Bool =
+        String.lines(makefile)
+            |> List.exists(line -> {
+                let rest = String.trimLeft(String.drop(String.length("PALETTE"), line));
+                String.startsWith(prefix = "PALETTE", line) and
+                    (String.startsWith(prefix = ":=", rest) or String.startsWith(prefix = "=", rest) or String.startsWith(prefix = "?=", rest))
+            })
 
     /// dir のゲームが taskName の入口を宣言していれば返す。読めないは None。
     pub def declaredEntry(dir: String, taskName: String): Option[String] \ IO =
